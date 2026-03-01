@@ -7,13 +7,22 @@ load_dotenv(f'.env.{env}' if env else '.env', verbose=True)
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from .bridge import bridge
 from .resource_manager import resource_manager
 from .openai import router as openai_router
 from .anthropic import router as anthropic_router
 from .voice_service import voice_service
 
-app = FastAPI(title="July Engine", version="2.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start the bridge which starts all orchestrators
+    await bridge.start()
+    yield
+    # Shutdown: Stop the bridge which stops all orchestrators
+    await bridge.stop()
+
+app = FastAPI(title="July Engine", version="2.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,11 +31,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-@app.on_event("startup")
-async def startup_event():
-    # Start the bridge which starts all orchestrators
-    await bridge.start()
 
 app.include_router(openai_router, prefix="/v1/openai")
 app.include_router(anthropic_router, prefix="/v1/anthropic")

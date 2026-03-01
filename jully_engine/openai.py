@@ -40,7 +40,31 @@ class ImageGenerationRequest(BaseModel):
     size: Optional[str] = "1024x1024"
     response_format: Optional[str] = "b64_json"
 
-@router.post("/chat/completions")
+# --- Response DTOs for Swagger Documentation ---
+
+class ChatCompletionResponse(BaseModel):
+    id: str = Field(..., examples=["chatcmpl-123"])
+    object: str = "chat.completion"
+    created: int = Field(..., examples=[1677652288])
+    model: str = Field(..., examples=["qwen3-0.6b.gguf"])
+    choices: List[Dict[str, Any]] = Field(..., examples=[{
+        "index": 0,
+        "message": {"role": "assistant", "content": "Hello! How can I help you?"},
+        "finish_reason": "stop"
+    }])
+    usage: Dict[str, int] = Field(..., examples=[{"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21}])
+
+class EmbeddingResponse(BaseModel):
+    object: str = "list"
+    data: List[Dict[str, Any]] = Field(..., examples=[{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}])
+    model: str = Field(..., examples=["bge-micro"])
+    usage: Dict[str, int] = Field(..., examples=[{"prompt_tokens": 8, "total_tokens": 8}])
+
+class ImageResponse(BaseModel):
+    created: int = Field(..., examples=[1677652288])
+    data: List[Dict[str, str]] = Field(..., examples=[{"b64_json": "iVBORw0KGgoAAAANSUhEUgAA..."}])
+
+@router.post("/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     payload = request.model_dump()
     headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
@@ -53,7 +77,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
 
     return response
 
-@router.post("/embeddings")
+@router.post("/embeddings", response_model=EmbeddingResponse)
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):
     headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
     embeddings = await bridge.process_embeddings(request.input, request.model, headers)
@@ -89,7 +113,7 @@ async def create_transcription(
     transcription = await bridge.process_stt(audio_bytes, model, language, headers)
     return {"text": transcription}
 
-@router.post("/images/edits")
+@router.post("/images/edits", response_model=ImageResponse)
 async def create_image_edit(
     http_request: Request,
     image: UploadFile = File(...),
@@ -105,7 +129,7 @@ async def create_image_edit(
         "data": [{"b64_json": edited_image_base64}]
     }
 
-@router.post("/images/generations")
+@router.post("/images/generations", response_model=ImageResponse)
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
     headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-")}
     image_base64 = await bridge.process_image_generation(request.prompt, request.model, headers)

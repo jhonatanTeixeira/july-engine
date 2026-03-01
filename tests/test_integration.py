@@ -181,6 +181,45 @@ async def test_integration_health(client):
     assert response.status_code == 200
     assert response.json()["status"] == "online"
 
+# --- VOICE MANAGEMENT TESTS ---
+
+@pytest.mark.anyio
+async def test_integration_list_voices(client):
+    print("\n[Integration] Testing List Voices...")
+    response = await client.get("/speech/voices")
+    assert response.status_code == 200
+    voices = response.json()
+    assert isinstance(voices, list)
+    # Should at least have yuni from voices.json
+    ids = [v["id"] for v in voices]
+    assert "yuni" in ids
+
+@pytest.mark.anyio
+async def test_integration_add_voice(client):
+    print("\n[Integration] Testing Add Voice...")
+    dummy_wav = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+    
+    # Test adding a clone voice
+    data = {
+        "name": "Test Voice",
+        "language": "en",
+        "type": "clone"
+    }
+    files = {"file": ("test.wav", dummy_wav, "audio/wav")}
+    
+    response = await client.post("/speech/voices", data=data, files=files)
+    assert response.status_code == 200
+    new_voice = response.json()
+    assert "id" in new_voice
+    assert new_voice["name"] == "Test Voice"
+    assert "path" in new_voice
+    assert "uploaded" in new_voice["path"]
+    
+    # Verify it appears in list
+    list_response = await client.get("/speech/voices")
+    voices = list_response.json()
+    assert any(v["id"] == new_voice["id"] for v in voices)
+
 # --- GPU TESTS ---
 
 @pytest.mark.gpu

@@ -26,6 +26,10 @@ class Bridge:
         for name, orch in self.orchestrators.items():
             await orch.start()
 
+    async def stop(self):
+        for name, orch in self.orchestrators.items():
+            await orch.stop()
+
     def get_orchestrator(self, headers: Dict[str, str]):
         backend = headers.get("x-backend", "gpu").lower()
         if backend not in self.orchestrators:

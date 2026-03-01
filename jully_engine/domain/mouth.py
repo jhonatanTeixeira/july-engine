@@ -31,9 +31,9 @@ class Mouth:
 
     def _resolve_voice(self, voice_id: str) -> Dict[str, Any]:
         """
-        Resolves a voice ID to its configuration by checking voices.json and uploaded.json.
+        Resolves a voice ID to its configuration by checking voices.json and uploaded_voices.json.
         """
-        config_files = ["voices.json", "uploaded.json"]
+        config_files = ["voices.json", "uploaded_voices.json"]
         for filename in config_files:
             config_path = os.path.join(self.voices_dir, filename)
             if os.path.exists(config_path):
