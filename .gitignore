@@ -4,5 +4,6 @@ models/
 tests/outputs/
 storage/voices/uploaded
 storage/voices/uploaded_voices.json
+storage/temp
 temp_*
 .env

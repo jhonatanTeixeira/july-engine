@@ -1,0 +1,3 @@
+FROM moondream
+
+PARAMETER num_ctx 1024

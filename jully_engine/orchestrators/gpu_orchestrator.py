@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from ..resource_manager import resource_manager
@@ -129,7 +130,10 @@ class GpuOrchestrator:
         return executor.submit(self._execute_task_sync, task_type, payload)
 
     def _execute_task_sync(self, task_type: str, payload: Any):
-        model_tag = payload.get("model") or os.environ.get("LLM_MODEL")
+        model_tag = payload.get("model")
+        if not model_tag:
+            model_tag = os.environ.get("LLM_MODEL")
+        
         backend = "gpu"
         
         # Mapping task to resource key
@@ -155,17 +159,25 @@ class GpuOrchestrator:
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
                 self.active_gpu_models["tts"] = mouth
-                return asyncio.run(mouth.speak(payload['text'], payload.get('voice'), payload.get('language'), f"temp_gpu_{os.getpid()}.wav"))
+                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "storage", "temp")
+                os.makedirs(temp_dir, exist_ok=True)
+                temp_path = os.path.join(temp_dir, f"temp_gpu_{os.getpid()}_{time.time()}.wav")
+                return asyncio.run(mouth.speak(payload['text'], payload.get('voice'), payload.get('language'), temp_path))
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
                 return asyncio.run(ears.listen(payload['audio'], payload.get('language')))
             elif task_type == "embedding":
                 memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.embed(payload))
+                input_text = payload.get("input")
+                return asyncio.run(memory.embed(input_text))
             elif task_type == "pix2pix":
                 presence = model_loader.get_presence(backend, model_tag)
                 self.active_gpu_models["pix2pix"] = presence
                 return asyncio.run(presence.edit(payload))
+            elif task_type == "image_generation":
+                presence = model_loader.get_presence(backend, model_tag)
+                self.active_gpu_models["pix2pix"] = presence
+                return asyncio.run(presence.generate(payload))
         finally:
             self.mark_idle(model_key)
             resource_manager.clear_memory()

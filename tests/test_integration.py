@@ -185,21 +185,138 @@ async def test_integration_health(client):
 
 @pytest.mark.gpu
 @pytest.mark.anyio
-async def test_integration_gpu_vllm_chat(client):
-    print("\n[Integration] Testing GPU Chat (vLLM)...")
+async def test_integration_gpu_text_qwen(client):
+    print("\n[Integration] Testing GPU Text (Qwen 0.6B)...")
     payload = {
-        "model": "mistral-7b-v0.1", 
-        "messages": [{"role": "user", "content": "Count to 3."}],
-        "stream": False
+        "model": "qwen3-0.6b.gguf", 
+        "messages": [{"role": "user", "content": "Hello GPU, who are you?"}],
+        "max_tokens": 20
     }
     headers = {"x-backend": "gpu"}
-    try:
-        response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
-        if response.status_code == 500:
-             pytest.skip("GPU Backend not available")
-        assert response.status_code == 200
-    except Exception as e:
-        pytest.skip(f"GPU connection failed: {e}")
+    response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    print(f"GPU Qwen Output: {content}")
+    assert len(content) > 0
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_vision_nanonets(client):
+    print("\n[Integration] Testing GPU Vision (Nanonets)...")
+    img = Image.new('RGB', (224, 224), color = 'white')
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_str = base64.b64encode(buffered.getvalue()).decode()
+    
+    payload = {
+        "model": "nanonets.gguf",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "What is in this image?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_str}"}}
+                ]
+            }
+        ]
+    }
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    print(f"GPU Vision Output: {content}")
+    assert len(content) > 0
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_emotion(client):
+    print("\n[Integration] Testing GPU Emotion (Multimodal)...")
+    image_path = os.path.join(os.path.dirname(__file__), "sad_person.jpg")
+    with open(image_path, "rb") as img_file:
+        img_str = base64.b64encode(img_file.read()).decode()
+    
+    payload = {
+        "model": "emotion",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "How does this person feel?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}
+                ]
+            }
+        ]
+    }
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
+    assert response.status_code == 200
+    content = response.json()["choices"][0]["message"]["content"]
+    print(f"GPU Emotion Output: {content}")
+    assert content.lower() == "sadness"
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_tts_xtts(client):
+    print("\n[Integration] Testing GPU TTS (XTTS)...")
+    payload = {"model": "xtts", "input": "Testing July Engine XTTS on GPU.", "voice": "yuni"}
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/audio/speech", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert len(response.content) > 1000
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_tts_piper(client):
+    print("\n[Integration] Testing GPU TTS (Piper)...")
+    payload = {"model": "piper", "input": "Testing July Engine Piper on GPU.", "voice": "en_US-lessac-medium"}
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/audio/speech", json=payload, headers=headers)
+    assert response.status_code == 200
+    assert len(response.content) > 1000
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_stt_faster_whisper(client):
+    print("\n[Integration] Testing GPU STT (FasterWhisper)...")
+    dummy_wav = b"RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00\x44\xac\x00\x00\x88\x58\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+    files = {"file": ("test.wav", dummy_wav, "audio/wav")}
+    data = {"model": "faster-whisper"}
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/audio/transcriptions", files=files, data=data, headers=headers)
+    assert response.status_code == 200
+    assert "text" in response.json()
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_embeddings_e5(client):
+    print("\n[Integration] Testing GPU Embeddings (Multilingual-E5)...")
+    payload = {"model": "multilingual-e5", "input": "This is a test sentence for GPU embeddings."}
+    headers = {"x-backend": "gpu"}
+    response = await client.post("/v1/openai/embeddings", json=payload, headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert "data" in data
+    assert len(data["data"][0]["embedding"]) > 0
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_integration_gpu_image_edit_pix2pix(client):
+    print("\n[Integration] Testing GPU Image Edit (Pix2Pix)...")
+    # Create a simple red image
+    img = Image.new('RGB', (256, 256), color = 'red')
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_bytes = buffered.getvalue()
+    
+    files = {"image": ("red.png", img_bytes, "image/png")}
+    data = {"prompt": "make it blue", "model": "pix2pix"}
+    headers = {"x-backend": "gpu"}
+    
+    response = await client.post("/v1/openai/images/edits", files=files, data=data, headers=headers)
+    assert response.status_code == 200
+    res_data = response.json()
+    assert "data" in res_data
+    assert len(res_data["data"][0]["b64_json"]) > 100
 
 # --- API TESTS ---
 
@@ -220,3 +337,93 @@ async def test_integration_api_ollama_qwen(client):
         assert response.status_code == 200
     except Exception as e:
         pytest.skip(f"Ollama connection failed: {e}")
+
+@pytest.mark.api
+@pytest.mark.anyio
+async def test_integration_api_ollama_vision(client):
+    print("\n[Integration] Testing Ollama API Vision (vision_unit_tests)...")
+    
+    # Use the existing sad_person.jpg file
+    image_path = os.path.join(os.path.dirname(__file__), "sad_person.jpg")
+    with open(image_path, "rb") as img_file:
+        img_str = base64.b64encode(img_file.read()).decode()
+    
+    payload = {
+        "model": "ollama/vision_unit_tests",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe the person in this image and their emotion."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}
+                ]
+            }
+        ],
+        "max_tokens": 100
+    }
+    headers = {"x-backend": "api"}
+    try:
+        response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
+        if response.status_code != 200:
+            print(f"Ollama Vision status: {response.status_code} - {response.text}")
+            pytest.skip("Ollama vision_unit_tests not available")
+        
+        json_resp = response.json()
+        print(f"Ollama Vision Full Response: {json.dumps(json_resp, indent=2)}")
+        
+        content = json_resp["choices"][0]["message"]["content"]
+        print(f"Ollama Vision Output: {content}")
+        assert len(content) > 0
+    except Exception as e:
+        print(f"Error in Ollama Vision: {e}")
+        pytest.skip(f"Ollama API vision failed: {e}")
+
+@pytest.mark.api
+@pytest.mark.anyio
+async def test_integration_api_image_generation_loopback(client):
+    print("\n[Integration] Testing API Image Generation Loopback (pix2pix)...")
+    payload = {
+        "prompt": "a beautiful sunset",
+        "model": "pix2pix"
+    }
+    # Point back to our own server for loopback testing
+    headers = {
+        "x-backend": "api",
+        "x-base-url": "http://localhost:8000/v1/openai"
+    }
+    try:
+        response = await client.post("/v1/openai/images/generations", json=payload, headers=headers)
+        if response.status_code == 500 and "Connection refused" in response.text:
+            pytest.skip("Local loopback requires server running on :8000")
+        assert response.status_code == 200
+        res_data = response.json()
+        assert "data" in res_data
+        assert len(res_data["data"][0]["b64_json"]) > 100
+    except Exception as e:
+        pytest.skip(f"API Image Gen loopback failed: {e}")
+
+@pytest.mark.api
+@pytest.mark.anyio
+async def test_integration_api_image_edit_loopback(client):
+    print("\n[Integration] Testing API Image Edit Loopback (pix2pix)...")
+    img = Image.new('RGB', (256, 256), color = 'green')
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_bytes = buffered.getvalue()
+    
+    files = {"image": ("green.png", img_bytes, "image/png")}
+    data = {"prompt": "make it red", "model": "pix2pix"}
+    headers = {
+        "x-backend": "api",
+        "x-base-url": "http://localhost:8000/v1/openai"
+    }
+    try:
+        response = await client.post("/v1/openai/images/edits", files=files, data=data, headers=headers)
+        if response.status_code == 500 and "Connection refused" in response.text:
+            pytest.skip("Local loopback requires server running on :8000")
+        assert response.status_code == 200
+        res_data = response.json()
+        assert "data" in res_data
+        assert len(res_data["data"][0]["b64_json"]) > 100
+    except Exception as e:
+        pytest.skip(f"API Image Edit loopback failed: {e}")

@@ -52,16 +52,34 @@ class Bridge:
             if image_part:
                 is_vision = True
                 image_url = image_part["image_url"]["url"]
+                # If it's data URI, extract base64 part
+                if image_url.startswith("data:"):
+                    try:
+                        image_data = image_url.split(",")[1]
+                    except IndexError:
+                        image_data = image_url
+                else:
+                    image_data = image_url
+
                 payload = {
                     "prompt": text_part.get("text", "") if text_part else "describe this image", 
-                    "image": image_url,
+                    "image": image_data,
                     "model": model_name,
                     "headers": headers
                 }
 
         task_type = "vision_chat" if is_vision else "text_chat"
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task(task_type, payload)
+        backend = headers.get("x-backend", "gpu").lower()
+
+        # Final payload decision
+        final_payload = payload
+        if backend == "api":
+            # litellm expects the full OpenAI structure
+            final_payload = request_data
+            final_payload['headers'] = headers
+
+        future = orch.submit_task(task_type, final_payload)
         response = await asyncio.wrap_future(future)
 
         if not stream:
@@ -179,9 +197,16 @@ class Bridge:
         future = orch.submit_task("stt", {"audio": audio_bytes, "model": model, "language": language, "headers": headers})
         return await asyncio.wrap_future(future)
 
-    async def process_image_edit(self, image_data: str, prompt: str, headers: Dict[str, str]) -> str:
+    async def process_image_edit(self, image_data: str, prompt: str, model: Optional[str], headers: Dict[str, str]) -> str:
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task("pix2pix", {"prompt": prompt, "image": image_data, "headers": headers})
+        future = orch.submit_task("pix2pix", {"prompt": prompt, "image": image_data, "model": model, "headers": headers})
+        return await asyncio.wrap_future(future)
+
+    async def process_image_generation(self, prompt: str, model: Optional[str], headers: Dict[str, str]) -> str:
+        orch = self.get_orchestrator(headers)
+        # For local models, image generation might fall back to pix2pix with a dummy image 
+        # or use a dedicated stable diffusion strategy.
+        future = orch.submit_task("image_generation", {"prompt": prompt, "model": model, "headers": headers})
         return await asyncio.wrap_future(future)
 
 bridge = Bridge()

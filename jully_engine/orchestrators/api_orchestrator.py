@@ -47,6 +47,9 @@ class ApiOrchestrator:
             elif task_type == "pix2pix":
                 presence = model_loader.get_presence(backend, model_tag)
                 return asyncio.run(presence.edit(payload))
+            elif task_type == "image_generation":
+                presence = model_loader.get_presence(backend, model_tag)
+                return asyncio.run(presence.generate(payload))
             else:
                 raise ValueError(f"Unknown API task type: {task_type}")
         except Exception as e:
