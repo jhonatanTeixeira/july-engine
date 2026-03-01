@@ -1,12 +1,12 @@
 # July Engine 🚀
 
-O **July Engine** é um motor de inferência multimodal de alta performance, projetado para operar de forma híbrida entre hardware local (CPU/GPU) e APIs externas (Ollama, OpenAI, Anthropic). Ele foi construído com foco em eficiência de recursos, sendo ideal para ambientes com VRAM limitada.
+**July Engine** is a high-performance multimodal inference engine, designed to operate hybridly between local hardware (CPU/GPU) and external APIs (Ollama, OpenAI, Anthropic). It was built with a focus on resource efficiency, making it ideal for environments with limited VRAM.
 
-## 🏗️ Arquitetura
+## 🏗️ Architecture
 
 ```mermaid
 graph TD
-    %% Estilização
+    %% Styling
     classDef entrypoint fill:#2d3436,stroke:#74b9ff,stroke-width:2px,color:#fff;
     classDef router fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff;
     classDef orchestrator fill:#6c5ce7,stroke:#a29bfe,stroke-width:2px,color:#fff;
@@ -16,18 +16,18 @@ graph TD
     classDef model_cpu fill:#e84393,stroke:#fd79a8,stroke-width:2px,color:#fff;
     classDef model_api fill:#fdcb6e,stroke:#ffeaa7,stroke-width:2px,color:#333;
 
-    %% Camada 1: Endpoints (FastAPI)
+    %% Layer 1: Endpoints (FastAPI)
     subgraph API_Endpoints [API Layer]
         O[openai.py]:::entrypoint
         A[anthropic.py]:::entrypoint
     end
 
-    %% Camada 2: Roteamento
+    %% Layer 2: Routing
     B{"Bridge (Routes by x-backend)"}:::router
     O --> B
     A --> B
 
-    %% Camada 3: Orquestradores e Factory
+    %% Layer 3: Orchestrators and Factory
     subgraph Core_Management [Management & Orchestration]
         GPU["GpuOrchestrator (Queue / VRAM)"]:::orchestrator
         CPU["CpuOrchestrator (RAM / Throttle)"]:::orchestrator
@@ -43,7 +43,7 @@ graph TD
     CPU -. "instantiates via" .-> ML
     API -. "instantiates via" .-> ML
 
-    %% Camada 4: Classes de Domínio (Estratégias)
+    %% Layer 4: Domain Classes (Strategies)
     subgraph Domain_Classes [Domain Classes]
         BR((Brain Text)):::domain
         EY((Eyes Vision/Emotion)):::domain
@@ -55,7 +55,7 @@ graph TD
 
     ML --> BR & EY & MO & EA & PR & ME
 
-    %% Camada 5: Implementações Reais dos Modelos
+    %% Layer 5: Real Model Implementations
     subgraph Model_Implementations [Model Strategies]
         M_GGUF[GGUF llama-cpp]:::model_gpu
         M_XTTS[XTTS2 TTS]:::model_gpu
@@ -70,7 +70,7 @@ graph TD
         M_LLM[LLMApi litellm]:::model_api
     end
 
-    %% Mapeamento Estratégico (Quem usa o que)
+    %% Strategic Mapping (Who uses what)
     BR -. uses .-> M_GGUF & M_LLM
     EY -. uses .-> M_VLM & M_EMO & M_GGUF & M_LLM
     MO -. uses .-> M_XTTS & M_PIP & M_LLM
@@ -79,50 +79,50 @@ graph TD
     ME -. uses .-> M_EMB & M_LLM
 ```
 
-O sistema segue uma hierarquia de responsabilidades clara:
+The system follows a clear hierarchy of responsibilities:
 
-1.  **FastAPI (Main/Routers)**: Interface REST compatível com padrões OpenAI/Anthropic.
-2.  **Bridge**: O cérebro central. Decida qual orquestrador usar com base nos headers (`x-backend`) ou carga do sistema.
+1.  **FastAPI (Main/Routers)**: REST interface compatible with OpenAI/Anthropic standards.
+2.  **Bridge**: The central brain. Decides which orchestrator to use based on headers (`x-backend`) or system load.
 3.  **Orchestrators**:
-    *   `GpuOrchestrator`: Gerencia modelos carregados na VRAM. Utiliza um `ResourceManager` para evitar estouro de memória.
-    *   `CpuOrchestrator`: Executa modelos via GGUF (llama-cpp) ou bibliotecas especializadas (Piper, FasterWhisper).
-    *   `ApiOrchestrator`: Encaminha requisições para provedores externos via `litellm`.
-4.  **Domain Classes (Brain, Eyes, Mouth, Ears, Presence, Memory)**: Abstrações de alto nível para capacidades (Texto, Visão, TTS, STT, Edição de Imagem, Embeddings).
-5.  **Engine Models**: Implementações reais dos modelos (GGUF, XTTS2, Pix2Pix, etc.).
+    *   `GpuOrchestrator`: Manages models loaded in VRAM. Uses a `ResourceManager` to prevent memory overflow.
+    *   `CpuOrchestrator`: Runs models via GGUF (llama-cpp) or specialized libraries (Piper, FasterWhisper).
+    *   `ApiOrchestrator`: Forwards requests to external providers via `litellm`.
+4.  **Domain Classes (Brain, Eyes, Mouth, Ears, Presence, Memory)**: High-level abstractions for capabilities (Text, Vision, TTS, STT, Image Editing, Embeddings).
+5.  **Engine Models**: Real implementations of models (GGUF, XTTS2, Pix2Pix, etc.).
 
-## 💾 Gerenciamento de Memória (VRAM/RAM)
+## 💾 Memory Management (VRAM/RAM)
 
-Para ambientes com pouca VRAM:
--   **Auto-Unload**: O `GpuOrchestrator` monitora a VRAM via `ResourceManager`. Se um modelo pesado (como Pix2Pix) for solicitado e não houver espaço, ele descarrega modelos ociosos.
--   **GGUF Offloading**: Modelos GGUF podem ser configurados para rodar inteiramente na CPU ou ter camadas descarregadas para a GPU (`n_gpu_layers`).
--   **Singleton Loader**: O `ModelLoader` garante que apenas uma instância de cada modelo exista na memória por backend.
+For environments with low VRAM:
+-   **Auto-Unload**: The `GpuOrchestrator` monitors VRAM via `ResourceManager`. If a heavy model (like Pix2Pix) is requested and there is no space, it unloads idle models.
+-   **GGUF Offloading**: GGUF models can be configured to run entirely on the CPU or have layers offloaded to the GPU (`n_gpu_layers`).
+-   **Singleton Loader**: The `ModelLoader` ensures that only one instance of each model exists in memory per backend.
 
-## 🤖 Modelos GGUF
+## 🤖 GGUF Models
 
-### Como baixar e usar:
-1.  Baixe modelos no formato `.gguf` (ex: do Hugging Face `TheBloke` ou `Bartowski`).
-2.  Coloque-os na pasta `july_engine/models/`.
-3.  Para visão, certifique-se de ter o arquivo `-mmproj.gguf` correspondente na mesma pasta.
-4.  No payload, use o nome exato do arquivo: `"model": "qwen3-0.6b.gguf"`.
+### How to download and use:
+1.  Download models in `.gguf` format (e.g., from Hugging Face `TheBloke` or `Bartowski`).
+2.  Place them in the `july_engine/models/` folder.
+3.  For vision, make sure you have the corresponding `-mmproj.gguf` file in the same folder.
+4.  In the payload, use the exact file name: `"model": "qwen3-0.6b.gguf"`.
 
-## 🛠️ Guia de Desenvolvimento
+## 🛠️ Development Guide
 
-### Como adicionar um novo modelo:
-1.  **Engine Model**: Crie uma nova classe em `jully_engine/engine_models/`. Ela deve ter métodos `load` e `run`.
-2.  **Domain Mapping**: Atualize a classe de domínio correspondente (ex: `jully_engine/domain/brain.py`) para reconhecer a nova tag de modelo ou estratégia.
-3.  **Orchestrator**: Se o modelo exigir inicialização especial, atualize os orquestradores.
+### How to add a new model:
+1.  **Engine Model**: Create a new class in `jully_engine/engine_models/`. It must have `load` and `run` methods.
+2.  **Domain Mapping**: Update the corresponding domain class (e.g., `jully_engine/domain/brain.py`) to recognize the new model tag or strategy.
+3.  **Orchestrator**: If the model requires special initialization, update the orchestrators.
 
-## 🗣️ Resolução de Vozes (TTS)
+## 🗣️ Voice Resolution (TTS)
 
-O motor utiliza dois arquivos de configuração em `storage/voices/` para mapear IDs de vozes para arquivos reais:
-1.  `voices.json`: Vozes padrão do sistema.
-2.  `uploaded_voices.json`: Vozes carregadas dinamicamente pelos usuários.
+The engine uses two configuration files in `storage/voices/` to map voice IDs to real files:
+1.  `voices.json`: Default system voices.
+2.  `uploaded_voices.json`: Voices dynamically uploaded by users.
 
-### Abstrações por Modelo:
--   **XTTS2**: Utiliza o campo `"path"`. Deve apontar para um arquivo `.wav` de referência (ex: `yuni.wav`) dentro da pasta de vozes. O modelo usa esse áudio para clonagem de voz (Zero-Shot).
--   **Piper**: Utiliza o campo `"piper_path"`. Deve seguir a estrutura do repositório `rhasspy/piper-voices` (ex: `pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx`). Se o arquivo não existir localmente, o motor tentará baixá-lo automaticamente do Hugging Face.
+### Abstractions per Model:
+-   **XTTS2**: Uses the `"path"` field. Must point to a reference `.wav` file (e.g., `yuni.wav`) within the voices folder. The model uses this audio for voice cloning (Zero-Shot).
+-   **Piper**: Uses the `"piper_path"` field. Must follow the `rhasspy/piper-voices` repository structure (e.g., `pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx`). If the file does not exist locally, the engine will attempt to download it automatically from Hugging Face.
 
-Exemplo de entrada no JSON:
+Example JSON entry:
 ```json
 {
     "id": "yuni",
@@ -132,38 +132,38 @@ Exemplo de entrada no JSON:
 }
 ```
 
-### Como usar na Requisição:
-No endpoint `POST /v1/openai/audio/speech`, o campo `voice` deve conter o `id` da voz desejada.
+### How to use in the Request:
+In the `POST /v1/openai/audio/speech` endpoint, the `voice` field must contain the `id` of the desired voice.
 
-**Exemplo de Payload:**
+**Example Payload:**
 ```json
 {
     "model": "xtts",
-    "input": "Olá, eu sou a Yuni!",
+    "input": "Hello, I am Yuni!",
     "voice": "yuni"
 }
 ```
 
-O motor buscará o ID `"yuni"` nos arquivos JSON e resolverá os caminhos correspondentes para o modelo solicitado (`xtts` ou `piper`).
+The engine will search for the ID `"yuni"` in the JSON files and resolve the corresponding paths for the requested model (`xtts` or `piper`).
 
-## 📡 Endpoints e Headers Customizados
+## 📡 Custom Endpoints and Headers
 
-### Headers Críticos:
--   `x-backend`: `cpu`, `gpu` ou `api`. Define onde o processamento ocorrerá.
--   `x-base-url`: URL base para provedores de API (usado no backend `api`).
+### Critical Headers:
+-   `x-backend`: `cpu`, `gpu`, or `api`. Defines where the processing will occur.
+-   `x-base-url`: Base URL for API providers (used in the `api` backend).
 
-### Endpoints Principais:
--   `POST /v1/openai/chat/completions`: Chat e Visão.
--   `POST /v1/openai/embeddings`: Geração de vetores.
+### Main Endpoints:
+-   `POST /v1/openai/chat/completions`: Chat and Vision.
+-   `POST /v1/openai/embeddings`: Vector generation.
 -   `POST /v1/openai/audio/speech`: TTS (XTTS2, Piper).
 -   `POST /v1/openai/audio/transcriptions`: STT (FasterWhisper).
--   `POST /v1/openai/images/generations`: Geração de imagem.
--   `POST /v1/openai/images/edits`: Edição via Pix2Pix.
--   `GET /health`: Status do motor e uso de hardware.
+-   `POST /v1/openai/images/generations`: Image generation.
+-   `POST /v1/openai/images/edits`: Editing via Pix2Pix.
+-   `GET /health`: Engine status and hardware usage.
 
-## 🧪 Testes de Integração
-Rode a suíte completa para garantir que nada quebrou:
+## 🧪 Integration Tests
+Run the full suite to ensure nothing is broken:
 ```bash
 pytest july_engine/tests/test_integration.py -v -s
 ```
-Flags úteis: `--cpu-only`, `--gpu-only`, `--api-only`.
+Useful flags: `--cpu-only`, `--gpu-only`, `--api-only`.
