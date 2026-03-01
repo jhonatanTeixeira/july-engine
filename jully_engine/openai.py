@@ -67,7 +67,7 @@ class ImageResponse(BaseModel):
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     payload = request.model_dump()
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     payload['headers'] = headers
     
     response = await bridge.process_openai_chat(payload)
@@ -79,7 +79,7 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     embeddings = await bridge.process_embeddings(request.input, request.model, headers)
     data = [{"object": "embedding", "index": i, "embedding": emb} for i, emb in enumerate(embeddings)]
     return {
@@ -91,7 +91,7 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 
 @router.post("/audio/speech")
 async def create_speech(request: SpeechRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     output_path = await bridge.process_tts(request.input, request.voice, request.model, headers)
     
     if output_path and os.path.exists(output_path):
@@ -108,7 +108,7 @@ async def create_transcription(
     model: str = Form(...),
     language: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     audio_bytes = await file.read()
     transcription = await bridge.process_stt(audio_bytes, model, language, headers)
     return {"text": transcription}
@@ -120,7 +120,7 @@ async def create_image_edit(
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     image_bytes = await image.read()
     image_data = base64.b64encode(image_bytes).decode()
     edited_image_base64 = await bridge.process_image_edit(image_data, prompt, model, headers)
@@ -131,7 +131,7 @@ async def create_image_edit(
 
 @router.post("/images/generations", response_model=ImageResponse)
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-")}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-") or k.lower() == 'authorization'}
     image_base64 = await bridge.process_image_generation(request.prompt, request.model, headers)
     return {
         "created": int(time.time()),

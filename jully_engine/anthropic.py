@@ -39,7 +39,7 @@ class ImageGenerationRequest(BaseModel):
 @router.post("/messages")
 async def create_message(request: MessageRequest, http_request: Request):
     payload = request.model_dump()
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     payload['headers'] = headers
     
     response = await bridge.process_anthropic_message(payload)
@@ -49,7 +49,7 @@ async def create_message(request: MessageRequest, http_request: Request):
 
 @router.post("/embeddings")
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     embeddings = await bridge.process_embeddings(request.input, request.model, headers)
     data = [{"index": i, "embedding": emb} for i, emb in enumerate(embeddings)]
     return {
@@ -61,7 +61,7 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 
 @router.post("/audio/speech")
 async def create_speech(request: SpeechRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     # Note: Anthropic doesn't have a standard speech endpoint, 
     # but we provide parity with OpenAI one here.
     output_path = await bridge.process_tts(request.input, request.voice, request.model, headers)
@@ -81,14 +81,14 @@ async def create_transcription(
     model: str = Form(...),
     language: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     audio_bytes = await file.read()
     transcription = await bridge.process_stt(audio_bytes, model, language, headers)
     return {"text": transcription}
 
 @router.post("/images/generations")
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-")}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-") or k.lower() == 'authorization'}
     image_base64 = await bridge.process_image_generation(request.prompt, request.model, headers)
     return {
         "created": int(time.time()),
@@ -102,7 +102,7 @@ async def create_image_edit(
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-')}
+    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
     image_bytes = await image.read()
     image_data = base64.b64encode(image_bytes).decode()
     edited_image_base64 = await bridge.process_image_edit(image_data, prompt, model, headers)
