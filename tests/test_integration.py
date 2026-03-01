@@ -322,6 +322,36 @@ async def test_integration_gpu_image_edit_pix2pix(client):
 
 @pytest.mark.api
 @pytest.mark.anyio
+async def test_integration_api_emotion(client):
+    print("\n[Integration] Testing API Emotion (via vision model)...")
+    image_path = os.path.join(os.path.dirname(__file__), "sad_person.jpg")
+    with open(image_path, "rb") as img_file:
+        img_str = base64.b64encode(img_file.read()).decode()
+    
+    payload = {
+        "model": "emotion",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "How does this person feel?"},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_str}"}}
+                ]
+            }
+        ]
+    }
+    headers = {"x-backend": "api"}
+    response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
+    assert response.status_code == 200
+    json_resp = response.json()
+    print(f"API Emotion Full Response: {json.dumps(json_resp, indent=2)}")
+    content = json_resp["choices"][0]["message"]["content"]
+    print(f"API Emotion Output: {content}")
+    # We expect 'sadness' because Moondream should identify it via the system prompt
+    assert "sadness" in content.lower()
+
+@pytest.mark.api
+@pytest.mark.anyio
 async def test_integration_api_ollama_qwen(client):
     print("\n[Integration] Testing Ollama API (unit_tests)...")
     payload = {

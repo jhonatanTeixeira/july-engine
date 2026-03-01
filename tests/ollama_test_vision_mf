@@ -1,3 +1,3 @@
-FROM moondream
+FROM gemma3:4b
 
-PARAMETER num_ctx 1024
+PARAMETER num_ctx 4096
