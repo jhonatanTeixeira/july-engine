@@ -1,0 +1,63 @@
+import logging
+import threading
+from typing import Dict, Any
+from .domain.brain import Brain
+from .domain.eyes import Eyes
+from .domain.mouth import Mouth
+from .domain.ears import Ears
+from .domain.presence import Presence
+from .domain.memory import Memory
+
+logger = logging.getLogger("JulyEngine.ModelLoader")
+
+class ModelLoader:
+    """
+    Factory class to instantiate and manage Domain classes with their strategies.
+    """
+    def __init__(self):
+        self.instances: Dict[str, Any] = {}
+        self.lock = threading.Lock()
+
+    def get_brain(self, backend: str, model_tag: str) -> Brain:
+        key = f"brain_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Brain(backend, model_tag)
+            return self.instances[key]
+
+    def get_eyes(self, backend: str, model_tag: str) -> Eyes:
+        key = f"eyes_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Eyes(backend, model_tag)
+            return self.instances[key]
+
+    def get_mouth(self, backend: str, model_tag: str) -> Mouth:
+        key = f"mouth_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Mouth(backend, model_tag)
+            return self.instances[key]
+
+    def get_ears(self, backend: str, model_tag: str) -> Ears:
+        key = f"ears_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Ears(backend, model_tag)
+            return self.instances[key]
+
+    def get_presence(self, backend: str, model_tag: str) -> Presence:
+        key = f"presence_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Presence(backend, model_tag)
+            return self.instances[key]
+
+    def get_memory(self, backend: str, model_tag: str) -> Memory:
+        key = f"memory_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = Memory(backend, model_tag)
+            return self.instances[key]
+
+model_loader = ModelLoader()

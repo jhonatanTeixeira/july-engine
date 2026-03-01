@@ -1,0 +1,14 @@
+[
+    {
+        "id": "yuni",
+        "language": "pt",
+        "path": "yuni.wav",
+        "piper_path": "pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx"
+    },
+    {
+        "id": "laurie",
+        "language": "en",
+        "path": "laurie.wav",
+        "piper_path": "en/en_US/lessac/medium/en_US-lessac-medium.onnx"
+    }
+]

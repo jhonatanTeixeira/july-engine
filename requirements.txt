@@ -1,0 +1,36 @@
+--extra-index-url https://download.pytorch.org/whl/cu126
+
+# Core PyTorch
+torch
+torchvision
+torchaudio
+torchcodec
+accelerate
+scipy
+safetensors
+fastapi[standard]
+diffusers
+faster-whisper
+coqui-tts
+sentence-transformers
+pydub
+numpy
+pillow
+python-multipart
+uvicorn
+psutil
+nvidia-ml-py
+pytest
+httpx
+pytest-asyncio
+ollama
+# Llama-cpp com suporte GGUF
+llama-cpp-python
+python-dotenv
+huggingface_hub
+pandas
+piper-tts
+optimum[onnxruntime]
+litellm
+hf_xet
+opencv-python-headless
