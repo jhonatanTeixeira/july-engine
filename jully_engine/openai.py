@@ -52,13 +52,13 @@ class ChatCompletionResponse(BaseModel):
         "message": {"role": "assistant", "content": "Hello! How can I help you?"},
         "finish_reason": "stop"
     }])
-    usage: Dict[str, int] = Field(..., examples=[{"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21}])
+    usage: Dict[str, Any] = Field(..., examples=[{"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21}])
 
 class EmbeddingResponse(BaseModel):
     object: str = "list"
     data: List[Dict[str, Any]] = Field(..., examples=[{"object": "embedding", "index": 0, "embedding": [0.1, 0.2, 0.3]}])
     model: str = Field(..., examples=["bge-micro"])
-    usage: Dict[str, int] = Field(..., examples=[{"prompt_tokens": 8, "total_tokens": 8}])
+    usage: Dict[str, Any] = Field(..., examples=[{"prompt_tokens": 8, "total_tokens": 8}])
 
 class ImageResponse(BaseModel):
     created: int = Field(..., examples=[1677652288])

@@ -38,7 +38,7 @@ class Eyes:
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             headers = payload.pop("headers", {})
-            return self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
 
         # Generalize extraction for local models
         image_data = payload.get("image")

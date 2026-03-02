@@ -29,7 +29,7 @@ class Brain:
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             headers = payload.pop("headers", {})
-            return self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
             
         elif isinstance(self._strategy, GGUF):
             messages = payload.get("messages", [])

@@ -24,7 +24,7 @@ class LLMApi:
             return None
         return headers.get("x-base-url", None)
 
-    def run_chat(self, model: str, messages: List[Dict[str, Any]], stream: bool = False, headers: Optional[Dict[str, str]] = None, **kwargs):
+    async def run_chat(self, model: str, messages: List[Dict[str, Any]], stream: bool = False, headers: Optional[Dict[str, str]] = None, **kwargs):
         """Runs chat/vision completions via litellm."""
         params = {
             "model": model,
@@ -42,7 +42,8 @@ class LLMApi:
             params["api_key"] = api_key
         
         try:
-            return completion(**params)
+            from litellm import acompletion
+            return await acompletion(**params)
         except Exception as e:
             logger.error(f"LLMApi: Chat failed: {e}")
             raise e
@@ -159,26 +160,32 @@ class LLMApi:
             raise e
 
     def run_image_edit(self, model: str, prompt: str, image: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
-        """Runs image editing via litellm. Returns base64 string."""
-        params = {
-            "model": model,
+        """Runs image editing directly via requests since litellm lacks image_editing."""
+        api_base = self._extract_base_url(headers) or "https://api.openai.com/v1"
+        api_key = self._extract_api_key(headers)
+        
+        req_headers = {}
+        if api_key:
+            req_headers["Authorization"] = f"Bearer {api_key}"
+            
+        url = f"{api_base.rstrip('/')}/images/edits"
+        
+        files = {
+            "image": ("image.png", image, "image/png")
+        }
+        
+        data = {
             "prompt": prompt,
-            "image": image,
+            "model": model,
             **kwargs
         }
         
-        api_base = self._extract_base_url(headers)
-        if api_base:
-            params["api_base"] = api_base
-            
-        api_key = self._extract_api_key(headers)
-        if api_key:
-            params["api_key"] = api_key
-            
         try:
-            import litellm
-            response = litellm.image_editing(**params)
-            raw_data = response.data[0].get("b64_json") or response.data[0].get("url")
+            import requests
+            response = requests.post(url, headers=req_headers, data=data, files=files)
+            response.raise_for_status()
+            res_json = response.json()
+            raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
             return self._ensure_base64(raw_data)
         except Exception as e:
             logger.error(f"LLMApi: Image edit failed: {e}")

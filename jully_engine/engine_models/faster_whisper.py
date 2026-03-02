@@ -11,7 +11,7 @@ class FasterWhisper:
         self.backend = backend
         self.device = "cuda" if backend == "gpu" and torch.cuda.is_available() else "cpu"
         self.model = None
-        self.model_size = os.environ.get("STT_MODEL", "base")
+        self.model_size = os.environ.get("STT_MODEL", "medium")
 
     def load(self):
         if self.model is None:

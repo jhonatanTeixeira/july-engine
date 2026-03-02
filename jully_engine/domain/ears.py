@@ -19,7 +19,7 @@ class Ears:
     def _get_strategy(self):
         if self.backend == "api":
             return LLMApi(backend=self.backend)
-        elif self.model_tag == "faster-whisper":
+        elif self.backend in ["gpu", "cpu"]:
             return FasterWhisper(backend=self.backend)
         else:
             raise ValueError(f"Ears: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
