@@ -17,19 +17,24 @@ class Memory:
         self._strategy = self._get_strategy()
 
     def _get_strategy(self):
-        if self.model_tag == "bge-micro":
+        if self.backend == "api":
+            return LLMApi(backend=self.backend)
+        elif self.model_tag == "bge-micro":
             return BgeMicro(backend="cpu")
         elif self.model_tag == "multilingual-e5":
             return MultilingualE5(backend="gpu")
-        elif self.backend == "api":
-            return LLMApi(backend=self.backend)
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    async def embed(self, input_text: str):
-        if isinstance(self._strategy, (BgeMicro, MultilingualE5)):
+    async def embed(self, payload: Dict[str, Any]):
+        if isinstance(self._strategy, LLMApi):
+            model = payload.pop("model", self.model_tag)
+            input_text = payload.pop("input", "")
+            headers = payload.pop("headers", {})
+            return self._strategy.run_embeddings(model, input_text, headers=headers, **payload)
+            
+        elif isinstance(self._strategy, (BgeMicro, MultilingualE5)):
+            input_text = payload.get("input", "")
             return self._strategy.run(input_text)
-        elif isinstance(self._strategy, LLMApi):
-            base_url = None # can be extracted if passed in context
-            return self._strategy.run_embeddings(self.model_tag, input_text, base_url=base_url)
+            
         return None

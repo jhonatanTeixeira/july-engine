@@ -6,7 +6,7 @@ import base64
 from fastapi.responses import Response, StreamingResponse
 from .bridge import bridge
 
-router = APIRouter()
+router = APIRouter(tags=["Anthropic"])
 
 class MessageRequest(BaseModel):
     model: str
@@ -39,18 +39,18 @@ class ImageGenerationRequest(BaseModel):
 @router.post("/messages")
 async def create_message(request: MessageRequest, http_request: Request):
     payload = request.model_dump()
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
-    payload['headers'] = headers
+    headers = dict(http_request.headers)
     
-    response = await bridge.process_anthropic_message(payload)
+    response = await bridge.process_anthropic_message(payload, headers)
     if isinstance(response, AsyncGenerator):
         return StreamingResponse(response, media_type="text/event-stream")
     return response
 
 @router.post("/embeddings")
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
-    embeddings = await bridge.process_embeddings(request.input, request.model, headers)
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
+    embeddings = await bridge.process_embeddings(payload, headers)
     data = [{"index": i, "embedding": emb} for i, emb in enumerate(embeddings)]
     return {
         "object": "list",
@@ -61,10 +61,11 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 
 @router.post("/audio/speech")
 async def create_speech(request: SpeechRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
     # Note: Anthropic doesn't have a standard speech endpoint, 
     # but we provide parity with OpenAI one here.
-    output_path = await bridge.process_tts(request.input, request.voice, request.model, headers)
+    output_path = await bridge.process_tts(payload, headers)
     
     import os
     if output_path and os.path.exists(output_path):
@@ -81,15 +82,21 @@ async def create_transcription(
     model: str = Form(...),
     language: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
+    headers = dict(http_request.headers)
     audio_bytes = await file.read()
-    transcription = await bridge.process_stt(audio_bytes, model, language, headers)
+    payload = {
+        "audio": audio_bytes,
+        "model": model,
+        "language": language
+    }
+    transcription = await bridge.process_stt(payload, headers)
     return {"text": transcription}
 
 @router.post("/images/generations")
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-") or k.lower() == 'authorization'}
-    image_base64 = await bridge.process_image_generation(request.prompt, request.model, headers)
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
+    image_base64 = await bridge.process_image_generation(payload, headers)
     return {
         "created": int(time.time()),
         "data": [{"b64_json": image_base64}]
@@ -102,10 +109,15 @@ async def create_image_edit(
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
+    headers = dict(http_request.headers)
     image_bytes = await image.read()
     image_data = base64.b64encode(image_bytes).decode()
-    edited_image_base64 = await bridge.process_image_edit(image_data, prompt, model, headers)
+    payload = {
+        "image": image_data,
+        "prompt": prompt,
+        "model": model
+    }
+    edited_image_base64 = await bridge.process_image_edit(payload, headers)
     return {
         "created": int(time.time()),
         "data": [{"b64_json": edited_image_base64}]

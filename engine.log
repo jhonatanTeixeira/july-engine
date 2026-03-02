@@ -1,0 +1,35 @@
+
+   FastAPI   Starting production server 🚀
+ 
+             Searching for package file structure from directories with        
+             __init__.py files                                                 
+INFO:ResourceManager:Detected GPU with 4.00 GB VRAM
+             Importing from E:\projects\jhon\ai\jully\july_engine
+ 
+    module   📁 jully_engine   
+             ├── 🐍 __init__.py
+             └── 🐍 main.py    
+ 
+      code   Importing the FastAPI app object from the module with the         
+             following code:                                                   
+ 
+             from jully_engine.main import app
+ 
+       app   Using import string: jully_engine.main:app
+ 
+    server   Server started at http://0.0.0.0:4000
+    server   Documentation at http://0.0.0.0:4000/docs
+ 
+             Logs:
+ 
+      INFO   Started server process [32444]
+INFO:uvicorn.error:Started server process [32444]
+      INFO   Waiting for application startup.
+INFO:uvicorn.error:Waiting for application startup.
+INFO:JulyEngine.Orchestrators.GpuOrchestrator:GpuOrchestrator: Starting up...
+INFO:JulyEngine.Orchestrators.CpuOrchestrator:CpuOrchestrator: Starting up and preloading CPU models...
+      INFO   Application startup complete.
+INFO:uvicorn.error:Application startup complete.
+      INFO   Uvicorn running on http://0.0.0.0:4000 (Press CTRL+C to quit)
+INFO:uvicorn.error:Uvicorn running on http://0.0.0.0:4000 (Press CTRL+C to quit)
+      INFO   127.0.0.1:52922 - "GET /health HTTP/1.1" 200

@@ -162,14 +162,13 @@ class GpuOrchestrator:
                 temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "storage", "temp")
                 os.makedirs(temp_dir, exist_ok=True)
                 temp_path = os.path.join(temp_dir, f"temp_gpu_{os.getpid()}_{time.time()}.wav")
-                return asyncio.run(mouth.speak(payload['text'], payload.get('voice'), payload.get('language'), temp_path))
+                return asyncio.run(mouth.speak(payload, temp_path))
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
-                return asyncio.run(ears.listen(payload['audio'], payload.get('language')))
+                return asyncio.run(ears.listen(payload.get('audio'), payload.get('language'), payload))
             elif task_type == "embedding":
                 memory = model_loader.get_memory(backend, model_tag)
-                input_text = payload.get("input")
-                return asyncio.run(memory.embed(input_text))
+                return asyncio.run(memory.embed(payload))
             elif task_type == "pix2pix":
                 presence = model_loader.get_presence(backend, model_tag)
                 self.active_gpu_models["pix2pix"] = presence

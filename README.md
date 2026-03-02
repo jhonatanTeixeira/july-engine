@@ -1,6 +1,7 @@
-# July Engine 🚀
+# July Engine
 
-**July Engine** is a high-performance multimodal inference engine, designed to operate hybridly between local hardware (CPU/GPU) and external APIs (Ollama, OpenAI, Anthropic). It was built with a focus on resource efficiency, making it ideal for environments with limited VRAM.
+**July Engine** is a high-performance multimodal inference engine
+, designed to operate hybridly between local hardware (CPU/GPU) and external APIs (Ollama, OpenAI, Anthropic). It was built with a focus on resource efficiency, making it ideal for environments with limited VRAM.
 
 ## 🏗️ Architecture
 

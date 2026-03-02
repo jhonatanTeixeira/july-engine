@@ -37,10 +37,10 @@ class ApiOrchestrator:
                 return asyncio.run(eyes.analyze(payload))
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
-                return asyncio.run(mouth.speak(payload['text'], payload.get('voice'), payload.get('language'), "temp_api.wav"))
+                return asyncio.run(mouth.speak(payload, "temp_api.wav"))
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
-                return asyncio.run(ears.listen(payload['audio'], payload.get('language')))
+                return asyncio.run(ears.listen(payload.get('audio'), payload.get('language'), payload))
             elif task_type == "embedding":
                 memory = model_loader.get_memory(backend, model_tag)
                 return asyncio.run(memory.embed(payload))

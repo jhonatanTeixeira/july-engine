@@ -7,7 +7,7 @@ import os
 from fastapi.responses import Response, StreamingResponse
 from .bridge import bridge
 
-router = APIRouter()
+router = APIRouter(tags=["OpenAI"])
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -67,10 +67,9 @@ class ImageResponse(BaseModel):
 @router.post("/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     payload = request.model_dump()
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
-    payload['headers'] = headers
+    headers = dict(http_request.headers)
     
-    response = await bridge.process_openai_chat(payload)
+    response = await bridge.process_openai_chat(payload, headers)
 
     if isinstance(response, AsyncGenerator):
         return StreamingResponse(response, media_type="text/event-stream")
@@ -79,8 +78,9 @@ async def chat_completions(request: ChatCompletionRequest, http_request: Request
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
-    embeddings = await bridge.process_embeddings(request.input, request.model, headers)
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
+    embeddings = await bridge.process_embeddings(payload, headers)
     data = [{"object": "embedding", "index": i, "embedding": emb} for i, emb in enumerate(embeddings)]
     return {
         "object": "list",
@@ -91,8 +91,9 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 
 @router.post("/audio/speech")
 async def create_speech(request: SpeechRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
-    output_path = await bridge.process_tts(request.input, request.voice, request.model, headers)
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
+    output_path = await bridge.process_tts(payload, headers)
     
     if output_path and os.path.exists(output_path):
         with open(output_path, "rb") as f:
@@ -108,9 +109,14 @@ async def create_transcription(
     model: str = Form(...),
     language: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
+    headers = dict(http_request.headers)
     audio_bytes = await file.read()
-    transcription = await bridge.process_stt(audio_bytes, model, language, headers)
+    payload = {
+        "audio": audio_bytes,
+        "model": model,
+        "language": language
+    }
+    transcription = await bridge.process_stt(payload, headers)
     return {"text": transcription}
 
 @router.post("/images/edits", response_model=ImageResponse)
@@ -120,10 +126,15 @@ async def create_image_edit(
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
 ):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith('x-') or k.lower() == 'authorization'}
+    headers = dict(http_request.headers)
     image_bytes = await image.read()
     image_data = base64.b64encode(image_bytes).decode()
-    edited_image_base64 = await bridge.process_image_edit(image_data, prompt, model, headers)
+    payload = {
+        "image": image_data,
+        "prompt": prompt,
+        "model": model
+    }
+    edited_image_base64 = await bridge.process_image_edit(payload, headers)
     return {
         "created": int(time.time()),
         "data": [{"b64_json": edited_image_base64}]
@@ -131,8 +142,9 @@ async def create_image_edit(
 
 @router.post("/images/generations", response_model=ImageResponse)
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
-    headers = {k: v for k, v in http_request.headers.items() if k.startswith("x-") or k.lower() == 'authorization'}
-    image_base64 = await bridge.process_image_generation(request.prompt, request.model, headers)
+    headers = dict(http_request.headers)
+    payload = request.model_dump()
+    image_base64 = await bridge.process_image_generation(payload, headers)
     return {
         "created": int(time.time()),
         "data": [{"b64_json": image_base64}]

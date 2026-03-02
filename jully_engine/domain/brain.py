@@ -16,22 +16,23 @@ class Brain:
         self._strategy = self._get_strategy()
 
     def _get_strategy(self):
-        if self.backend in ["gpu", "cpu"] and self.model_tag.endswith(".gguf"):
-            return GGUF(backend=self.backend)
-        elif self.backend == "api":
+        if self.backend == "api":
             return LLMApi(backend=self.backend)
+        elif self.backend in ["gpu", "cpu"] and self.model_tag.endswith(".gguf"):
+            return GGUF(backend=self.backend)
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def chat(self, payload: Dict[str, Any]):
-        messages = payload.get("messages", [])
-        stream = payload.get("stream", False)
-        base_url = payload.get("headers", {}).get("x-base-url")
-        
-        # Additional params
-        kwargs = {k: v for k, v in payload.items() if k not in ["messages", "stream", "model", "headers"]}
-
-        if isinstance(self._strategy, GGUF):
+        if isinstance(self._strategy, LLMApi):
+            model = payload.pop("model", self.model_tag)
+            messages = payload.pop("messages", [])
+            stream = payload.pop("stream", False)
+            headers = payload.pop("headers", {})
+            return self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            
+        elif isinstance(self._strategy, GGUF):
+            messages = payload.get("messages", [])
+            stream = payload.get("stream", False)
+            kwargs = {k: v for k, v in payload.items() if k not in ["messages", "stream", "model", "headers"]}
             return self._strategy.run_chat(self.model_tag, messages, stream=stream, **kwargs)
-        elif isinstance(self._strategy, LLMApi):
-            return self._strategy.run_chat(self.model_tag, messages, stream=stream, base_url=base_url, **kwargs)

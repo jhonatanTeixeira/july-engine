@@ -3,6 +3,7 @@ import logging
 import uuid
 import time
 import json
+from fastapi import HTTPException
 from typing import Any, Dict, Optional, Union, AsyncGenerator, List
 from .orchestrators.gpu_orchestrator import gpu_orchestrator
 from .orchestrators.cpu_orchestrator import cpu_orchestrator
@@ -31,63 +32,36 @@ class Bridge:
             await orch.stop()
 
     def get_orchestrator(self, headers: Dict[str, str]):
-        backend = headers.get("x-backend", "gpu").lower()
+        backend = headers.get("x-backend")
+        if not backend:
+            raise HTTPException(status_code=400, detail="Missing x-backend header")
+            
+        backend = backend.lower()
         if backend not in self.orchestrators:
-            logger.warning(f"Bridge: Unknown backend {backend}, falling back to gpu")
-            backend = "gpu"
+            raise HTTPException(status_code=400, detail=f"Unknown backend {backend}")
+            
         return self.orchestrators[backend]
 
-    async def process_openai_chat(self, request_data: Dict[str, Any]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
-        headers = request_data.get("headers", {})
-        messages = request_data.get("messages", [])
-        model_name = request_data.get("model", "default")
-        stream = request_data.get("stream", False)
+    async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
         
-        # Check for multimodal (vision)
-        last_message = messages[-1] if messages else None
+        messages = payload.get("messages", [])
+        stream = payload.get("stream", False)
+        model_name = payload.get("model", "default")
+        
         is_vision = False
-        payload = request_data
-
+        last_message = messages[-1] if messages else None
         if last_message and isinstance(last_message.get("content"), list):
-            content_parts = last_message["content"]
-            image_part = next((p for p in content_parts if p.get("type") == "image_url"), None)
-            text_part = next((p for p in content_parts if p.get("type") == "text"), None)
-
-            if image_part:
+            if any(p.get("type") == "image_url" for p in last_message["content"]):
                 is_vision = True
-                image_url = image_part["image_url"]["url"]
-                # If it's data URI, extract base64 part
-                if image_url.startswith("data:"):
-                    try:
-                        image_data = image_url.split(",")[1]
-                    except IndexError:
-                        image_data = image_url
-                else:
-                    image_data = image_url
-
-                payload = {
-                    "prompt": text_part.get("text", "") if text_part else "describe this image", 
-                    "image": image_data,
-                    "model": model_name,
-                    "headers": headers
-                }
 
         task_type = "vision_chat" if is_vision else "text_chat"
-        orch = self.get_orchestrator(headers)
-        backend = headers.get("x-backend", "gpu").lower()
-
-        # Final payload decision
-        final_payload = payload
-        if backend == "api":
-            # litellm expects the full OpenAI structure
-            final_payload = request_data
-            final_payload['headers'] = headers
-
-        future = orch.submit_task(task_type, final_payload)
+        
+        future = orch.submit_task(task_type, payload)
         response = await asyncio.wrap_future(future)
 
         if not stream:
-            # Normalize non-streaming response if it's just a string from local models
             if isinstance(response, str):
                 return {
                     "id": f"chatcmpl-{uuid.uuid4()}",
@@ -103,9 +77,7 @@ class Bridge:
                 }
             return response
 
-        # Streaming path
         async def openai_generator():
-            # If response is already a generator (from litellm or llama-cpp)
             for chunk in response:
                 chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
                 yield f"data: {json.dumps(chunk_dict)}\n\n"
@@ -114,33 +86,21 @@ class Bridge:
 
         return openai_generator()
 
-    async def process_anthropic_message(self, request_data: Dict[str, Any]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
-        headers = request_data.get("headers", {})
-        messages = request_data.get("messages", [])
-        stream = request_data.get("stream", False)
+    async def process_anthropic_message(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
         
-        # Detect if it's vision
-        last_message = messages[-1] if messages else None
+        messages = payload.get("messages", [])
+        stream = payload.get("stream", False)
+        
         is_vision = False
-        payload = request_data
-
+        last_message = messages[-1] if messages else None
         if last_message and isinstance(last_message.get("content"), list):
-            content_parts = last_message["content"]
-            image_part = next((p for p in content_parts if p.get("type") == "image"), None)
-            text_part = next((p for p in content_parts if p.get("type") == "text"), None)
-
-            if image_part:
+            if any(p.get("type") == "image" for p in last_message["content"]):
                 is_vision = True
-                image_source = image_part.get("source", {}).get("data", "")
-                payload = {
-                    "prompt": text_part.get("text", "") if text_part else "describe this image", 
-                    "image": image_source,
-                    "model": request_data.get("model"),
-                    "headers": headers
-                }
         
         task_type = "vision_chat" if is_vision else "text_chat"
-        orch = self.get_orchestrator(headers)
+        
         future = orch.submit_task(task_type, payload)
         response = await asyncio.wrap_future(future)
         
@@ -151,23 +111,21 @@ class Bridge:
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "text", "text": response}],
-                    "model": request_data.get("model", "claude-3"),
+                    "model": payload.get("model", "claude-3"),
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 0, "output_tokens": 0}
                 }
             return response
 
-        # Streaming path
         async def anthropic_generator():
             msg_id = f"msg_{uuid.uuid4()}"
-            model_name = request_data.get("model", "claude-3")
+            model_name = payload.get("model", "claude-3")
             
             yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
             yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
             
             for chunk in response:
                 chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
-                # litellm chunks are OpenAI format, need conversion to Anthropic for streaming
                 if 'choices' in chunk_dict:
                     delta = chunk_dict['choices'][0].get('delta', {})
                     if 'content' in delta and delta['content']:
@@ -181,36 +139,39 @@ class Bridge:
 
         return anthropic_generator()
 
-    async def process_embeddings(self, inputs: Union[str, List[str]], model: str, headers: Dict[str, str]) -> List[List[float]]:
+    async def process_embeddings(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[List[float]]:
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task("embedding", {"input": inputs, "model": model, "headers": headers})
+        payload['headers'] = headers
+        
+        future = orch.submit_task("embedding", payload)
         response = await asyncio.wrap_future(future)
         
-        # Normalize local response (often a single list for one input) to list of lists
         if isinstance(response, list) and len(response) > 0 and not isinstance(response[0], list):
             return [response]
         return response
 
-    async def process_tts(self, text: str, voice: str, model: str, headers: Dict[str, str]) -> bytes:
+    async def process_tts(self, payload: Dict[str, Any], headers: Dict[str, str]) -> bytes:
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task("tts", {"text": text, "voice": voice, "model": model, "headers": headers})
+        payload['headers'] = headers
+        future = orch.submit_task("tts", payload)
         return await asyncio.wrap_future(future)
 
-    async def process_stt(self, audio_bytes: bytes, model: str, language: Optional[str], headers: Dict[str, str]) -> str:
+    async def process_stt(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task("stt", {"audio": audio_bytes, "model": model, "language": language, "headers": headers})
+        payload['headers'] = headers
+        future = orch.submit_task("stt", payload)
         return await asyncio.wrap_future(future)
 
-    async def process_image_edit(self, image_data: str, prompt: str, model: Optional[str], headers: Dict[str, str]) -> str:
+    async def process_image_edit(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         orch = self.get_orchestrator(headers)
-        future = orch.submit_task("pix2pix", {"prompt": prompt, "image": image_data, "model": model, "headers": headers})
+        payload['headers'] = headers
+        future = orch.submit_task("pix2pix", payload)
         return await asyncio.wrap_future(future)
 
-    async def process_image_generation(self, prompt: str, model: Optional[str], headers: Dict[str, str]) -> str:
+    async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         orch = self.get_orchestrator(headers)
-        # For local models, image generation might fall back to pix2pix with a dummy image 
-        # or use a dedicated stable diffusion strategy.
-        future = orch.submit_task("image_generation", {"prompt": prompt, "model": model, "headers": headers})
+        payload['headers'] = headers
+        future = orch.submit_task("image_generation", payload)
         return await asyncio.wrap_future(future)
 
 bridge = Bridge()
