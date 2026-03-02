@@ -1,5 +1,8 @@
 # July Engine: Guia de Codificação para IA
 
+## Instalação de pacotes
+Sempre que quiser instalar um pacote, use o requirements.txt, atualize-o e rode o setup.sh no git bash
+
 ## 🧩 Princípios de Design
 1.  **Nenhum Mock nos Testes**: Todos os testes em `tests/test_integration.py` devem ser reais. Use modelos leves (Qwen 0.6B, Moondream, Nanonets) para validação.
 2.  **Abstração via Bridge**: Nunca chame um orquestrador diretamente nos routers. Use sempre a classe `Bridge`.

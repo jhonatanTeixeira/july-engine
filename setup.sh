@@ -29,7 +29,7 @@ else
 fi
 
 # Llama 1b para testes (Texto - Llama 3.1 8B Q4_K_M)
-if [ ! -f "models/qwen3-0.6b" ]; then
+if [ ! -f "models/qwen3-0.6b.gguf" ]; then
     echo "Baixando qwen3-0.6b para testes..."
     curl -L "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-UD-IQ1_S.gguf?download=true" -o models/qwen3-0.6b.gguf
 else

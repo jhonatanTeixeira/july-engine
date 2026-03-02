@@ -31,7 +31,30 @@ class FasterWhisper:
             
         try:
             import io
-            segments, info = self.model.transcribe(io.BytesIO(audio_data), language=language)
+            import numpy as np
+            import soundfile as sf
+            import noisereduce as nr
+            
+            # 1. Read the audio bytes into a numpy array
+            audio_io = io.BytesIO(audio_data)
+            data, rate = sf.read(audio_io)
+
+            # Convert to mono if stereo
+            if len(data.shape) > 1:
+                data = data.mean(axis=1)
+
+            # 2. Apply advanced background noise reduction
+            logger.info("FasterWhisper: Applying background noise reduction...")
+            reduced_noise_audio = nr.reduce_noise(y=data, sr=rate, prop_decrease=0.8)
+
+            # 3. Write the cleaned audio back to a bytes buffer in WAV format
+            clean_audio_io = io.BytesIO()
+            sf.write(clean_audio_io, reduced_noise_audio, rate, format='WAV', subtype='PCM_16')
+            clean_audio_io.seek(0)
+            
+            # 4. Transcribe the cleaned audio (with built-in vad_filter to drop empty silences)
+            logger.info("FasterWhisper: Transcribing cleaned audio...")
+            segments, info = self.model.transcribe(clean_audio_io, language=language, vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500))
             text = " ".join([segment.text for segment in segments]).strip()
             return text
         except Exception as e:
