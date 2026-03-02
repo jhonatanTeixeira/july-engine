@@ -34,3 +34,4 @@ optimum[onnxruntime]
 litellm
 hf_xet
 opencv-python-headless
+replicate
