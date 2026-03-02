@@ -159,10 +159,7 @@ class GpuOrchestrator:
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
                 self.active_gpu_models["tts"] = mouth
-                temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "storage", "temp")
-                os.makedirs(temp_dir, exist_ok=True)
-                temp_path = os.path.join(temp_dir, f"temp_gpu_{os.getpid()}_{time.time()}.wav")
-                return asyncio.run(mouth.speak(payload, temp_path))
+                return asyncio.run(mouth.speak(payload))
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
                 return asyncio.run(ears.listen(payload.get('audio'), payload.get('language'), payload))

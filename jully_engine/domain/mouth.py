@@ -3,7 +3,7 @@ import os
 import json
 from typing import Any, Dict, Optional
 
-from july_engine.jully_engine.engine_models.replicate import Replicate
+from ..engine_models.replicate_api import Replicate
 from ..engine_models.xtts2 import XTTS2
 from ..engine_models.piper import Piper
 from ..engine_models.llm_api import LLMApi
@@ -63,7 +63,7 @@ class Mouth:
         logger.warning(f"Mouth: Voice ID '{voice_id}' not found, using fallback.")
         return {"id": "yuni", "language": "pt", "path": "yuni.wav", "piper_path": "pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx"}
 
-    async def speak(self, payload: Dict[str, Any], output_path: str = "temp.wav"):
+    async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
         # For local strategies, unpack payload
         text = payload.get("input", payload.get("text", ""))
         voice_id = payload.get("voice", "")
@@ -80,20 +80,15 @@ class Mouth:
             payload.setdefault('voice_info', voice_info)
             
             audio_content = self._strategy.run_tts(model, text, voice_id, headers=headers, **payload)
-            
-            if audio_content:
-                with open(output_path, "wb") as f:
-                    f.write(audio_content)
-                return output_path
-            return None
+            return audio_content
         
         if isinstance(self._strategy, XTTS2):
             rel_path = voice_info.get("path")
             full_voice_path = os.path.join(self.voices_dir, rel_path)
-            return self._strategy.run(text, full_voice_path, lang, output_path)
+            return self._strategy.run(text, full_voice_path, lang)
             
         elif isinstance(self._strategy, Piper):
             hf_path = voice_info.get("piper_path")
-            return self._strategy.run(text, voice_id, output_path, hf_path=hf_path)
+            return self._strategy.run(text, voice_id, hf_path=hf_path)
             
         return None

@@ -31,7 +31,7 @@ class ApiOrchestrator:
                 return await eyes.analyze(payload)
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
-                return await mouth.speak(payload, "temp_api.wav")
+                return await mouth.speak(payload)
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
                 return await ears.listen(payload.get('audio'), payload.get('language'), payload)

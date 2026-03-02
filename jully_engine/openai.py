@@ -93,11 +93,9 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 async def create_speech(request: SpeechRequest, http_request: Request):
     headers = dict(http_request.headers)
     payload = request.model_dump()
-    output_path = await bridge.process_tts(payload, headers)
+    audio_bytes = await bridge.process_tts(payload, headers)
     
-    if output_path and os.path.exists(output_path):
-        with open(output_path, "rb") as f:
-            audio_bytes = f.read()
+    if audio_bytes:
         return Response(content=audio_bytes, media_type="audio/wav")
     
     return Response(status_code=500, content="TTS failed to generate audio")

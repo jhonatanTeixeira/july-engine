@@ -67,12 +67,16 @@ class Piper:
                 raise FileNotFoundError(f"Piper voice not found: {voice_id}")
             return onnx_path
 
-    def run(self, text: str, voice_id: str, output_path: str, hf_path: Optional[str] = None):
+    def run(self, text: str, voice_id: str, hf_path: Optional[str] = None) -> bytes:
         onnx_path = self._ensure_voice_files(voice_id, hf_path)
         # Piper expects the config file in the same dir as onnx, or passed via --config
         config_path = f"{onnx_path}.json"
         
+        import tempfile
         try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                output_path = tmp_file.name
+                
             logger.info(f"Piper: Synthesizing to {output_path} using model {onnx_path}")
             
             import sys
@@ -90,7 +94,13 @@ class Piper:
                 error_msg = stderr.decode('utf-8') if stderr else "No stderr"
                 raise RuntimeError(f"Piper process failed with code {process.returncode}: {error_msg}")
                 
-            return output_path
+            with open(output_path, "rb") as f:
+                audio_bytes = f.read()
+                
+            os.remove(output_path)
+            return audio_bytes
         except Exception as e:
+            if 'output_path' in locals() and os.path.exists(output_path):
+                os.remove(output_path)
             logger.error(f"Piper: execution failed: {e}")
             raise e

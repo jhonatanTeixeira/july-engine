@@ -26,11 +26,15 @@ class XTTS2:
                 logger.error(f"XTTS2: Failed to load: {e}")
                 raise e
 
-    def run(self, text: str, voice_path: str, language: str, output_path: str) -> str:
+    def run(self, text: str, voice_path: str, language: str) -> bytes:
         if self.model is None:
             self.load()
             
+        import tempfile
         try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                output_path = tmp_file.name
+                
             logger.info(f"XTTS2: Synthesizing to {output_path} using speaker {voice_path}")
             self.model.tts_to_file(
                 text=text,
@@ -38,7 +42,14 @@ class XTTS2:
                 language=language,
                 file_path=output_path
             )
-            return output_path
+            
+            with open(output_path, "rb") as f:
+                audio_bytes = f.read()
+                
+            os.remove(output_path)
+            return audio_bytes
         except Exception as e:
+            if 'output_path' in locals() and os.path.exists(output_path):
+                os.remove(output_path)
             logger.error(f"XTTS2: Execution failed: {e}")
             raise e
