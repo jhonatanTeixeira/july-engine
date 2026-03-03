@@ -1,0 +1,46 @@
+# Development Dockerfile for july_engine (CUDA Support)
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
+
+ENV CMAKE_ARGS="-DGGML_CUDA=on -DLLAMA_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86"
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
+ENV PATH=/usr/local/cuda/bin:$PATH
+
+# Install Python and build dependencies for CUDA
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3-pip \
+    python3.11-dev \
+    python3.11-venv \
+    git \
+    cmake \
+    curl \
+    bash \
+    build-essential \
+    ninja-build \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set python3.11 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
+WORKDIR /app
+
+# Dev environment with dedicated venv (to ignore host .venv)
+COPY requirements.txt .
+COPY setup.sh .
+
+# We setup the venv and then run the setup.sh INSIDE the venv
+RUN python -m venv .venv_docker && \
+    .venv_docker/bin/pip install --upgrade pip && \
+    chmod +x setup.sh && \
+    # Remove caracteres de fim de linha do Windows (CRLF) caso existam
+    sed -i 's/\r$//' setup.sh && \
+    PATH="/app/.venv_docker/bin:$PATH" bash ./setup.sh
+
+EXPOSE 8000
+
+# Set environment variable to use the venv
+ENV PATH="/app/.venv_docker/bin:$PATH"
+
+# Run with uvicorn directly for reload support
+CMD ["python", "-m", "uvicorn", "jully_engine.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

@@ -1,0 +1,24 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+.venv_docker/
+.env
+.env.*
+.git/
+# Ignoramos os modelos grandes para não deixar o contexto do Docker lento
+# O Dockerfile usa o setup.sh para baixá-los durante o build
+/models/*.gguf
+/models/*.onnx
+/models/*.json
+/storage/temp/*
+/storage/voices/uploaded/*.wav
+dist/
+build/
+*.spec
+engine.log
+agent.log
+frontend.log
+engine_err.log
+agent_err.log

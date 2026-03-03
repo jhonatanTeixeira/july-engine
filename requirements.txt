@@ -36,3 +36,4 @@ hf_xet
 opencv-python-headless
 replicate
 noisereduce
+pyinstaller
