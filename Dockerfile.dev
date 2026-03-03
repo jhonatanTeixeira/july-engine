@@ -6,7 +6,8 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
 ENV PATH=/usr/local/cuda/bin:$PATH
 
 # Install Python and build dependencies for CUDA
-RUN apt-get update && apt-get install -y \
+RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
+    apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
     python3.11-dev \
