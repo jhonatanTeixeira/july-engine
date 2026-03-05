@@ -3,10 +3,9 @@ import logging
 import uuid
 import time
 import json
+import os
 from fastapi import HTTPException
 from typing import Any, Dict, Optional, Union, AsyncGenerator, List
-from .orchestrators.gpu_orchestrator import gpu_orchestrator
-from .orchestrators.cpu_orchestrator import cpu_orchestrator
 from .orchestrators.api_orchestrator import api_orchestrator
 
 logger = logging.getLogger("JulyEngine.Bridge")
@@ -18,18 +17,30 @@ class Bridge:
     """
     def __init__(self):
         self.orchestrators = {
-            "gpu": gpu_orchestrator,
-            "cpu": cpu_orchestrator,
             "api": api_orchestrator
         }
+        
+        if os.environ.get("DISABLE_GPU", "false").lower() != "true":
+            from .orchestrators.gpu_orchestrator import gpu_orchestrator
+            self.orchestrators["gpu"] = gpu_orchestrator
+        else:
+            self.orchestrators["gpu"] = None
+            
+        if os.environ.get("DISABLE_CPU", "false").lower() != "true":
+            from .orchestrators.cpu_orchestrator import cpu_orchestrator
+            self.orchestrators["cpu"] = cpu_orchestrator
+        else:
+            self.orchestrators["cpu"] = None
 
     async def start(self):
         for name, orch in self.orchestrators.items():
-            await orch.start()
+            if orch:
+                await orch.start()
 
     async def stop(self):
         for name, orch in self.orchestrators.items():
-            await orch.stop()
+            if orch:
+                await orch.stop()
 
     def get_orchestrator(self, headers: Dict[str, str]):
         backend = headers.get("x-backend")
@@ -40,7 +51,11 @@ class Bridge:
         if backend not in self.orchestrators:
             raise HTTPException(status_code=400, detail=f"Unknown backend {backend}")
             
-        return self.orchestrators[backend]
+        orch = self.orchestrators[backend]
+        if orch is None:
+            raise HTTPException(status_code=400, detail=f"Backend {backend} is disabled on this engine")
+            
+        return orch
 
     async def _await_orch_task(self, future_or_coro):
         """Helper to properly await both asyncio coroutines and concurrent futures."""

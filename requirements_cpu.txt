@@ -1,0 +1,23 @@
+-r requirements.txt
+
+# CPU Models and Utilities
+torch
+torchvision
+torchaudio
+scipy
+safetensors
+diffusers
+faster-whisper
+sentence-transformers
+pydub
+numpy
+pillow
+ollama
+huggingface_hub
+pandas
+piper-tts
+optimum[onnxruntime]
+hf_xet
+opencv-python-headless
+noisereduce
+pyinstaller

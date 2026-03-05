@@ -1,10 +1,15 @@
 import gc
-import torch
 import psutil
 import os
-import pynvml
 import time
 import logging
+
+try:
+    import torch
+    import pynvml
+    HAS_TORCH = True
+except ImportError:
+    HAS_TORCH = False
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ResourceManager")
@@ -22,7 +27,7 @@ class ResourceManager:
         if self.initialized:
             return
         
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = "cuda" if HAS_TORCH and torch.cuda.is_available() else "cpu"
         self.has_gpu = self.device == "cuda"
         self.total_vram = 0
         
@@ -91,7 +96,7 @@ class ResourceManager:
     def clear_memory(self):
         """Aggressively clears memory."""
         gc.collect()
-        if self.has_gpu:
+        if self.has_gpu and HAS_TORCH:
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
             

@@ -16,8 +16,18 @@ pip install --upgrade pip wheel setuptools
 # echo "[2/3] Instalando llama-cpp-python com CUDA..."
 # pip install llama-cpp-python --no-cache-dir
 
-echo "[2/3] Instalando demais dependências do requirements.txt..."
+echo "[2/3] Instalando dependencias base (requirements.txt)..."
 pip install -r requirements.txt --no-cache-dir
+
+if [ "$ENABLE_CPU" = "true" ]; then
+    echo "[2.1/3] Instalando dependencias para CPU (requirements_cpu.txt)..."
+    pip install -r requirements_cpu.txt --no-cache-dir
+fi
+
+if [ "$ENABLE_GPU" = "true" ]; then
+    echo "[2.2/3] Instalando dependencias para GPU (requirements_gpu.txt)..."
+    pip install -r requirements_gpu.txt --no-cache-dir
+fi
 
 echo "[3/3] Criando diretório de modelos..."
 mkdir -p models

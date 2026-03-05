@@ -22,7 +22,15 @@ WORKDIR /app
 
 # Copy requirements and setup script
 COPY requirements.txt .
+COPY requirements_cpu.txt .
+COPY requirements_gpu.txt .
 COPY setup.sh .
+
+# Recebe os build args
+ARG ENABLE_CPU=true
+ARG ENABLE_GPU=true
+ENV ENABLE_CPU=$ENABLE_CPU
+ENV ENABLE_GPU=$ENABLE_GPU
 
 # Run setup.sh - This handles CUDA compilation for llama-cpp and downloads models
 # We ensure it's executable and fix CRLF issues
