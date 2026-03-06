@@ -218,4 +218,14 @@ class Bridge:
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("image_generation", payload))
 
+    async def process_search_web(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
+        return await self._await_orch_task(orch.submit_task("search_web", payload))
+
+    async def process_search_code(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
+        return await self._await_orch_task(orch.submit_task("search_code", payload))
+
 bridge = Bridge()

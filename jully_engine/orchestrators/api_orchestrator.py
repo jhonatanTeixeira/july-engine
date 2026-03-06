@@ -44,6 +44,12 @@ class ApiOrchestrator:
             elif task_type == "image_generation":
                 presence = model_loader.get_presence(backend, model_tag)
                 return await presence.generate(payload)
+            elif task_type == "search_web":
+                world = model_loader.get_world(backend, model_tag)
+                return await world.search_web(payload)
+            elif task_type == "search_code":
+                world = model_loader.get_world(backend, model_tag)
+                return await world.search_code(payload)
             else:
                 raise ValueError(f"Unknown API task type: {task_type}")
         except Exception as e:

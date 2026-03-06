@@ -7,13 +7,14 @@ from ..engine_models.replicate_api import Replicate
 from ..engine_models.xtts2 import XTTS2
 from ..engine_models.piper import Piper
 from ..engine_models.llm_api import LLMApi
+from ..engine_models.kokoro_tts import KokoroTTS
 
 logger = logging.getLogger("JulyEngine.Domain.Mouth")
 
 class Mouth:
     """
     Handles Text-to-Speech (TTS) logic and voice resolution.
-    Strategies: XTTS2 (cpu, gpu), Piper (cpu, gpu), LLMApi (api).
+    Strategies: XTTS2 (cpu, gpu), Piper (cpu, gpu), KokoroTTS (cpu, gpu), LLMApi (api).
     """
     def __init__(self, backend: str, model_tag: str):
         self.backend = backend
@@ -31,7 +32,8 @@ class Mouth:
             return XTTS2(backend=self.backend)
         elif self.model_tag == "piper":
             return Piper(backend=self.backend)
-        
+        elif self.model_tag.startswith("kokoro"):
+            return KokoroTTS(backend=self.backend, model_tag=self.model_tag)
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -90,5 +92,8 @@ class Mouth:
         elif isinstance(self._strategy, Piper):
             hf_path = voice_info.get("piper_path")
             return self._strategy.run(text, voice_id, hf_path=hf_path)
+            
+        elif isinstance(self._strategy, KokoroTTS):
+            return await self._strategy.run(text, voice=voice_id)
             
         return None

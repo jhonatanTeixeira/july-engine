@@ -60,4 +60,12 @@ class ModelLoader:
                 self.instances[key] = Memory(backend, model_tag)
             return self.instances[key]
 
+    def get_world(self, backend: str, model_tag: str):
+        from .domain.world import World
+        key = f"world_{backend}_{model_tag}"
+        with self.lock:
+            if key not in self.instances:
+                self.instances[key] = World(backend, model_tag)
+            return self.instances[key]
+
 model_loader = ModelLoader()

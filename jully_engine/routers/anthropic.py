@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any, Union, AsyncGenerator
 import time
 import base64
 from fastapi.responses import Response, StreamingResponse
-from .bridge import bridge
+from ..bridge import bridge
 
 router = APIRouter(tags=["Anthropic"])
 

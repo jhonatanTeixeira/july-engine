@@ -10,8 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from .bridge import bridge
 from .resource_manager import resource_manager
-from .openai import router as openai_router
-from .anthropic import router as anthropic_router
+from .routers.openai import router as openai_router
+from .routers.anthropic import router as anthropic_router
+from .routers.models import router as models_router
 from .voice_service import voice_service
 
 @asynccontextmanager
@@ -62,6 +63,7 @@ app.add_middleware(
 
 app.include_router(openai_router, prefix="/v1/openai")
 app.include_router(anthropic_router, prefix="/v1/anthropic")
+app.include_router(models_router)
 
 @app.get("/health", tags=["July"])
 async def health():
@@ -85,6 +87,24 @@ async def add_voice(request: Request):
     content = await file.read()
     new_voice = voice_service.add_voice(name, language, content, voice_type)
     return new_voice
+
+@app.post("/search/web", tags=["July"])
+async def search_web(request: Request):
+    payload = await request.json()
+    headers = dict(request.headers)
+    if "x-backend" not in headers:
+        headers["x-backend"] = "api"
+    result = await bridge.process_search_web(payload, headers)
+    return {"result": result}
+
+@app.post("/search/github", tags=["July"])
+async def search_github(request: Request):
+    payload = await request.json()
+    headers = dict(request.headers)
+    if "x-backend" not in headers:
+        headers["x-backend"] = "api"
+    result = await bridge.process_search_code(payload, headers)
+    return {"result": result}
 
 @app.get("/status", tags=["July"])
 async def get_status():

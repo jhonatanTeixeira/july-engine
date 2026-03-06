@@ -5,7 +5,7 @@ import time
 import base64
 import os
 from fastapi.responses import Response, StreamingResponse
-from .bridge import bridge
+from ..bridge import bridge
 
 router = APIRouter(tags=["OpenAI"])
 
