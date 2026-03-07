@@ -17,11 +17,12 @@ class World:
     async def search_web(self, payload: Dict[str, Any]):
         query = payload.get("query", "")
         engine = payload.get("model", "tavily").lower()
+        headers = payload.get("headers", {})
 
         if engine == "google":
-            return await self.google.search(query)
+            return await self.google.search(query, headers=headers)
         else:
-            return await self.tavily.search(query)
+            return await self.tavily.search(query, headers=headers)
 
     async def search_code(self, payload: Dict[str, Any]):
         query = payload.get("query", "")

@@ -21,3 +21,5 @@ hf_xet
 opencv-python-headless
 noisereduce
 pyinstaller
+kokoro
+py-cpuinfo

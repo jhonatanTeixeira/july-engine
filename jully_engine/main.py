@@ -13,6 +13,8 @@ from .resource_manager import resource_manager
 from .routers.openai import router as openai_router
 from .routers.anthropic import router as anthropic_router
 from .routers.models import router as models_router
+from .routers.calculator import router as calculator_router
+from .routers.monitoring import router as monitoring_router
 from .voice_service import voice_service
 
 @asynccontextmanager
@@ -64,6 +66,8 @@ app.add_middleware(
 app.include_router(openai_router, prefix="/v1/openai")
 app.include_router(anthropic_router, prefix="/v1/anthropic")
 app.include_router(models_router)
+app.include_router(calculator_router)
+app.include_router(monitoring_router)
 
 @app.get("/health", tags=["July"])
 async def health():

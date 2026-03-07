@@ -10,8 +10,8 @@ echo "-------------------------------------------------------"
 export CMAKE_ARGS="-DGGML_CUDA=on -DLLAMA_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86"
 # export FORCE_CMAKE=1
 
-echo "[1/3] Garantindo ferramentas de build no pip..."
-pip install --upgrade pip wheel setuptools
+# echo "[1/3] Garantindo ferramentas de build no pip..."
+# pip install --upgrade pip wheel setuptools
 
 # echo "[2/3] Instalando llama-cpp-python com CUDA..."
 # pip install llama-cpp-python --no-cache-dir

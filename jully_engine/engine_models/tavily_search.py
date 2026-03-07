@@ -9,14 +9,16 @@ class TavilySearch:
         self.backend = backend
         self.api_key = os.environ.get("TAVILY_API_KEY")
 
-    async def search(self, query: str):
-        if not self.api_key:
-            logger.error("TAVILY_API_KEY is not set")
+    async def search(self, query: str, headers: dict = {}):
+        api_key = headers.get("x-api-key") or self.api_key
+
+        if not api_key:
+            logger.error("TAVILY_API_KEY is missing")
             return "Error: TAVILY_API_KEY is missing."
 
         url = "https://api.tavily.com/search"
         payload = {
-            "api_key": self.api_key,
+            "api_key": api_key,
             "query": query,
             "search_depth": "basic",
             "include_answer": True,

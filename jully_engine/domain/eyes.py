@@ -27,7 +27,12 @@ class Eyes:
             return Emotion(backend="cpu")
         elif self.model_tag == "fastvlm":
             return FastVLM(backend="cpu")
-        elif self.backend in ["gpu", "cpu"] and self.model_tag.endswith(".gguf"):
+        
+        from ..routers.models import load_models_db
+        db = load_models_db()
+        is_gguf = self.model_tag.endswith(".gguf") or self.model_tag in db
+
+        if self.backend in ["gpu", "cpu"] and is_gguf:
             return GGUF(backend=self.backend)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")

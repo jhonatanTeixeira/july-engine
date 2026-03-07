@@ -73,18 +73,42 @@ class Bridge:
         
         is_vision = False
         last_message = messages[-1] if messages else None
+    
         if last_message and isinstance(last_message.get("content"), list):
             if any(p.get("type") == "image_url" for p in last_message["content"]):
                 is_vision = True
 
         task_type = "vision_chat" if is_vision else "text_chat"
         
+        logger.info('received request: %s', json.dumps({
+            'task_type': task_type,
+            'stream': stream,
+            'model_name': model_name,
+            'headers': headers
+        }))
+        
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
 
         if not stream:
+            # 1. Prioridade Alta: Pydantic Models (LiteLLM / API Orchestrator)
+            if hasattr(response, 'model_dump_json'):
+                return json.loads(response.model_dump_json())
+            elif hasattr(response, 'model_dump'):
+                return response.model_dump()
+            
+            # 2. Prioridade Alta: Dicionários completos (Nosso Adapter do GGUF)
+            # O usage real e cirúrgico do llama.cpp passa intacto por aqui
+            if isinstance(response, dict) and "choices" in response:
+                return response
+                
+            # 3. Fallback (O crime mitigado): Se algum orquestrador simples retornar apenas texto
             if isinstance(response, str):
+                logger.warning("Bridge: Orchestrator returned raw string. Estimating tokens.")
+                # Estimativa aproximada (1 token ~= 4 chars) para não zerar o painel
+                est_tokens = len(response) // 4
+    
                 return {
-                    "id": f"chatcmpl-{uuid.uuid4()}",
+                    "id": f"chatcmpl-{uuid.uuid4().hex[:10]}",
                     "object": "chat.completion",
                     "created": int(time.time()),
                     "model": model_name,
@@ -93,15 +117,13 @@ class Bridge:
                         "message": {"role": "assistant", "content": response},
                         "finish_reason": "stop"
                     }],
-                    "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+                    "usage": {"prompt_tokens": 0, "completion_tokens": est_tokens, "total_tokens": est_tokens}
                 }
-            if hasattr(response, 'model_dump_json'):
-                return json.loads(response.model_dump_json())
-            elif hasattr(response, 'model_dump'):
-                return response.model_dump()
+            
             return response
 
         async def openai_generator():
+            # Fluxo A: Async Generator Nativo (LiteLLM)
             if hasattr(response, '__aiter__'):
                 async for chunk in response:
                     if hasattr(chunk, 'model_dump_json'):
@@ -111,6 +133,8 @@ class Bridge:
                     else:
                         chunk_dict = chunk
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
+                    
+            # Fluxo B: Sync Generator (Llama.cpp / GGUF)
             else:
                 for chunk in response:
                     if hasattr(chunk, 'model_dump_json'):
@@ -119,12 +143,16 @@ class Bridge:
                         chunk_dict = chunk.model_dump()
                     else:
                         chunk_dict = chunk
+                        
                     yield f"data: {json.dumps(chunk_dict)}\n\n"
-                    await asyncio.sleep(0)
+                    
+                    # Cede o controle ao event loop do FastAPI (Crucial para generators síncronos não travarem o servidor)
+                    await asyncio.sleep(0) 
+                    
             yield "data: [DONE]\n\n"
 
         return openai_generator()
-
+    
     async def process_anthropic_message(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
@@ -143,51 +171,91 @@ class Bridge:
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
         
         if not stream:
-            if isinstance(response, str):
+            # 1. Pydantic Models (LiteLLM nativo Anthropic)
+            if hasattr(response, 'model_dump_json'):
+                return json.loads(response.model_dump_json())
+            elif hasattr(response, 'model_dump'):
+                return response.model_dump()
+                
+            # 2. Dict Completo (Nosso GGUF retornando formato OpenAI)
+            # Precisamos converter o dict da OpenAI para o formato Anthropic
+            if isinstance(response, dict) and "choices" in response:
+                content_text = response["choices"][0].get("message", {}).get("content", "")
+                usage = response.get("usage", {})
                 return {
-                    "id": f"msg_{uuid.uuid4()}",
+                    "id": f"msg_{uuid.uuid4().hex[:10]}",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": content_text}],
+                    "model": payload.get("model", "claude-3"),
+                    "stop_reason": "end_turn",
+                    "usage": {
+                        "input_tokens": usage.get("prompt_tokens", 0),
+                        "output_tokens": usage.get("completion_tokens", 0)
+                    }
+                }
+
+            # 3. Fallback: String pura
+            if isinstance(response, str):
+                est_tokens = len(response) // 4
+                return {
+                    "id": f"msg_{uuid.uuid4().hex[:10]}",
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "text", "text": response}],
                     "model": payload.get("model", "claude-3"),
                     "stop_reason": "end_turn",
-                    "usage": {"input_tokens": 0, "output_tokens": 0}
+                    "usage": {"input_tokens": 0, "output_tokens": est_tokens}
                 }
-            if hasattr(response, 'model_dump_json'):
-                return json.loads(response.model_dump_json())
-            elif hasattr(response, 'model_dump'):
-                return response.model_dump()
+                
             return response
 
         async def anthropic_generator():
-            msg_id = f"msg_{uuid.uuid4()}"
+            msg_id = f"msg_{uuid.uuid4().hex[:10]}"
             model_name = payload.get("model", "claude-3")
             
+            # Inicializa a mensagem (Anthropic spec)
             yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
             yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
             
+            final_output_tokens = 0
+
+            # Função auxiliar para processar cada chunk no padrão OpenAI -> Anthropic
+            def process_chunk(chunk_dict):
+                nonlocal final_output_tokens
+                events = []
+                
+                # É um chunk normal de texto?
+                if 'choices' in chunk_dict and len(chunk_dict['choices']) > 0:
+                    delta = chunk_dict['choices'][0].get('delta', {})
+                    if 'content' in delta and delta['content']:
+                        events.append(f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n")
+                
+                # É o chunk final contendo o USAGE da OpenAI?
+                if 'usage' in chunk_dict:
+                     final_output_tokens = chunk_dict['usage'].get('completion_tokens', 0)
+                     
+                return events
+
             if hasattr(response, '__aiter__'):
                 async for chunk in response:
                     chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
-                    if 'choices' in chunk_dict:
-                        delta = chunk_dict['choices'][0].get('delta', {})
-                        if 'content' in delta and delta['content']:
-                            yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n"
+                    for event in process_chunk(chunk_dict):
+                        yield event
             else:
                 for chunk in response:
                     chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
-                    if 'choices' in chunk_dict:
-                        delta = chunk_dict['choices'][0].get('delta', {})
-                        if 'content' in delta and delta['content']:
-                            yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n"
+                    for event in process_chunk(chunk_dict):
+                        yield event
                     await asyncio.sleep(0)
             
+            # Encerramento do Stream (Anthropic spec) com os tokens corretos
             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-            yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': 0}})}\n\n"
+            yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
             yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
         return anthropic_generator()
-
+    
     async def process_embeddings(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[List[float]]:
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers

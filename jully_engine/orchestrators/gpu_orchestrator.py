@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 from ..resource_manager import resource_manager
 from ..model_loader import model_loader
+from ..routers.calculator import estimate_vram_ram
+from ..routers.models import load_models_db
 
 logger = logging.getLogger("JulyEngine.Orchestrators.GpuOrchestrator")
 
@@ -31,7 +33,7 @@ class GpuOrchestrator:
         if not self.running:
             with self.lock:
                 self.running = True
-                task_types = ["text_chat", "vision_chat", "stt", "tts", "embedding", "pix2pix"]
+                task_types = ["text_chat", "vision_chat", "stt", "tts", "embedding", "pix2pix", "image_generation"]
                 for tt in task_types:
                     self.executors[tt] = ThreadPoolExecutor(
                         max_workers=self.parallel_limit, 
@@ -84,6 +86,26 @@ class GpuOrchestrator:
                 if self.busy_counts[model_key] == 0:
                     self.conditions[model_key].notify_all()
 
+    def _unload_domain_instance(self, instance):
+        if hasattr(instance, '_strategy'):
+            strategy = instance._strategy
+            if hasattr(strategy, 'unload'):
+                try:
+                    # Some unloads take model_tag (GGUF), others take none (XTTS2)
+                    import inspect
+                    sig = inspect.signature(strategy.unload)
+                    if len(sig.parameters) > 0:
+                        strategy.unload(instance.model_tag)
+                    else:
+                        strategy.unload()
+                except Exception as e:
+                    logger.warning(f"Error unloading strategy {strategy}: {e}")
+            elif hasattr(strategy, 'clear'):
+                try:
+                    strategy.clear()
+                except Exception as e:
+                    logger.warning(f"Error clearing strategy {strategy}: {e}")
+
     def ensure_resources(self, model_key: str, required_vram: float = 4000):
         """
         Unloads models based on priority to free up VRAM.
@@ -112,9 +134,10 @@ class GpuOrchestrator:
                         logger.warning(f"GpuOrchestrator: Timeout waiting for {candidate}, forcing unload.")
                 
                 logger.info(f"GpuOrchestrator: Unloading {candidate} to free {required_vram}MB")
-                # In this refactor, domain classes manage their internal strategy loading
-                # We just remove them from active tracking here, strategy will reload if called again
+                
                 if candidate in self.active_gpu_models:
+                    instance = self.active_gpu_models[candidate]
+                    self._unload_domain_instance(instance)
                     del self.active_gpu_models[candidate]
                 
                 resource_manager.clear_memory()
@@ -129,6 +152,43 @@ class GpuOrchestrator:
             raise ValueError(f"Unknown GPU task type: {task_type}")
         return executor.submit(self._execute_task_sync, task_type, payload)
 
+    def _estimate_required_vram(self, task_type: str, model_tag: str, payload: Any) -> float:
+        required_vram_mb = 2000 # default base limit
+        
+        if task_type in ["text_chat", "vision_chat"]:
+            try:
+                db = load_models_db()
+                if model_tag in db:
+                    meta = db[model_tag]
+                    params_b = meta.get("num_params")
+                    quant = meta.get("quantization")
+                    if params_b and quant:
+                        headers = payload.get("headers", {})
+                        ctx_str = headers.get("x-context-window")
+                        
+                        effective_n_ctx = meta.get("context_window", 2048)
+                        if ctx_str:
+                            try:
+                                effective_n_ctx = int(ctx_str)
+                            except ValueError:
+                                pass
+                                
+                        n_layers = meta.get("num_layers", -1)
+                        estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, n_layers)
+                        required_vram_mb = estimates["estimated_vram_gb"] * 1024
+                        logger.debug(f"GpuOrchestrator: Estimated {required_vram_mb}MB VRAM for {model_tag}")
+            except Exception as e:
+                logger.error(f"GpuOrchestrator: Failed to estimate VRAM for {model_tag}: {e}")
+                
+        elif task_type == "tts":
+            required_vram_mb = 2500 if "kokoro" not in model_tag.lower() else 1500
+        elif task_type in ["pix2pix", "image_generation"]:
+            required_vram_mb = 4500
+        elif task_type == "stt":
+            required_vram_mb = 1500
+            
+        return required_vram_mb
+
     def _execute_task_sync(self, task_type: str, payload: Any):
         model_tag = payload.get("model")
         if not model_tag:
@@ -140,10 +200,11 @@ class GpuOrchestrator:
         model_key = "llm"
         if task_type == "vision_chat": model_key = "vision"
         elif task_type == "tts": model_key = "tts"
-        elif task_type == "pix2pix": model_key = "pix2pix"
+        elif task_type in ["pix2pix", "image_generation"]: model_key = "pix2pix"
 
-        # Ensure resources (vram)
-        # self.ensure_resources(model_key) # logic is complex, keep it simple for now
+        # Calculate exact VRAM needed and ensure it is available before executing
+        required_vram = self._estimate_required_vram(task_type, model_tag, payload)
+        self.ensure_resources(model_key, required_vram)
 
         self.mark_busy(model_key)
         try:

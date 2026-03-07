@@ -5,6 +5,8 @@ python-multipart
 python-dotenv
 litellm
 replicate
+requests
+tavily-python
 pytest
 pytest-asyncio
 psutil
