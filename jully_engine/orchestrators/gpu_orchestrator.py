@@ -12,6 +12,47 @@ from ..routers.models import load_models_db
 
 logger = logging.getLogger("JulyEngine.Orchestrators.GpuOrchestrator")
 
+def guess_num_layers(combined_name: str, params: float) -> int:
+    """Adivinha o número de layers baseado no tamanho do modelo."""
+    if not params:
+        return -1 # -1 significa "auto" para o llama.cpp
+        
+    combined_name = combined_name.lower()
+    
+    # Família 7B - 8B
+    if 7 <= params <= 9:
+        if "gemma" in combined_name and params >= 9:
+            return 42 # Gemma 2 9B
+        return 32
+        
+    # Família 0.5B - 3B
+    if params < 3:
+        if "qwen" in combined_name and params < 1:
+            return 24 # Qwen 0.5B
+        if "qwen" in combined_name and 1 <= params <= 2:
+            return 28 # Qwen 1.5B
+        if "gemma" in combined_name:
+            return 18 # Gemma 2B
+        if "phi" in combined_name:
+            return 32 # Phi-2 / Phi-3 Mini
+        return 24
+        
+    # Família 13B - 14B
+    if 12 <= params <= 15:
+        if "qwen" in combined_name:
+            return 48
+        return 40
+        
+    # Família 32B - 35B
+    if 30 <= params <= 35:
+        return 64
+        
+    # Família 70B+
+    if params >= 70:
+        return 80
+
+    return -1
+
 class GpuOrchestrator:
     """
     Manages GPU-bound tasks using dedicated thread pools and resource management.
@@ -22,12 +63,10 @@ class GpuOrchestrator:
         self.running = False
         self.executors = {}
         self.lock = threading.Lock()
-        
-        # Resource management
         self.priorities = ["llm", "vision", "tts"]
         self.busy_counts = {k: 0 for k in ["llm", "vision", "tts", "pix2pix"]}
         self.conditions = {k: threading.Condition(self.lock) for k in self.busy_counts.keys()}
-        self.active_gpu_models: Dict[str, Any] = {} # model_key -> domain_instance
+        self.active_gpu_models: Dict[str, Any] = {} 
 
     async def start(self):
         if not self.running:
@@ -36,10 +75,9 @@ class GpuOrchestrator:
                 task_types = ["text_chat", "vision_chat", "stt", "tts", "embedding", "pix2pix", "image_generation"]
                 for tt in task_types:
                     self.executors[tt] = ThreadPoolExecutor(
-                        max_workers=self.parallel_limit, 
+                        max_workers=self.parallel_limit,
                         thread_name_prefix=f"gpu_orchestrator_{tt}"
                     )
-                
             logger.info("GpuOrchestrator: Starting up...")
             await self._startup()
 
@@ -57,9 +95,7 @@ class GpuOrchestrator:
         """
         raw_startup = os.environ.get("STARTUP_MODELS", "llm,stt,tts,vision").lower()
         startup_models = [m.strip() for m in raw_startup.split(",") if m.strip()]
-        
         backend = "gpu"
-        # Map human-friendly names to internal model keys and model tags
         for sm in startup_models:
             if sm == "llm":
                 model_tag = os.environ.get("LLM_MODEL", "mistral-7b-v0.1.Q4_K_M.gguf")
@@ -70,9 +106,8 @@ class GpuOrchestrator:
                 logger.info(f"GpuOrchestrator: Preloading Eyes ({model_tag})...")
                 self.active_gpu_models["vision"] = model_loader.get_eyes(backend, model_tag)
             elif sm == "tts":
-                model_tag = "xtts"
                 logger.info(f"GpuOrchestrator: Preloading Mouth (xtts)...")
-                self.active_gpu_models["tts"] = model_loader.get_mouth(backend, model_tag)
+                self.active_gpu_models["tts"] = model_loader.get_mouth(backend, 'xtts')
 
     def mark_busy(self, model_key: str):
         with self.lock:
@@ -91,7 +126,6 @@ class GpuOrchestrator:
             strategy = instance._strategy
             if hasattr(strategy, 'unload'):
                 try:
-                    # Some unloads take model_tag (GGUF), others take none (XTTS2)
                     import inspect
                     sig = inspect.signature(strategy.unload)
                     if len(sig.parameters) > 0:
@@ -106,28 +140,24 @@ class GpuOrchestrator:
                 except Exception as e:
                     logger.warning(f"Error clearing strategy {strategy}: {e}")
 
-    def ensure_resources(self, model_key: str, required_vram: float = 4000):
+    def ensure_resources(self, model_key: str, required_vram: float = 4000) -> float:
         """
         Unloads models based on priority to free up VRAM.
+        Returns the final available VRAM.
         """
         with self.lock:
             available = resource_manager.get_available_vram_mb()
             while available < required_vram:
                 candidate = None
-                # Check transient models first
                 if "pix2pix" in self.active_gpu_models and model_key != "pix2pix":
                     candidate = "pix2pix"
                 else:
-                    # Unload based on reversed priority list
                     for p in reversed(self.priorities):
                         if p in self.active_gpu_models and p != model_key:
                             candidate = p
                             break
-                
                 if not candidate:
                     break
-                
-                # If model is busy, wait for it to be idle
                 if self.busy_counts.get(candidate, 0) > 0:
                     logger.info(f"GpuOrchestrator: Waiting for {candidate} to become idle...")
                     if not self.conditions[candidate].wait(timeout=30):
@@ -136,75 +166,62 @@ class GpuOrchestrator:
                 logger.info(f"GpuOrchestrator: Unloading {candidate} to free {required_vram}MB")
                 
                 if candidate in self.active_gpu_models:
-                    instance = self.active_gpu_models[candidate]
-                    self._unload_domain_instance(instance)
+                    self._unload_domain_instance(self.active_gpu_models[candidate])
                     del self.active_gpu_models[candidate]
-                
                 resource_manager.clear_memory()
                 available = resource_manager.get_available_vram_mb()
+            return available
 
     def submit_task(self, task_type: str, payload: Any):
-        if not self.running:
-            raise RuntimeError("GpuOrchestrator not running")
-            
+        if not self.running: raise RuntimeError("GpuOrchestrator not running")
         executor = self.executors.get(task_type)
-        if not executor:
-            raise ValueError(f"Unknown GPU task type: {task_type}")
+        if not executor: raise ValueError(f"Unknown GPU task type: {task_type}")
         return executor.submit(self._execute_task_sync, task_type, payload)
 
-    def _estimate_required_vram(self, task_type: str, model_tag: str, payload: Any) -> float:
-        required_vram_mb = 2000 # default base limit
-        
-        if task_type in ["text_chat", "vision_chat"]:
-            try:
-                db = load_models_db()
-                if model_tag in db:
-                    meta = db[model_tag]
-                    params_b = meta.get("num_params")
-                    quant = meta.get("quantization")
-                    if params_b and quant:
-                        headers = payload.get("headers", {})
-                        ctx_str = headers.get("x-context-window")
-                        
-                        effective_n_ctx = meta.get("context_window", 2048)
-                        if ctx_str:
-                            try:
-                                effective_n_ctx = int(ctx_str)
-                            except ValueError:
-                                pass
-                                
-                        n_layers = meta.get("num_layers", -1)
-                        estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, n_layers)
-                        required_vram_mb = estimates["estimated_vram_gb"] * 1024
-                        logger.debug(f"GpuOrchestrator: Estimated {required_vram_mb}MB VRAM for {model_tag}")
-            except Exception as e:
-                logger.error(f"GpuOrchestrator: Failed to estimate VRAM for {model_tag}: {e}")
-                
-        elif task_type == "tts":
-            required_vram_mb = 2500 if "kokoro" not in model_tag.lower() else 1500
-        elif task_type in ["pix2pix", "image_generation"]:
-            required_vram_mb = 4500
-        elif task_type == "stt":
-            required_vram_mb = 1500
-            
-        return required_vram_mb
-
     def _execute_task_sync(self, task_type: str, payload: Any):
-        model_tag = payload.get("model")
-        if not model_tag:
-            model_tag = os.environ.get("LLM_MODEL")
-        
+        from fastapi import HTTPException
+        model_tag = payload.get("model") or os.environ.get("LLM_MODEL")
         backend = "gpu"
         
-        # Mapping task to resource key
         model_key = "llm"
         if task_type == "vision_chat": model_key = "vision"
         elif task_type == "tts": model_key = "tts"
         elif task_type in ["pix2pix", "image_generation"]: model_key = "pix2pix"
 
-        # Calculate exact VRAM needed and ensure it is available before executing
-        required_vram = self._estimate_required_vram(task_type, model_tag, payload)
-        self.ensure_resources(model_key, required_vram)
+        # 1. Resource pre-check and unloading
+        db = load_models_db()
+        meta = db.get(model_tag, {})
+        params_b = meta.get("num_params", 0)
+        quant = meta.get("quantization", "Q4_K_M")
+        
+        headers = payload.get("headers", {})
+        effective_n_ctx = int(headers.get("x-context-window") or meta.get("context_window") or 2048)
+        
+        original_n_layers = meta.get("num_layers", -1)
+        if original_n_layers == -1:
+            original_n_layers = guess_num_layers(model_tag + meta.get("filename", ""), params_b)
+        
+        current_n_layers = original_n_layers
+        estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, current_n_layers)
+        required_vram_mb = estimates["estimated_vram_gb"] * 1024
+
+        # 2. Try to free up memory
+        available_vram = self.ensure_resources(model_key, required_vram_mb)
+
+        # 3. Iterative layer optimization if it still doesn't fit
+        if available_vram < required_vram_mb and current_n_layers > 0:
+            logger.info(f"GpuOrchestrator: Model {model_tag} ({required_vram_mb:.2f}MB) too big for VRAM ({available_vram:.2f}MB). Decrementing layers...")
+            while current_n_layers > 0 and available_vram < required_vram_mb:
+                current_n_layers -= 1
+                estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, current_n_layers)
+                required_vram_mb = estimates["estimated_vram_gb"] * 1024
+            
+            logger.info(f"GpuOrchestrator: Optimized model to {current_n_layers} layers ({required_vram_mb:.2f}MB required)")
+            # Update meta in memory so model_loader uses the optimized layer count
+            meta["num_layers"] = current_n_layers
+
+        if available_vram < required_vram_mb:
+            raise HTTPException(status_code=422, detail=f"Insufficient VRAM even with 0 layers. Required: {required_vram_mb:.2f}MB, Available: {available_vram:.2f}MB.")
 
         self.mark_busy(model_key)
         try:

@@ -48,47 +48,23 @@ class GGUF:
     
     def load(self, model_alias: str, n_ctx: Optional[int] = None):
         meta = self._get_model_metadata(model_alias)
-        
-        # Determine effective context window
-        effective_n_ctx = n_ctx
-        if effective_n_ctx is None:
-            effective_n_ctx = meta.get("context_window")
-            if effective_n_ctx is None:
-                 effective_n_ctx = int(os.environ.get("LLM_CTX_TOKENS", 2048))
+
+        # Determine effective context window and layers
+        effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 2048))
+        n_gpu_layers = meta.get("num_layers", -1) if self.backend == "gpu" else 0
+
+        # --- Lógica de Recarregamento Inteligente ---
+        if model_alias in self.active_models:
+            current_model = self.active_models[model_alias]
+            # Verifica se os parâmetros da instância em RAM batem com os solicitados
+            if current_model.n_ctx() == effective_n_ctx and getattr(current_model, '_n_gpu_layers', None) == n_gpu_layers:
+                return current_model
+            else:
+                logger.info(f"GGUF: Metadata changed for {model_alias} (n_ctx={effective_n_ctx}, layers={n_gpu_layers}). Reloading binary...")
+                self.unload(model_alias)
 
         # Ensures model is downloaded
         model_path = self._ensure_downloaded(meta["model_id"], meta["filename"])
-
-        if model_alias in self.active_models:
-            current_model = self.active_models[model_alias]
-            if current_model.n_ctx() == effective_n_ctx:
-                return current_model
-            else:
-                logger.info(f"GGUF: Reloading {model_alias} with new n_ctx={effective_n_ctx}")
-                self.unload(model_alias)
-
-        # Hardware Check
-        n_gpu_layers = meta.get("num_layers", -1) if self.backend == "gpu" else 0
-        
-        params_b = meta.get("num_params")
-        quant = meta.get("quantization")
-        if params_b and quant:
-            from ..routers.calculator import estimate_vram_ram
-            from ..resource_manager import resource_manager
-            from fastapi import HTTPException
-            
-            estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, n_gpu_layers)
-            req_vram_mb = estimates["estimated_vram_gb"] * 1024
-            req_ram_mb = estimates["estimated_ram_gb"] * 1024
-            
-            avail_vram_mb = resource_manager.get_available_vram_mb()
-            
-            # Verificamos apenas se cabe na VRAM caso o backend seja GPU
-            if self.backend == "gpu" and req_vram_mb > avail_vram_mb:
-                raise HTTPException(
-                    status_code=422, 
-                    detail=f"Model does not fit on your GPU. Required VRAM: {req_vram_mb:.2f}MB, Available VRAM: {avail_vram_mb:.2f}MB."
-                )
 
         try:
             logger.info(f"GGUF: Loading model {model_alias} on {self.backend} (n_ctx={effective_n_ctx})")
