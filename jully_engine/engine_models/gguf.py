@@ -177,7 +177,7 @@ class GGUF:
             try:
                 n_ctx = int(n_ctx)
             except ValueError:
-                logger.warning(f"GGUF: Invalid x-context-window header value: {header_n_ctx_str}")
+                logger.warning(f"GGUF: Invalid x-context-window header value: {n_ctx}")
 
         self.load(n_ctx, n_layers)
 
