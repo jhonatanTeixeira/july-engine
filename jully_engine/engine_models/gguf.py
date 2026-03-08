@@ -21,11 +21,12 @@ def detect_model_type(repo_id_or_filename: str) -> str:
     return "llava"
 
 class GGUF:
-    def __init__(self, backend="gpu"):
+    def __init__(self, backend, model_alias):
         self.backend = backend
-        self.active_models = {}
+        self.model_alias = model_alias
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.models_json_path = os.path.join(self.cache_dir, "july_models.json")
+        self.model = None
 
     def _get_model_metadata(self, model_alias: str) -> Dict[str, Any]:
         if not os.path.exists(self.models_json_path):
@@ -39,35 +40,29 @@ class GGUF:
             
         return db[model_alias]
 
-    def _ensure_downloaded(self, repo_id: str, filename: str) -> str:
-        try:
-            return hf_hub_download(repo_id=repo_id, filename=filename, local_files_only=True)
-        except LocalEntryNotFoundError:
-            logger.info(f"GGUF: Downloading {repo_id}/{filename}")
-            return hf_hub_download(repo_id=repo_id, filename=filename)
-    
-    def load(self, model_alias: str, n_ctx: Optional[int] = None):
-        meta = self._get_model_metadata(model_alias)
+    def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
+        meta = self._get_model_metadata(self.model_alias)
 
         # Determine effective context window and layers
         effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 2048))
-        n_gpu_layers = meta.get("num_layers", -1) if self.backend == "gpu" else 0
+        
+        if num_layers:
+            n_gpu_layers = num_layers
+        else:
+            n_gpu_layers = meta.get("num_layers", -1) if self.backend == "gpu" else 0
+            
+        if self.is_loaded():
+            if self.model.n_ctx() == effective_n_ctx:
+                logger.debug(f"GGUF: Modelo {self.model_alias} já está na memória com n_ctx={effective_n_ctx}. Reaproveitando!")
+                return
 
-        # --- Lógica de Recarregamento Inteligente ---
-        if model_alias in self.active_models:
-            current_model = self.active_models[model_alias]
-            # Verifica se os parâmetros da instância em RAM batem com os solicitados
-            if current_model.n_ctx() == effective_n_ctx and getattr(current_model, '_n_gpu_layers', None) == n_gpu_layers:
-                return current_model
-            else:
-                logger.info(f"GGUF: Metadata changed for {model_alias} (n_ctx={effective_n_ctx}, layers={n_gpu_layers}). Reloading binary...")
-                self.unload(model_alias)
-
-        # Ensures model is downloaded
-        model_path = self._ensure_downloaded(meta["model_id"], meta["filename"])
+        model_path = hf_hub_download(
+            repo_id=meta["model_id"],
+            filename=meta["filename"]
+        )
 
         try:
-            logger.info(f"GGUF: Loading model {model_alias} on {self.backend} (n_ctx={effective_n_ctx})")
+            logger.info(f"GGUF: Loading model {self.model_alias} on {self.backend} (n_ctx={effective_n_ctx})")
             
             params = {
                 "model_path": model_path,
@@ -82,10 +77,11 @@ class GGUF:
             if meta.get("model_type") == "vision":
                 mmproj_id = meta.get("mmproj_id")
                 mmproj_filename = meta.get("mmproj_filename")
-                if not mmproj_id or not mmproj_filename:
-                    raise ValueError(f"GGUF: Vision model {model_alias} is missing mmproj metadata.")
                 
-                mmproj_path = self._ensure_downloaded(mmproj_id, mmproj_filename)
+                if not mmproj_id or not mmproj_filename:
+                    raise ValueError(f"GGUF: Vision model {self.model_alias} is missing mmproj metadata.")
+                
+                mmproj_path = hf_hub_download(mmproj_id, mmproj_filename)
                 
                 vision_type = detect_model_type(meta["model_id"] + meta["filename"])
                 logger.info(f"GGUF: Vision enabled. Detected type: {vision_type} with mmproj {mmproj_path}")
@@ -101,10 +97,10 @@ class GGUF:
                     params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
 
             model = Llama(**params)
-            self.active_models[model_alias] = model
-            return model
+            self.model = model
+            
         except Exception as e:
-            logger.error(f"GGUF: Failed to load {model_alias}: {e}")
+            logger.error(f"GGUF: Failed to load {self.model_alias}: {e}")
             raise e
 
     def _build_raw_prompt(self, messages: List[Dict[str, Any]], template_name: str, force_reasoning: bool = False, custom_template: str = None):
@@ -171,32 +167,34 @@ class GGUF:
 
         return prompt, stop_words
 
-    def run_chat(self, model_name: str, messages: List[Dict[str, Any]], stream: bool = False, **kwargs):
+    def run_chat(self, messages: List[Dict[str, Any]], stream: bool = False, **kwargs):
+                
         headers = kwargs.pop("headers", {})
-        header_n_ctx_str = headers.get("x-context-window")
+        n_ctx = None
+        n_layers = kwargs.pop('num_layers', None)
         
-        n_ctx = kwargs.pop("num_ctx", None)
-        
-        if header_n_ctx_str:
+        if n_ctx := headers.get("x-context-window", None):
             try:
-                n_ctx = int(header_n_ctx_str)
+                n_ctx = int(n_ctx)
             except ValueError:
                 logger.warning(f"GGUF: Invalid x-context-window header value: {header_n_ctx_str}")
+
+        self.load(n_ctx, n_layers)
 
         if "repetition_penalty" in kwargs:
             kwargs["repeat_penalty"] = kwargs.pop("repetition_penalty")
             
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         
-        meta = self._get_model_metadata(model_name)
-        model = self.load(model_alias=model_name, n_ctx=n_ctx)
+        meta = self._get_model_metadata(self.model_alias)
+        model = self.model
 
         # Extração de Configurações
         force_reasoning = meta.get("force_reasoning", False)
         custom_template = meta.get("custom_template")
         template_name = meta.get("template", "")
 
-        logger.info(f"GGUF: Executando Unified Completion Adapter para {model_name} (force_reasoning={force_reasoning}, custom_template={bool(custom_template)})")
+        logger.info(f"GGUF: Executando Unified Completion Adapter para {self.model_alias} (force_reasoning={force_reasoning}, custom_template={bool(custom_template)})")
         
         # 1. Monta o prompt cru e as stop words
         raw_prompt, template_stops = self._build_raw_prompt(
@@ -212,7 +210,7 @@ class GGUF:
             stops = [stops]
             
         stops.extend(template_stops)
-        kwargs["stop"] = list(set(stops)) # Remove duplicatas
+        kwargs["stop"] = list(set(stops))
 
         try:
             import time
@@ -235,17 +233,18 @@ class GGUF:
                 def stream_adapter():
                     full_text = ""
                     
-                    yield {
-                        "id": base_id,
-                        "model": model_name,
-                        "object": "chat.completion.chunk",
-                        "created": int(time.time()),
-                        "choices": [{
-                            "index": 0,
-                            "delta": {"content": "<think>\n"},
-                            "finish_reason": None
-                        }]
-                    }
+                    if force_reasoning:
+                        yield {
+                            "id": base_id,
+                            "model": self.model_alias,
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": "<think>\n"},
+                                "finish_reason": None
+                            }]
+                        }
                     
                     for chunk in response:
                         if not chunk.get("choices"):
@@ -258,7 +257,7 @@ class GGUF:
                         
                         out_chunk = {
                             "id": chunk.get("id", base_id),
-                            "model": chunk.get("model", model_name),
+                            "model": chunk.get("model", self.model_alias),
                             "object": "chat.completion.chunk",
                             "created": chunk.get("created", int(time.time())),
                             "choices": [{
@@ -295,7 +294,7 @@ class GGUF:
                 
                 return {
                     "id": response.get("id", f"chatcmpl-{uuid.uuid4().hex[:10]}"),
-                    "model": response.get("model", model_name),
+                    "model": response.get("model", self.model_alias),
                     "object": "chat.completion",
                     "created": response.get("created", int(time.time())),
                     "choices": [{
@@ -315,8 +314,10 @@ class GGUF:
             raise e
     
     def unload(self, model_name: str):
-        if model_name in self.active_models:
-            del self.active_models[model_name]
-            import gc
-            gc.collect()
-            logger.info(f"GGUF: Unloaded {model_name}")
+        self.model = None
+        import gc
+        gc.collect()
+        logger.info(f"GGUF: Unloaded {model_name}")
+            
+    def is_loaded(self):
+        return self.model is not None

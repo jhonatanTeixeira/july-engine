@@ -25,7 +25,7 @@ class Brain:
         is_gguf = self.model_tag.endswith(".gguf") or self.model_tag in db
         
         if self.backend in ["gpu", "cpu"] and is_gguf:
-            return GGUF(backend=self.backend)
+            return GGUF(backend=self.backend, model_alias=self.model_tag)
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -38,7 +38,6 @@ class Brain:
             return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
             
         elif isinstance(self._strategy, GGUF):
-            messages = payload.get("messages", [])
-            stream = payload.get("stream", False)
-            kwargs = {k: v for k, v in payload.items() if k not in ["messages", "stream", "model", "headers"]}
-            return self._strategy.run_chat(self.model_tag, messages, stream=stream, **kwargs)
+            messages = payload.pop("messages", [])
+            stream = payload.pop("stream", False)
+            return self._strategy.run_chat(messages, stream=stream, **payload)

@@ -141,10 +141,23 @@ def load_models_db() -> Dict[str, Any]:
     if os.path.exists(MODELS_JSON_PATH):
         try:
             with open(MODELS_JSON_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception as e:
             logger.error(f"Failed to read {MODELS_JSON_PATH}: {e}")
-            return {}
+            data = {}
+        
+        data.setdefault('xtts', {
+            'model_type': 'tts',
+            'estimated_vram': 3000
+        })
+        
+        data.setdefault('faster-whisper', {
+            'model_type': 'stt',
+            'estimated_vram': 1500            
+        })
+        
+        return data
+    
     return {}
 
 def save_models_db(db: Dict[str, Any]):

@@ -33,7 +33,7 @@ class Eyes:
         is_gguf = self.model_tag.endswith(".gguf") or self.model_tag in db
 
         if self.backend in ["gpu", "cpu"] and is_gguf:
-            return GGUF(backend=self.backend)
+            return GGUF(backend=self.backend, model_alias=self.model_tag)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
