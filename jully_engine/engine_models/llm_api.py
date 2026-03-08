@@ -4,6 +4,8 @@ from typing import Any, Dict, List, Optional, Union
 import litellm
 from litellm import completion, embedding, image_generation, transcription, speech
 
+litellm.drop_params = True
+
 logger = logging.getLogger("JulyEngine.Models.LLMApi")
 
 class LLMApi:

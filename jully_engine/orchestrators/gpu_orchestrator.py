@@ -221,6 +221,9 @@ class GpuOrchestrator:
             required_vram_mb = estimates["estimated_vram_gb"] * 1024
         else:
             required_vram_mb = meta.get('estimated_vram', 0)
+            
+        if (existing_instance := self.active_gpu_models.get(model_key, None)) and getattr(existing_instance, 'model_tag', None) == model_tag:
+            required_vram_mb = 0
 
         # 2. Try to free up memory
         available_vram = self.ensure_resources(model_key, required_vram_mb)

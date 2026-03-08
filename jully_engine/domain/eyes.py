@@ -3,6 +3,8 @@ import base64
 import io
 from PIL import Image
 from typing import Any, Dict, List, Optional
+
+from ..engine_models.tagger import ONNXTagger
 from ..engine_models.gguf import GGUF
 from ..engine_models.fastvlm import FastVLM
 from ..engine_models.emotion import Emotion
@@ -27,6 +29,8 @@ class Eyes:
             return Emotion(backend="cpu")
         elif self.model_tag == "fastvlm":
             return FastVLM(backend="cpu")
+        elif self.model_tag == "tagger" and self.backend == 'cpu':
+            return ONNXTagger()
         
         from ..routers.models import load_models_db
         db = load_models_db()
@@ -36,6 +40,17 @@ class Eyes:
             return GGUF(backend=self.backend, model_alias=self.model_tag)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
+    
+    def decode_image(self, image_data):
+        if isinstance(image_data, str):
+            if image_data.startswith("data:image"):
+                image_data = image_data.split(",")[1]
+            
+            img_bytes = base64.b64decode(image_data)
+            
+            return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+        return Image.open(io.BytesIO(image_data)).convert("RGB")
 
     async def analyze(self, payload: Dict[str, Any]):
         if isinstance(self._strategy, LLMApi):
@@ -75,21 +90,20 @@ class Eyes:
             if not image_data:
                 raise ValueError("Eyes: No image data for emotion analysis")
             
-            # Decode if needed
-            if isinstance(image_data, str):
-                if image_data.startswith("data:image"):
-                    image_data = image_data.split(",")[1]
-                img_bytes = base64.b64decode(image_data)
-                img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            else:
-                img = Image.open(io.BytesIO(image_data)).convert("RGB")
-                
+            img = self.decode_image(image_data)
+            
             return self._strategy.run(img)
 
         elif isinstance(self._strategy, FastVLM):
             return self._strategy.run(payload)
 
         elif isinstance(self._strategy, GGUF):
-            messages = payload.get("messages", [])
-            stream = payload.get("stream", False)
-            return self._strategy.run_chat(self.model_tag, messages, stream=stream)
+            messages = payload.pop("messages", [])
+            stream = payload.pop("stream", False)
+            return self._strategy.run_chat(messages, stream=stream, **payload)
+
+        elif isinstance(self._strategy, ONNXTagger):
+            if not image_data:
+                raise ValueError("Eyes: No image data for tagger analysis")
+            
+            return self._strategy.tag(self.decode_image(image_data))
