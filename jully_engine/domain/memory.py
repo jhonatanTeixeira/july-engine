@@ -20,9 +20,9 @@ class Memory:
         if self.backend == "api":
             return LLMApi(backend=self.backend)
         elif self.model_tag == "bge-micro":
-            return BgeMicro(backend="cpu")
+            return BgeMicro(backend=self.backend)
         elif self.model_tag == "multilingual-e5":
-            return MultilingualE5(backend="gpu")
+            return MultilingualE5(backend=self.backend)
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 

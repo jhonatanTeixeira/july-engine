@@ -2,6 +2,8 @@ import os
 import logging
 from typing import List
 import numpy as np
+import torch
+import torch.nn.functional as F
 
 logger = logging.getLogger("JulyEngine.Models.BgeMicro")
 
@@ -26,18 +28,24 @@ class BgeMicro:
                 logger.error(f"BgeMicro: Failed to load: {e}")
                 raise e
 
+    # O caller passa is_query=True para buscar, ou is_query=False para gravar
     def run(self, input_text: str) -> List[float]:
         if self.model is None:
             self.load()
             
         try:
-            inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True)
+            inputs = self.tokenizer(input_text, return_tensors="pt", padding=True, truncation=True, max_length=512)
             outputs = self.model(**inputs)
-            # Perform pooling (usually mean pooling for BGE)
-            embeddings = outputs.last_hidden_state.mean(dim=1)
-            # Ensure it's a list of floats
-            result = embeddings[0].detach().cpu().numpy().tolist()
+            
+            # 1. CLS Pooling (pega o token [CLS] na posição 0)
+            sentence_embeddings = outputs.last_hidden_state[:, 0]
+            
+            # 2. L2 Normalization (Crítico para a distância de cosseno do BGE)
+            sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
+            
+            result = sentence_embeddings[0].detach().cpu().numpy().tolist()
             return result
+            
         except Exception as e:
             logger.error(f"BgeMicro: Execution failed: {e}")
             raise e
