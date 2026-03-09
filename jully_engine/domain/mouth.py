@@ -42,8 +42,10 @@ class Mouth:
         Resolves a voice ID to its configuration by checking voices.json and uploaded_voices.json.
         """
         config_files = ["voices.json", "uploaded_voices.json"]
+        
         for filename in config_files:
             config_path = os.path.join(self.voices_dir, filename)
+
             if os.path.exists(config_path):
                 try:
                     with open(config_path, "r", encoding="utf-8") as f:
@@ -54,25 +56,17 @@ class Mouth:
                 except Exception as e:
                     logger.error(f"Mouth: Error reading {filename}: {e}")
         
-        if "-" in voice_id or "/" in voice_id:
-            if voice_id == "en_US-lessac-medium":
-                return {
-                    "id": voice_id,
-                    "language": "en",
-                    "piper_path": "en/en_US/lessac/medium/en_US-lessac-medium.onnx"
-                }
-        
-        logger.warning(f"Mouth: Voice ID '{voice_id}' not found, using fallback.")
-        return {"id": "yuni", "language": "pt", "path": "yuni.wav", "piper_path": "pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx"}
+        return {}
 
     async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
         # For local strategies, unpack payload
         text = payload.get("input", payload.get("text", ""))
-        voice_id = payload.get("voice", "")
-        language = payload.get("language")
+        voice_id = payload.get("voice", "af_heart")
+        language = payload.get("language", "a")
 
         voice_info = self._resolve_voice(voice_id)
-        lang = language or voice_info.get("language", "en")
+        language = voice_info.get("language", None) or language
+        voice_id = voice_info.get("id", None) or voice_id
 
         if isinstance(self._strategy, (LLMApi, Replicate)):
             model = payload.pop("model", self.model_tag)
@@ -87,13 +81,13 @@ class Mouth:
         if isinstance(self._strategy, XTTS2):
             rel_path = voice_info.get("path")
             full_voice_path = os.path.join(self.voices_dir, rel_path)
-            return self._strategy.run(text, full_voice_path, lang)
+            return self._strategy.run(text, full_voice_path, language)
             
         elif isinstance(self._strategy, Piper):
             hf_path = voice_info.get("piper_path")
             return self._strategy.run(text, voice_id, hf_path=hf_path)
             
         elif isinstance(self._strategy, KokoroTTS):
-            return await self._strategy.run(text, voice=voice_id)
+            return await self._strategy.run(text, voice_id, language)
             
         return None

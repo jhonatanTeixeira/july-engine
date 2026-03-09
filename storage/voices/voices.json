@@ -3,7 +3,7 @@
         "id": "yuni",
         "language": "pt",
         "path": "yuni.wav",
-        "piper_path": "pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx"
+        "piper_path": "pt/pt_BR/cadu/medium/pt_BR-cadu-medium.onnx"
     },
     {
         "id": "laurie",

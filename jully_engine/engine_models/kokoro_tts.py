@@ -1,27 +1,29 @@
+from ast import Dict
 import os
 import logging
 from typing import Optional
 from io import BytesIO
 import numpy as np
 import soundfile as sf
-# Assuming kokoro is installed: pip install kokoro soundfile
 from kokoro import KPipeline
 
 logger = logging.getLogger("JulyEngine.Models.KokoroTTS")
 
 class KokoroTTS:
-    def __init__(self, backend="cpu", model_tag="kokoro-v1.0"):
+    def __init__(self, backend="cpu", model_tag="kokoro"):
         self.backend = backend
         self.model_tag = model_tag
         self.pipeline = None
         self.device = "cuda" if backend == "gpu" else "cpu"
+        self.lang_code = None
 
-    def load(self):
-        if self.pipeline is None:
+    def load(self, lang_code='a'):
+        if self.pipeline is None and lang_code != self.lang_code:
             try:
                 logger.info(f"KokoroTTS: Loading model on {self.device}")
                 # You typically specify language code 'a' for American English, etc.
-                self.pipeline = KPipeline(lang_code='a', device=self.device)
+                self.pipeline = KPipeline(lang_code=lang_code, device=self.device)
+                self.lang_code = lang_code
                 logger.info("KokoroTTS loaded successfully.")
             except Exception as e:
                 logger.error(f"KokoroTTS: Failed to load: {e}")
@@ -33,15 +35,15 @@ class KokoroTTS:
             del self.pipeline
             self.pipeline = None
 
-    async def run(self, text: str, voice: str = "af_bella") -> bytes:
-        if self.pipeline is None:
-            self.load()
+    async def run(self, text: str, voice_id: str, lang_code: str) -> bytes:
+        self.load(lang_code)
             
         try:
             # generate returns a generator of (graphemes, phonemes, audio_array)
-            generator = self.pipeline(text, voice=voice, speed=1.0, split_pattern=r'\n+')
+            generator = self.pipeline(text, voice=voice_id, speed=1.0, split_pattern=r'\n+')
             
             audio_segments = []
+            
             for _, _, audio in generator:
                 audio_segments.append(audio)
             
