@@ -32,6 +32,49 @@ class Bridge:
         else:
             self.orchestrators["cpu"] = None
 
+    def _enrich_headers_and_payload(self, task_key: str, payload: Dict[str, Any], headers: Dict[str, str]):
+        try:
+            from .persistence import get_backend
+            backend_db = get_backend()
+            
+            config = None
+            if task_key in ["text_chat", "vision_chat", "embedding"]:
+                preset_alias = payload.get("model")
+                text_presets = backend_db.get_setting("TEXT_PRESETS") or []
+                config = next((p for p in text_presets if p.get("alias") == preset_alias), None)
+                if not config and text_presets:
+                    config = text_presets[0]
+            else:
+                mapping = {
+                    "tts": "TTS",
+                    "stt": "STT",
+                    "pix2pix": "IMAGE_EDIT",
+                    "image_generation": "IMAGE_CREATE",
+                    "search_web": "WEB_SEARCH",
+                    "search_code": "REPOSITORY_SEARCH"
+                }
+                setting_key = mapping.get(task_key)
+                if setting_key:
+                    config = backend_db.get_setting(setting_key)
+
+            if config:
+                if "x-backend" not in headers and "backend" in config:
+                    headers["x-backend"] = config["backend"]
+                if "x-base-url" not in headers and "base_url" in config:
+                    headers["x-base-url"] = config["base_url"]
+                
+                # Check for standard Authorization or x-api-key
+                has_auth = "authorization" in headers or "x-api-key" in headers
+                if not has_auth and "api_key" in config and config["api_key"]:
+                    headers["x-api-key"] = config["api_key"]
+                    headers["authorization"] = f"Bearer {config['api_key']}"
+
+                if "model" not in payload and "model" in config:
+                    payload["model"] = config["model"]
+                    
+        except Exception as e:
+            logger.warning(f"Failed to enrich headers and payload from persistence: {e}")
+
     async def start(self):
         for name, orch in self.orchestrators.items():
             if orch:
@@ -64,21 +107,21 @@ class Bridge:
         return await asyncio.wrap_future(future_or_coro)
 
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
-        orch = self.get_orchestrator(headers)
-        payload['headers'] = headers
-        
         messages = payload.get("messages", [])
-        stream = payload.get("stream", False)
-        model_name = payload.get("model", "default")
-        
         is_vision = False
         last_message = messages[-1] if messages else None
-    
         if last_message and isinstance(last_message.get("content"), list):
             if any(p.get("type") == "image_url" for p in last_message["content"]):
                 is_vision = True
 
         task_type = "vision_chat" if is_vision else "text_chat"
+        self._enrich_headers_and_payload(task_type, payload, headers)
+
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
+        
+        stream = payload.get("stream", False)
+        model_name = payload.get("model", "default")
         
         logger.info('received request: %s', json.dumps({
             'task_type': task_type,
@@ -154,12 +197,7 @@ class Bridge:
         return openai_generator()
     
     async def process_anthropic_message(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
-        orch = self.get_orchestrator(headers)
-        payload['headers'] = headers
-        
         messages = payload.get("messages", [])
-        stream = payload.get("stream", False)
-        
         is_vision = False
         last_message = messages[-1] if messages else None
         if last_message and isinstance(last_message.get("content"), list):
@@ -167,6 +205,11 @@ class Bridge:
                 is_vision = True
         
         task_type = "vision_chat" if is_vision else "text_chat"
+        self._enrich_headers_and_payload(task_type, payload, headers)
+
+        orch = self.get_orchestrator(headers)
+        payload['headers'] = headers
+        stream = payload.get("stream", False)
         
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
         
@@ -257,6 +300,7 @@ class Bridge:
         return anthropic_generator()
     
     async def process_embeddings(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[List[float]]:
+        self._enrich_headers_and_payload("embedding", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         
@@ -267,31 +311,37 @@ class Bridge:
         return response
 
     async def process_tts(self, payload: Dict[str, Any], headers: Dict[str, str]) -> bytes:
+        self._enrich_headers_and_payload("tts", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("tts", payload))
 
     async def process_stt(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        self._enrich_headers_and_payload("stt", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("stt", payload))
 
     async def process_image_edit(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        self._enrich_headers_and_payload("pix2pix", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("pix2pix", payload))
 
     async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        self._enrich_headers_and_payload("image_generation", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("image_generation", payload))
 
     async def process_search_web(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        self._enrich_headers_and_payload("search_web", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("search_web", payload))
 
     async def process_search_code(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        self._enrich_headers_and_payload("search_code", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         return await self._await_orch_task(orch.submit_task("search_code", payload))

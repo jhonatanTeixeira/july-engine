@@ -18,6 +18,8 @@ from .routers.monitoring import router as monitoring_router
 from .routers.voice import router as voice_router
 from .routers.search import router as search_router
 
+from .routers.settings_router import router as settings_router
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start the bridge which starts all orchestrators
@@ -71,6 +73,7 @@ app.include_router(calculator_router)
 app.include_router(monitoring_router)
 app.include_router(voice_router)
 app.include_router(search_router)
+app.include_router(settings_router)
 
 
 @app.get("/health", tags=["July"])

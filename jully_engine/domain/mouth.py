@@ -8,6 +8,7 @@ from ..engine_models.xtts2 import XTTS2
 from ..engine_models.piper import Piper
 from ..engine_models.llm_api import LLMApi
 from ..engine_models.kokoro_tts import KokoroTTS
+from ..persistence import get_backend
 
 logger = logging.getLogger("JulyEngine.Domain.Mouth")
 
@@ -21,6 +22,7 @@ class Mouth:
         self.model_tag = model_tag
         self._strategy = self._get_strategy()
         self.voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
+        self.persistence_backend = get_backend()
 
     def _get_strategy(self):
         if self.backend == "api":
@@ -39,22 +41,25 @@ class Mouth:
 
     def _resolve_voice(self, voice_id: str) -> Dict[str, Any]:
         """
-        Resolves a voice ID to its configuration by checking voices.json and uploaded_voices.json.
+        Resolves a voice ID to its configuration by checking voices.json and uploaded voices from persistence.
         """
-        config_files = ["voices.json", "uploaded_voices.json"]
-        
-        for filename in config_files:
-            config_path = os.path.join(self.voices_dir, filename)
+        # 1. Try uploaded voices from database
+        uploaded_voices = self.persistence_backend.get_uploaded_voices()
+        for v in uploaded_voices:
+            if v.get("id") == voice_id:
+                return v
 
-            if os.path.exists(config_path):
-                try:
-                    with open(config_path, "r", encoding="utf-8") as f:
-                        voices = json.load(f)
-                        for v in voices:
-                            if v.get("id") == voice_id:
-                                return v
-                except Exception as e:
-                    logger.error(f"Mouth: Error reading {filename}: {e}")
+        # 2. Try static voices.json
+        config_path = os.path.join(self.voices_dir, "voices.json")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    voices = json.load(f)
+                    for v in voices:
+                        if v.get("id") == voice_id:
+                            return v
+            except Exception as e:
+                logger.error(f"Mouth: Error reading voices.json: {e}")
         
         return {}
 

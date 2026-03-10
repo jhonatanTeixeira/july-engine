@@ -136,35 +136,36 @@ class UpdateMetadataRequest(BaseModel):
     force_reasoning: Optional[bool] = None
 
 # ==========================================
-# BANCO DE DADOS (JSON)
+# BANCO DE DADOS (PERSISTENCE)
 # ==========================================
+from ..services.models_service import ModelsService
+models_service = ModelsService()
+
 def load_models_db() -> Dict[str, Any]:
-    if os.path.exists(MODELS_JSON_PATH):
-        try:
-            with open(MODELS_JSON_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to read {MODELS_JSON_PATH}: {e}")
-            data = {}
-        
-        data.setdefault('xtts', {
-            'model_type': 'tts',
-            'estimated_vram': 3000
-        })
-        
-        data.setdefault('faster-whisper', {
-            'model_type': 'stt',
-            'estimated_vram': 1500            
-        })
-        
-        return data
+    models = models_service.get_all()
+    # convert list to dict
+    db = {m.get("model_alias"): m for m in models if m.get("model_alias")}
     
-    return {}
+    db.setdefault('xtts', {
+        'model_alias': 'xtts',
+        'model_type': 'tts',
+        'estimated_vram': 3000
+    })
+    
+    db.setdefault('faster-whisper', {
+        'model_alias': 'faster-whisper',
+        'model_type': 'stt',
+        'estimated_vram': 1500            
+    })
+    
+    return db
 
 def save_models_db(db: Dict[str, Any]):
-    os.makedirs(os.path.dirname(MODELS_JSON_PATH), exist_ok=True)
-    with open(MODELS_JSON_PATH, "w", encoding="utf-8") as f:
-        json.dump(db, f, indent=4)
+    for alias, data in db.items():
+        if alias in ['xtts', 'faster-whisper']:
+            continue
+        models_service.set(alias, data)
+
 
 # ==========================================
 # ENDPOINTS

@@ -10,3 +10,6 @@ tavily-python
 pytest
 pytest-asyncio
 psutil
+tinydb
+sqlalchemy
+psycopg2-binary
