@@ -92,6 +92,7 @@ def detect_model_metadata(model_id: str, filename: str) -> Dict[str, Any]:
     # Casos Especiais Combinados (ex: DeepSeek-R1-Distill-Llama-8B)
     if "deepseek-r1" in combined_name:
         detected["force_reasoning"] = True
+        
         if "llama" in combined_name:
             detected["template"] = "llama-3"
         elif "qwen" in combined_name:

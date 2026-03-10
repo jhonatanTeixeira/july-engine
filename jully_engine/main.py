@@ -15,7 +15,8 @@ from .routers.anthropic import router as anthropic_router
 from .routers.models import router as models_router
 from .routers.calculator import router as calculator_router
 from .routers.monitoring import router as monitoring_router
-from .voice_service import voice_service
+from .routers.voice import router as voice_router
+from .routers.search import router as search_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -68,66 +69,14 @@ app.include_router(anthropic_router, prefix="/v1/anthropic")
 app.include_router(models_router)
 app.include_router(calculator_router)
 app.include_router(monitoring_router)
+app.include_router(voice_router)
+app.include_router(search_router)
+
 
 @app.get("/health", tags=["July"])
 async def health():
     return {"status": "online", "engine": "July Engine"}
 
-@app.get("/speech/voices", tags=["July"])
-async def list_voices():
-    return voice_service.list_voices()
-
-@app.post("/speech/voices", tags=["July"])
-async def add_voice(request: Request):
-    form = await request.form()
-    name = form.get("name")
-    language = form.get("language", "en")
-    file = form.get("file")
-    voice_type = form.get("type", "clone") # clone or piper
-    
-    if not name or not file:
-        return {"error": "Missing name or file"}, 400
-        
-    content = await file.read()
-    new_voice = voice_service.add_voice(name, language, content, voice_type)
-    return new_voice
-
-@app.post("/search/web", tags=["July"])
-async def search_web(request: Request):
-    payload = await request.json()
-    headers = dict(request.headers)
-    if "x-backend" not in headers:
-        headers["x-backend"] = "api"
-    result = await bridge.process_search_web(payload, headers)
-    return {"result": result}
-
-@app.post("/search/github", tags=["July"])
-async def search_github(request: Request):
-    payload = await request.json()
-    headers = dict(request.headers)
-    if "x-backend" not in headers:
-        headers["x-backend"] = "api"
-    result = await bridge.process_search_code(payload, headers)
-    return {"result": result}
-
-@app.get("/status", tags=["July"])
-async def get_status():
-    status_data = {
-        "cpu": resource_manager.get_cpu_usage(),
-        "ram": resource_manager.get_ram_usage(),
-    }
-    
-    vram_info = resource_manager.get_vram_info()
-    if vram_info:
-        status_data["vram"] = {
-            "total": vram_info["total"],
-            "free": vram_info["free"],
-            "used": vram_info["used"]
-        }
-    else:
-        status_data["vram"] = "not_managed"
-
-    return status_data
 
 if __name__ == "__main__":
     uvicorn.run("jully_engine.main:app", host="0.0.0.0", port=8000, reload=True)
