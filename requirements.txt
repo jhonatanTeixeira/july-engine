@@ -13,3 +13,6 @@ psutil
 tinydb
 sqlalchemy
 psycopg2-binary
+chromadb
+pgvector
+mcp

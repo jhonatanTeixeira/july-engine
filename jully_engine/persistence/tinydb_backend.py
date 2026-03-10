@@ -10,6 +10,7 @@ class TinyDBBackend(PersistenceBackend):
         self.settings_table = self.db.table("settings")
         self.models_table = self.db.table("models")
         self.voices_table = self.db.table("uploaded_voices")
+        self.mcps_table = self.db.table("mcp_servers")
 
     def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
         Q = Query()
@@ -51,3 +52,20 @@ class TinyDBBackend(PersistenceBackend):
             self.voices_table.upsert(voice_data, Q.id == voice_id)
         else:
             self.voices_table.insert(voice_data)
+
+    def get_all_mcps(self) -> List[Dict[str, Any]]:
+        return self.mcps_table.all()
+
+    def get_mcp(self, mcp_id: str) -> Optional[Dict[str, Any]]:
+        Q = Query()
+        return self.mcps_table.get(Q.id == mcp_id)
+
+    def set_mcp(self, mcp_id: str, data: Dict[str, Any]) -> None:
+        Q = Query()
+        data["id"] = mcp_id
+        self.mcps_table.upsert(data, Q.id == mcp_id)
+
+    def delete_mcp(self, mcp_id: str) -> bool:
+        Q = Query()
+        removed = self.mcps_table.remove(Q.id == mcp_id)
+        return len(removed) > 0

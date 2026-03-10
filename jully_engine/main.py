@@ -19,13 +19,17 @@ from .routers.voice import router as voice_router
 from .routers.search import router as search_router
 
 from .routers.settings_router import router as settings_router
+from .routers.mcps_router import router as mcps_router
+from .services.external_mcp import external_mcp_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start the bridge which starts all orchestrators
     await bridge.start()
+    await external_mcp_manager.start()
     yield
     # Shutdown: Stop the bridge which stops all orchestrators
+    await external_mcp_manager.stop()
     await bridge.stop()
 
 description = """
@@ -74,6 +78,7 @@ app.include_router(monitoring_router)
 app.include_router(voice_router)
 app.include_router(search_router)
 app.include_router(settings_router)
+app.include_router(mcps_router)
 
 
 @app.get("/health", tags=["July"])

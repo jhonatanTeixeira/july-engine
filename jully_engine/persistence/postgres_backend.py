@@ -25,6 +25,12 @@ voices_table = Table(
     Column("data", JSONB)
 )
 
+mcps_table = Table(
+    "mcp_servers", metadata,
+    Column("id", String, primary_key=True),
+    Column("data", JSONB)
+)
+
 class PostgresBackend(PersistenceBackend):
     def __init__(self, connection_string: str):
         self.engine: Engine = create_engine(connection_string)

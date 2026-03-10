@@ -37,3 +37,19 @@ class PersistenceBackend(ABC):
     @abstractmethod
     def add_uploaded_voice(self, voice_data: Dict[str, Any]) -> None:
         pass
+
+    @abstractmethod
+    def get_all_mcps(self) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def get_mcp(self, mcp_id: str) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def set_mcp(self, mcp_id: str, data: Dict[str, Any]) -> None:
+        pass
+
+    @abstractmethod
+    def delete_mcp(self, mcp_id: str) -> bool:
+        pass

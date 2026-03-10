@@ -30,14 +30,40 @@ class Brain:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def chat(self, payload: Dict[str, Any]):
+        headers = payload.get("headers", {})
+        enable_internal_mcp = headers.get("x-enable-internal-mcp", "0") == "1"
+        
+        internal_mcp = None
+        if enable_internal_mcp:
+            from ..services.internal_mcp import InternalMCP
+            internal_mcp = InternalMCP()
+            tools = internal_mcp.get_tools()
+            if "tools" not in payload:
+                payload["tools"] = tools
+            else:
+                payload["tools"].extend(tools)
+                
+            # If vision is enabled and there's a tool, we might need to add image_edit
+            # This is already returned by get_tools()
+
+        original_payload = dict(payload)
+
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             headers = payload.pop("headers", {})
-            return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            response = await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
             
         elif isinstance(self._strategy, GGUF):
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
-            return self._strategy.run_chat(messages, stream=stream, **payload)
+            response = self._strategy.run_chat(messages, stream=stream, **payload)
+
+        if enable_internal_mcp and internal_mcp:
+            if stream:
+                return internal_mcp.stream_orchestrate(response, original_payload)
+            else:
+                return await internal_mcp.orchestrate(response, original_payload)
+                
+        return response

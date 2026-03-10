@@ -38,3 +38,31 @@ class Memory:
             return self._strategy.run(input_text)
             
         return None
+
+    async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None):
+        """Generates an embedding and adds it to the RAG database."""
+        from .vector_store import vector_store
+        
+        # Get embedding
+        payload = {"input": text}
+        embedding_result = await self.embed(payload)
+        
+        if embedding_result and len(embedding_result) > 0:
+            embedding = embedding_result[0]
+            vector_store.add(text, embedding, metadata)
+            return True
+        return False
+
+    async def search(self, query: str, top_k: int = 3) -> str:
+        """Searches the RAG database using the query embedding."""
+        from .vector_store import vector_store
+        
+        payload = {"input": query}
+        embedding_result = await self.embed(payload)
+        
+        if embedding_result and len(embedding_result) > 0:
+            embedding = embedding_result[0]
+            results = vector_store.search(embedding, top_k=top_k)
+            return "\n---\n".join(results)
+            
+        return "Nenhuma memória encontrada."
