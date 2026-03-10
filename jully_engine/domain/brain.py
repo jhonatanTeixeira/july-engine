@@ -62,8 +62,8 @@ class Brain:
 
         if enable_internal_mcp and internal_mcp:
             if stream:
-                return internal_mcp.stream_orchestrate(response, original_payload)
+                return internal_mcp.stream_orchestrate(self, response, original_payload)
             else:
-                return await internal_mcp.orchestrate(response, original_payload)
+                return await internal_mcp.orchestrate(self, response, original_payload)
                 
         return response

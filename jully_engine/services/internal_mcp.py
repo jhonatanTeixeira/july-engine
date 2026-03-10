@@ -183,17 +183,31 @@ class InternalMCP:
         
         return "Unknown tool."
 
-    async def orchestrate(self, response: Dict[str, Any], original_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def orchestrate(self, brain_instance, response: Dict[str, Any], original_payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Synchronous flow interceptor. If finish_reason == tool_calls, execute and append results,
-        possibly returning a multimodal response.
+        Synchronous flow interceptor. If finish_reason == tool_calls, execute and append results.
+        If it's a text result (like search), loop back to the LLM to get the final answer,
+        accumulating the token usage.
         """
         choice = response.get("choices", [{}])[0]
         finish_reason = choice.get("finish_reason")
         message = choice.get("message", {})
         
+        # Accumulators for usage
+        total_prompt_tokens = response.get("usage", {}).get("prompt_tokens", 0)
+        total_completion_tokens = response.get("usage", {}).get("completion_tokens", 0)
+        
         if finish_reason == "tool_calls" and "tool_calls" in message:
             tool_calls = message.get("tool_calls", [])
+            
+            # Need to figure out if any tool returns multimodal or just text
+            # For multimodal (image/audio), we just append and return.
+            # For text (search), we append as tool response and call LLM again.
+            
+            has_text_result = False
+            messages = original_payload.get("messages", [])
+            messages.append(message) # Append assistant's tool call message
+            
             content_array = []
             
             for tc in tool_calls:
@@ -212,33 +226,80 @@ class InternalMCP:
                 elif name == "generate_audio":
                     content_array.append({"type": "audio_url", "audio_url": f"data:audio/wav;base64,{result}"})
                 else:
-                    content_array.append({"type": "text", "text": f"Result from {name}: {result}"})
+                    has_text_result = True
+                    # Append tool result message
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "name": name,
+                        "content": str(result)
+                    })
             
-            # Reconstruct the response with the multimodal array
+            if has_text_result and not content_array:
+                # Do a second LLM call with the tool results
+                new_payload = dict(original_payload)
+                new_payload["messages"] = messages
+                
+                # Execute second call (ensure internal_mcp recursion is disabled or handled)
+                new_payload["headers"] = dict(original_payload.get("headers", {}))
+                new_payload["headers"]["x-enable-internal-mcp"] = "0" # Disable for second pass to prevent infinite loop
+                
+                second_response = await brain_instance.chat(new_payload)
+                
+                if isinstance(second_response, dict):
+                    # Accumulate usage
+                    second_usage = second_response.get("usage", {})
+                    second_response["usage"] = {
+                        "prompt_tokens": total_prompt_tokens + second_usage.get("prompt_tokens", 0),
+                        "completion_tokens": total_completion_tokens + second_usage.get("completion_tokens", 0),
+                        "total_tokens": total_prompt_tokens + total_completion_tokens + second_usage.get("total_tokens", 0)
+                    }
+                    return second_response
+                return second_response
+
+            # If it was multimodal or mixed
             response["choices"][0]["message"]["content"] = content_array
             response["choices"][0]["finish_reason"] = "stop"
 
         return response
 
-    async def stream_orchestrate(self, async_generator: AsyncGenerator[str, None], original_payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
+    async def stream_orchestrate(self, brain_instance, async_generator: AsyncGenerator[str, None], original_payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
         """
         Wraps the async generator to intercept tool calls.
+        If a text tool is called, execute it and restart a stream for the final answer.
         """
         tool_call_buffer = {}
+        final_usage = None
+        assistant_message = {"role": "assistant", "content": "", "tool_calls": []}
         
         async for chunk_str in async_generator:
-            # Parse SSE data
             if not chunk_str.startswith("data: "):
                 yield chunk_str
                 continue
                 
             data_str = chunk_str[6:].strip()
             if data_str == "[DONE]":
-                # Process any pending tool calls before finishing
                 if tool_call_buffer:
+                    # Reconstruct tool_calls array for the assistant message
+                    for idx, tc in tool_call_buffer.items():
+                        assistant_message["tool_calls"].append({
+                            "id": tc.get("id", f"call_{idx}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name"),
+                                "arguments": tc.get("arguments")
+                            }
+                        })
+                        
+                    has_text_result = False
+                    multimodal_deltas = []
+                    messages = original_payload.get("messages", [])
+                    messages.append(assistant_message)
+                    
                     for tc_idx, tc_data in tool_call_buffer.items():
                         name = tc_data.get("name")
                         args = tc_data.get("arguments", "")
+                        tc_id = tc_data.get("id", f"call_{tc_idx}")
                         try:
                             args_dict = json.loads(args)
                         except:
@@ -246,15 +307,52 @@ class InternalMCP:
                             
                         result = await self._execute_tool(name, args_dict)
                         
-                        # Yield a delta with the multimodal output
-                        delta_multimodal = {}
                         if name == "generate_image":
-                            delta_multimodal = {"image_url": {"url": f"data:image/png;base64,{result}"}}
+                            multimodal_deltas.append({"image_url": {"url": f"data:image/png;base64,{result}"}})
                         elif name == "generate_audio":
-                            delta_multimodal = {"audio_url": f"data:audio/wav;base64,{result}"}
+                            multimodal_deltas.append({"audio_url": f"data:audio/wav;base64,{result}"})
                         else:
-                            delta_multimodal = {"content": f"\n\nTool Result ({name}): {result}\n\n"}
+                            has_text_result = True
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": name,
+                                "content": str(result)
+                            })
                             
+                    if has_text_result and not multimodal_deltas:
+                        # ReAct loop: stream the second response
+                        new_payload = dict(original_payload)
+                        new_payload["messages"] = messages
+                        new_payload["headers"] = dict(original_payload.get("headers", {}))
+                        new_payload["headers"]["x-enable-internal-mcp"] = "0"
+                        
+                        second_stream = await brain_instance.chat(new_payload)
+                        
+                        # Accumulate tokens from the first stream into the final usage block
+                        first_prompt_tokens = final_usage.get("prompt_tokens", 0) if final_usage else 0
+                        first_completion_tokens = final_usage.get("completion_tokens", 0) if final_usage else 0
+                        
+                        async for second_chunk in second_stream:
+                            if second_chunk.startswith("data: ") and second_chunk.strip() != "data: [DONE]":
+                                try:
+                                    s_data = json.loads(second_chunk[6:])
+                                    if "usage" in s_data and s_data["usage"]:
+                                        s_usage = s_data["usage"]
+                                        s_data["usage"] = {
+                                            "prompt_tokens": first_prompt_tokens + s_usage.get("prompt_tokens", 0),
+                                            "completion_tokens": first_completion_tokens + s_usage.get("completion_tokens", 0),
+                                            "total_tokens": first_prompt_tokens + first_completion_tokens + s_usage.get("total_tokens", 0)
+                                        }
+                                        yield f"data: {json.dumps(s_data)}\n\n"
+                                        continue
+                                except:
+                                    pass
+                            yield second_chunk
+                        return
+
+                    # If multimodal, yield the results directly
+                    for delta_multimodal in multimodal_deltas:
                         result_chunk = {
                             "id": "chatcmpl-mcp",
                             "object": "chat.completion.chunk",
@@ -267,29 +365,40 @@ class InternalMCP:
                         }
                         yield f"data: {json.dumps(result_chunk)}\n\n"
                         
+                if final_usage:
+                    usage_chunk = {
+                        "id": "chatcmpl-mcp",
+                        "object": "chat.completion.chunk",
+                        "model": "internal-mcp",
+                        "choices": [],
+                        "usage": final_usage
+                    }
+                    yield f"data: {json.dumps(usage_chunk)}\n\n"
+
                 yield "data: [DONE]\n\n"
                 return
                 
             try:
                 chunk = json.loads(data_str)
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
                 
-                # Check for tool_calls in delta
+                if "usage" in chunk and chunk["usage"]:
+                    final_usage = chunk["usage"]
+
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                if "content" in delta and delta["content"]:
+                    assistant_message["content"] += delta["content"]
+                
                 if "tool_calls" in delta:
                     for tc in delta["tool_calls"]:
                         idx = tc.get("index", 0)
                         if idx not in tool_call_buffer:
-                            tool_call_buffer[idx] = {"name": "", "arguments": ""}
+                            tool_call_buffer[idx] = {"name": "", "arguments": "", "id": tc.get("id", f"call_{idx}")}
                             
                         func = tc.get("function", {})
                         if "name" in func and func["name"]:
                             tool_call_buffer[idx]["name"] = func["name"]
                         if "arguments" in func and func["arguments"]:
                             tool_call_buffer[idx]["arguments"] += func["arguments"]
-                    
-                    # We might skip yielding this tool_call delta to the client to hide it, 
-                    # but if we want to be transparent, we could yield it.
-                    # For now, we skip yielding raw tool calls to simplify frontend.
                     continue
                     
                 yield chunk_str
