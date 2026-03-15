@@ -13,7 +13,7 @@ logger = logging.getLogger("JulyEngine.Bridge")
 class Bridge:
     """
     Consolidated Bridge that routes requests to the appropriate orchestrator
-    and normalizes OpenAI/Anthropic formats.
+    and normalizes OpenAI/Anthropic formats returning pure Python dictionaries.
     """
     def __init__(self):
         self.orchestrators = {
@@ -38,10 +38,12 @@ class Bridge:
             backend_db = get_backend()
             
             config = None
+            
             if task_key in ["text_chat", "vision_chat", "embedding"]:
                 preset_alias = payload.get("model")
                 text_presets = backend_db.get_setting("TEXT_PRESETS") or []
                 config = next((p for p in text_presets if p.get("alias") == preset_alias), None)
+            
                 if not config and text_presets:
                     config = text_presets[0]
             else:
@@ -54,23 +56,24 @@ class Bridge:
                     "search_code": "REPOSITORY_SEARCH"
                 }
                 setting_key = mapping.get(task_key)
+            
                 if setting_key:
                     config = backend_db.get_setting(setting_key)
 
             if config:
                 if "x-backend" not in headers and "backend" in config:
                     headers["x-backend"] = config["backend"]
+            
                 if "x-base-url" not in headers and "base_url" in config:
                     headers["x-base-url"] = config["base_url"]
                 
-                # Check for standard Authorization or x-api-key
                 has_auth = "authorization" in headers or "x-api-key" in headers
+            
                 if not has_auth and "api_key" in config and config["api_key"]:
                     headers["x-api-key"] = config["api_key"]
                     headers["authorization"] = f"Bearer {config['api_key']}"
 
-                if "model" not in payload and "model" in config:
-                    payload["model"] = config["model"]
+                payload["model"] = config.get("model")
                     
         except Exception as e:
             logger.warning(f"Failed to enrich headers and payload from persistence: {e}")
@@ -86,7 +89,7 @@ class Bridge:
                 await orch.stop()
 
     def get_orchestrator(self, headers: Dict[str, str]):
-        backend = headers.get("x-backend")
+        backend = headers.get("x-backend", 'api')
         if not backend:
             raise HTTPException(status_code=400, detail="Missing x-backend header")
             
@@ -101,15 +104,23 @@ class Bridge:
         return orch
 
     async def _await_orch_task(self, future_or_coro):
-        """Helper to properly await both asyncio coroutines and concurrent futures."""
         if asyncio.iscoroutine(future_or_coro):
             return await future_or_coro
         return await asyncio.wrap_future(future_or_coro)
 
-    async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+    # --- NORMALIZADOR UNIVERSAL ---
+    def _normalize_object(self, obj: Any) -> Dict[str, Any]:
+        """Extrai o dicionário nativo de qualquer modelo Pydantic ou retorna as-is se já for dict."""
+        if hasattr(obj, 'model_dump'):
+            # exclude_unset evita que campos None desnecessários quebrem a estrutura
+            return obj.model_dump(exclude_unset=True)
+        return obj
+
+    async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         messages = payload.get("messages", [])
         is_vision = False
         last_message = messages[-1] if messages else None
+        
         if last_message and isinstance(last_message.get("content"), list):
             if any(p.get("type") == "image_url" for p in last_message["content"]):
                 is_vision = True
@@ -132,67 +143,44 @@ class Bridge:
         
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
 
+        if not response:
+            raise HTTPException(status_code=500, detail="Orchestrator returned an empty response")
+
         if not stream:
-            # 1. Prioridade Alta: Pydantic Models (LiteLLM / API Orchestrator)
-            if hasattr(response, 'model_dump_json'):
-                return json.loads(response.model_dump_json())
-            elif hasattr(response, 'model_dump'):
-                return response.model_dump()
+            # 1. Normaliza imediatamente (LiteLLM ou GGUF)
+            normalized_response = self._normalize_object(response)
             
-            # 2. Prioridade Alta: Dicionários completos (Nosso Adapter do GGUF)
-            # O usage real e cirúrgico do llama.cpp passa intacto por aqui
-            if isinstance(response, dict) and "choices" in response:
-                return response
+            # 2. Verifica se é um dicionário OpenAI válido
+            if isinstance(normalized_response, dict) and "choices" in normalized_response:
+                return normalized_response
                 
-            # 3. Fallback (O crime mitigado): Se algum orquestrador simples retornar apenas texto
-            if isinstance(response, str):
-                logger.warning("Bridge: Orchestrator returned raw string. Estimating tokens.")
-                # Estimativa aproximada (1 token ~= 4 chars) para não zerar o painel
-                est_tokens = len(response) // 4
+            # 3. Fallback: Se algum orquestrador retornou apenas texto cru
+            logger.warning("Bridge: Orchestrator returned raw string/invalid dict. Estimating tokens.")
+            res_content = normalized_response if isinstance(normalized_response, str) else json.dumps(normalized_response)
+            est_tokens = len(res_content) // 4
     
-                return {
-                    "id": f"chatcmpl-{uuid.uuid4().hex[:10]}",
-                    "object": "chat.completion",
-                    "created": int(time.time()),
-                    "model": model_name,
-                    "choices": [{
-                        "index": 0,
-                        "message": {"role": "assistant", "content": response},
-                        "finish_reason": "stop"
-                    }],
-                    "usage": {"prompt_tokens": 0, "completion_tokens": est_tokens, "total_tokens": est_tokens}
-                }
-            
-            return response
+            return {
+                "id": f"chatcmpl-{uuid.uuid4().hex[:10]}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model_name,
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": res_content},
+                    "finish_reason": "stop"
+                }],
+                "usage": {"prompt_tokens": 0, "completion_tokens": est_tokens, "total_tokens": est_tokens}
+            }
 
         async def openai_generator():
-            # Fluxo A: Async Generator Nativo (LiteLLM)
+            # Fluxo Async/Sync Híbrido: Gera apenas Dicionários Puros
             if hasattr(response, '__aiter__'):
                 async for chunk in response:
-                    if hasattr(chunk, 'model_dump_json'):
-                        chunk_dict = json.loads(chunk.model_dump_json())
-                    elif hasattr(chunk, 'model_dump'):
-                        chunk_dict = chunk.model_dump()
-                    else:
-                        chunk_dict = chunk
-                    yield f"data: {json.dumps(chunk_dict)}\n\n"
-                    
-            # Fluxo B: Sync Generator (Llama.cpp / GGUF)
+                    yield self._normalize_object(chunk)
             else:
                 for chunk in response:
-                    if hasattr(chunk, 'model_dump_json'):
-                        chunk_dict = json.loads(chunk.model_dump_json())
-                    elif hasattr(chunk, 'model_dump'):
-                        chunk_dict = chunk.model_dump()
-                    else:
-                        chunk_dict = chunk
-                        
-                    yield f"data: {json.dumps(chunk_dict)}\n\n"
-                    
-                    # Cede o controle ao event loop do FastAPI (Crucial para generators síncronos não travarem o servidor)
-                    await asyncio.sleep(0) 
-                    
-            yield "data: [DONE]\n\n"
+                    yield self._normalize_object(chunk)
+                    await asyncio.sleep(0) # Libera o event loop
 
         return openai_generator()
     
@@ -214,17 +202,12 @@ class Bridge:
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
         
         if not stream:
-            # 1. Pydantic Models (LiteLLM nativo Anthropic)
-            if hasattr(response, 'model_dump_json'):
-                return json.loads(response.model_dump_json())
-            elif hasattr(response, 'model_dump'):
-                return response.model_dump()
-                
-            # 2. Dict Completo (Nosso GGUF retornando formato OpenAI)
-            # Precisamos converter o dict da OpenAI para o formato Anthropic
-            if isinstance(response, dict) and "choices" in response:
-                content_text = response["choices"][0].get("message", {}).get("content", "")
-                usage = response.get("usage", {})
+            normalized_response = self._normalize_object(response)
+            
+            # Converter OpenAI format para Anthropic format
+            if isinstance(normalized_response, dict) and "choices" in normalized_response:
+                content_text = normalized_response["choices"][0].get("message", {}).get("content", "")
+                usage = normalized_response.get("usage", {})
                 return {
                     "id": f"msg_{uuid.uuid4().hex[:10]}",
                     "type": "message",
@@ -238,61 +221,54 @@ class Bridge:
                     }
                 }
 
-            # 3. Fallback: String pura
-            if isinstance(response, str):
-                est_tokens = len(response) // 4
+            if isinstance(normalized_response, str):
+                est_tokens = len(normalized_response) // 4
                 return {
                     "id": f"msg_{uuid.uuid4().hex[:10]}",
                     "type": "message",
                     "role": "assistant",
-                    "content": [{"type": "text", "text": response}],
+                    "content": [{"type": "text", "text": normalized_response}],
                     "model": payload.get("model", "claude-3"),
                     "stop_reason": "end_turn",
                     "usage": {"input_tokens": 0, "output_tokens": est_tokens}
                 }
                 
-            return response
+            return normalized_response
 
         async def anthropic_generator():
             msg_id = f"msg_{uuid.uuid4().hex[:10]}"
             model_name = payload.get("model", "claude-3")
             
-            # Inicializa a mensagem (Anthropic spec)
+            # Inicializa a mensagem (Anthropic spec) - Mantido como String SSE pois o padrão Anthropic exige os blocos "event:"
             yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
             yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
             
             final_output_tokens = 0
 
-            # Função auxiliar para processar cada chunk no padrão OpenAI -> Anthropic
             def process_chunk(chunk_dict):
                 nonlocal final_output_tokens
                 events = []
                 
-                # É um chunk normal de texto?
                 if 'choices' in chunk_dict and len(chunk_dict['choices']) > 0:
                     delta = chunk_dict['choices'][0].get('delta', {})
                     if 'content' in delta and delta['content']:
                         events.append(f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n")
                 
-                # É o chunk final contendo o USAGE da OpenAI?
-                if 'usage' in chunk_dict:
+                if 'usage' in chunk_dict and chunk_dict['usage']:
                      final_output_tokens = chunk_dict['usage'].get('completion_tokens', 0)
                      
                 return events
 
             if hasattr(response, '__aiter__'):
                 async for chunk in response:
-                    chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
-                    for event in process_chunk(chunk_dict):
+                    for event in process_chunk(self._normalize_object(chunk)):
                         yield event
             else:
                 for chunk in response:
-                    chunk_dict = chunk if isinstance(chunk, dict) else (chunk.model_dump() if hasattr(chunk, 'model_dump') else chunk)
-                    for event in process_chunk(chunk_dict):
+                    for event in process_chunk(self._normalize_object(chunk)):
                         yield event
                     await asyncio.sleep(0)
             
-            # Encerramento do Stream (Anthropic spec) com os tokens corretos
             yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
             yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
             yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"

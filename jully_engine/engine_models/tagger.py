@@ -140,6 +140,7 @@ class ONNXTagger:
         tag_string = ", ".join(sorted_tags.keys())
         tag_string = tag_string.replace("_", " ") # Tira underlines padrão de booru
 
+        logger.info(f"Engine Tagger executed successfully on CPU with {self.repo_id}")
         return {
             "tags": sorted_tags,
             "prompt_string": tag_string

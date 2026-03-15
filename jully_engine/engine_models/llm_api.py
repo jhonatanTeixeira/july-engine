@@ -5,6 +5,7 @@ import litellm
 from litellm import completion, embedding, image_generation, transcription, speech
 
 litellm.drop_params = True
+litellm.set_verbose = True
 
 logger = logging.getLogger("JulyEngine.Models.LLMApi")
 
@@ -45,7 +46,9 @@ class LLMApi:
         
         try:
             from litellm import acompletion
-            return await acompletion(**params)
+            res = await acompletion(**params)
+            logger.info(f"Engine LLMApi (Chat) executed successfully on {self.backend} with {model}")
+            return res
         except Exception as e:
             logger.error(f"LLMApi: Chat failed: {e}")
             raise e
@@ -68,6 +71,7 @@ class LLMApi:
             
         try:
             response = embedding(**params)
+            logger.info(f"Engine LLMApi (Embeddings) executed successfully on {self.backend} with {model}")
             return [item['embedding'] for item in response['data']]
         except Exception as e:
             logger.error(f"LLMApi: Embeddings failed: {e}")
@@ -92,6 +96,7 @@ class LLMApi:
             
         try:
             response = speech(**params)
+            logger.info(f"Engine LLMApi (TTS) executed successfully on {self.backend} with {model}")
             return response.content
         except Exception as e:
             logger.error(f"LLMApi: TTS failed: {e}")
@@ -115,6 +120,7 @@ class LLMApi:
             
         try:
             response = transcription(**params)
+            logger.info(f"Engine LLMApi (STT) executed successfully on {self.backend} with {model}")
             return response.text
         except Exception as e:
             logger.error(f"LLMApi: STT failed: {e}")
@@ -156,6 +162,7 @@ class LLMApi:
         try:
             response = image_generation(**params)
             raw_data = response.data[0].get("b64_json") or response.data[0].get("url")
+            logger.info(f"Engine LLMApi (ImageGen) executed successfully on {self.backend} with {model}")
             return self._ensure_base64(raw_data)
         except Exception as e:
             logger.error(f"LLMApi: Image generation failed: {e}")
@@ -188,6 +195,7 @@ class LLMApi:
             response.raise_for_status()
             res_json = response.json()
             raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
+            logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
             return self._ensure_base64(raw_data)
         except Exception as e:
             logger.error(f"LLMApi: Image edit failed: {e}")

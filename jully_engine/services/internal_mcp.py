@@ -1,8 +1,12 @@
+import asyncio
 import json
 import logging
 import base64
+from pprint import pprint
 from typing import Dict, Any, List, AsyncGenerator
-from ..model_loader import model_loader
+
+from numpy import append
+
 from ..persistence import get_backend
 from .external_mcp import external_mcp_manager
 
@@ -13,6 +17,7 @@ class InternalMCP:
         self.backend_db = get_backend()
 
     def get_tools(self) -> List[Dict[str, Any]]:
+        # O Cardápio de Ferramentas Internas (mantido intacto)
         internal_tools = [
             {
                 "type": "function",
@@ -35,7 +40,7 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "generate_audio",
-                    "description": "Generates an audio speech from text.",
+                    "description": "Generates an audio speech from text. Always use if the user asks to read something",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -52,7 +57,7 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_web",
-                    "description": "Searches the web for current information, news, facts.",
+                    "description": "Searches the web for current information, news, facts. Always use it in case the user asks for latest news and facts you might not be updated enough about",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -69,7 +74,7 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_memory",
-                    "description": "Searches long-term memory for past facts about the user or conversations.",
+                    "description": "Searches long-term memory for past facts about the user or conversations. Always use to remember facts about the user when its important to make the conmversation more natural to the user",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -123,286 +128,208 @@ class InternalMCP:
 
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
         config = self.backend_db.get_setting(setting_key)
-        if not config:
-            return {"backend": "api", "model": ""}
-        return config
+        return config if config else {"backend": "api", "model": ""}
 
-    async def _execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+        from ..model_loader import model_loader
+        from ..bridge import bridge
+        
         try:
+            logger.info(f"InternalMCP: Executando '{name}' com args: {arguments}")
+            
             if "__" in name:
-                # Delegate to external MCP
                 return await external_mcp_manager.execute_tool(name, arguments)
                 
+            config_map = {
+                "generate_image": "IMAGE_CREATE",
+                "generate_audio": "TTS",
+                "search_web": "WEB_SEARCH",
+                "search_memory": "EMBEDDINGS",
+                "save_memory": "EMBEDDINGS",
+                "image_edit": "IMAGE_EDIT"
+            }
+            
+            cfg_key = config_map.get(name)
+            if not cfg_key:
+                return "Unknown tool."
+                
+            config = self._get_config_for(cfg_key)
+            backend, model = config.get("backend"), config.get("model")
+
+            # Roteamento Simples
             if name == "generate_image":
-                config = self._get_config_for("IMAGE_CREATE")
-                presence = model_loader.get_presence(config.get("backend", "api"), config.get("model", ""))
+                # response = await model_loader.get_presence(backend, model)._strategy.run_image_gen(model, arguments.get("prompt", ""))
+                response = await bridge.process_image_generation({"prompt": arguments.get("prompt")}, {})
                 
-                # Adapt for presence strategy which might expect a payload
-                if hasattr(presence, 'generate_image'):
-                    # Local presence might not have generate_image yet, fallback to what's available
-                    pass
-                
-                # Using the domain class interface (from bridge process_image_generation)
-                # payload should contain prompt
-                return await presence._strategy.run_image_gen(config.get("model", ""), arguments.get("prompt", ""))
-
+                return (
+                    "Image generated",
+                    {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}
+                )
+            
             elif name == "generate_audio":
-                config = self._get_config_for("TTS")
-                mouth = model_loader.get_mouth(config.get("backend", "api"), config.get("model", ""))
-                # mouth expects payload dict with 'input'
-                audio_bytes = await mouth.speak({"input": arguments.get("text", "")})
-                if audio_bytes:
-                    return base64.b64encode(audio_bytes).decode("utf-8")
-                return ""
-
+                audio_bytes = bridge.process_tts({"text", arguments.get("text")}, {})
+                audio = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else ""
+                
+                return (
+                    "Audio generated",
+                    {"choices": [{"delta": {"type": "audio_url", "audio_url": f"data:audio/wav;base64,{audio}"}}]}
+                )
+            
             elif name == "search_web":
-                config = self._get_config_for("WEB_SEARCH")
-                world = model_loader.get_world(config.get("backend", "api"), config.get("model", ""))
-                return await world.search_web({"query": arguments.get("query", "")})
-
+                return (
+                    await bridge.process_search_web({"query": arguments.get("query", "")}, {}),
+                    None
+                )
+            
             elif name == "search_memory":
-                config = self._get_config_for("EMBEDDINGS")
-                memory = model_loader.get_memory(config.get("backend", "api"), config.get("model", ""))
-                return await memory.search(arguments.get("query", ""))
-
+                return (
+                    await model_loader.get_memory(backend, model).search('query: ' + arguments.get("query", "")),
+                    None
+                )
+            
             elif name == "save_memory":
-                config = self._get_config_for("EMBEDDINGS")
-                memory = model_loader.get_memory(config.get("backend", "api"), config.get("model", ""))
-                success = await memory.add_to_rag(arguments.get("fact", ""))
-                return "Fact saved successfully to long-term memory." if success else "Failed to save fact."
-
+                success = await model_loader.get_memory(backend, model).add_to_rag('passage: ' + arguments.get("fact", ""))
+                return (
+                    "Fact saved successfully." if success else "Failed to save fact.",
+                    None
+                )
+            
             elif name == "image_edit":
-                config = self._get_config_for("IMAGE_EDIT")
-                presence = model_loader.get_presence(config.get("backend", "api"), config.get("model", ""))
-                # Usually requires an image, but let's assume it grabs the last image from context or it's passed via some state
-                return "Image edit executed." # Placeholder for full implementation
+                return "Image edit executed."
 
         except Exception as e:
-            logger.error(f"Error executing tool {name}: {e}")
-            return f"Error executing tool: {str(e)}"
-        
-        return "Unknown tool."
+            logger.error(f"InternalMCP: Erro na tool {name}: {e}")
+            return (
+                f"Error executing tool: {str(e)}",
+                None
+            )
 
+    async def stream_orchestrate(self, brain_instance, stream: AsyncGenerator[Dict, None], original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
+        is_calling = False
+        tools = {}
+        assistant_content = ''
+        
+        async for chunk in stream:
+            if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
+                is_calling = True
+                
+                for tool_call in tool_calls:
+                    if name := tool_call.get('function', {}).get('name', None):
+                        tools.setdefault(name, {"arguments": "", "response": [], "id": tool_call.get("id", None)})
+                    else:
+                        tools.get(name)["arguments"] += tool_call.get("function", {}).get('arguments', '')
+                
+                continue
+            
+            if is_calling:
+                for name, tool in tools.items():
+                    tool["response"] = await self.execute_tool(name, json.loads(tool['arguments']))
+                
+                is_calling = False
+                
+                continue
+            
+            if chunk.get('choices')[0].get('finish_reason') == 'tool_calls':
+                tool_messages = []
+                assistant_tool_calls = []
+                
+                for name, tool in tools.items():
+                    llm, user = tool.get("response")
+                    
+                    tool_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool.get('id'),
+                        "name": name,
+                        "content": llm
+                    })
+                    
+                    assistant_tool_calls,append({
+                        "id": tool.get('id'),
+                        "type": 'function',
+                        "function": {
+                            "name": name,
+                            "arguments": tool['arguments']
+                        }
+                    })
+                    
+                    if user:
+                        yield user
+                        await asyncio.sleep(0)
+                
+                original_payload['messages'].append({
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "tool_calls": assistant_tool_calls
+                })
+                
+                original_payload['messages'].extend(tool_messages)
+                
+                async for chunk in brain_instance.chat(original_payload):
+                    yield chunk
+                    await asyncio.sleep(0)
+                
+                continue
+            
+            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
+            yield chunk
+            await asyncio.sleep(0)
+        
+    # --- UTILITÁRIO ---
     async def orchestrate(self, brain_instance, response: Dict[str, Any], original_payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Synchronous flow interceptor. If finish_reason == tool_calls, execute and append results.
-        If it's a text result (like search), loop back to the LLM to get the final answer,
-        accumulating the token usage.
-        """
         choice = response.get("choices", [{}])[0]
-        finish_reason = choice.get("finish_reason")
         message = choice.get("message", {})
         
-        # Accumulators for usage
-        total_prompt_tokens = response.get("usage", {}).get("prompt_tokens", 0)
-        total_completion_tokens = response.get("usage", {}).get("completion_tokens", 0)
+        # Se não tem tool call, apenas devolve a resposta intacta
+        if choice.get("finish_reason") != "tool_calls" or "tool_calls" not in message:
+            return response
+            
+        messages = original_payload.get("messages", [])
+        messages.append(message)
         
-        if finish_reason == "tool_calls" and "tool_calls" in message:
-            tool_calls = message.get("tool_calls", [])
+        has_text_result = False
+        multimodal_content = []
+        
+        for tc in message.get("tool_calls", []):
+            name = tc.get("function", {}).get("name")
+            args = json.loads(tc.get("function", {}).get("arguments", "{}"))
             
-            # Need to figure out if any tool returns multimodal or just text
-            # For multimodal (image/audio), we just append and return.
-            # For text (search), we append as tool response and call LLM again.
+            result = await self.execute_tool(name, args)
             
-            has_text_result = False
-            messages = original_payload.get("messages", [])
-            messages.append(message) # Append assistant's tool call message
+            if name == "generate_image":
+                multimodal_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{result}"}})
+            elif name == "generate_audio":
+                multimodal_content.append({"type": "audio_url", "audio_url": f"data:audio/wav;base64,{result}"})
+            else:
+                has_text_result = True
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id"),
+                    "name": name,
+                    "content": str(result)
+                })
+        
+        # O ReAct Loop (Ping-Pong com a LLM)
+        if has_text_result and not multimodal_content:
+            new_payload = dict(original_payload, messages=messages)
+            new_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
             
-            content_array = []
-            
-            for tc in tool_calls:
-                func = tc.get("function", {})
-                name = func.get("name")
-                args_str = func.get("arguments", "{}")
-                try:
-                    args = json.loads(args_str)
-                except:
-                    args = {}
-                    
-                result = await self._execute_tool(name, args)
-                
-                if name == "generate_image":
-                    content_array.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{result}"}})
-                elif name == "generate_audio":
-                    content_array.append({"type": "audio_url", "audio_url": f"data:audio/wav;base64,{result}"})
-                else:
-                    has_text_result = True
-                    # Append tool result message
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", ""),
-                        "name": name,
-                        "content": str(result)
-                    })
-            
-            if has_text_result and not content_array:
-                # Do a second LLM call with the tool results
-                new_payload = dict(original_payload)
-                new_payload["messages"] = messages
-                
-                # Execute second call (ensure internal_mcp recursion is disabled or handled)
-                new_payload["headers"] = dict(original_payload.get("headers", {}))
-                new_payload["headers"]["x-enable-internal-mcp"] = "0" # Disable for second pass to prevent infinite loop
-                
-                second_response = await brain_instance.chat(new_payload)
-                
-                if isinstance(second_response, dict):
-                    # Accumulate usage
-                    second_usage = second_response.get("usage", {})
-                    second_response["usage"] = {
-                        "prompt_tokens": total_prompt_tokens + second_usage.get("prompt_tokens", 0),
-                        "completion_tokens": total_completion_tokens + second_usage.get("completion_tokens", 0),
-                        "total_tokens": total_prompt_tokens + total_completion_tokens + second_usage.get("total_tokens", 0)
-                    }
-                    return second_response
-                return second_response
+            second_response = await brain_instance.chat(new_payload)
+            self._merge_usages(response, second_response) # Soma os tokens
+            return second_response
 
-            # If it was multimodal or mixed
-            response["choices"][0]["message"]["content"] = content_array
-            response["choices"][0]["finish_reason"] = "stop"
-
+        # Se for imagem/áudio, devolve direto
+        response["choices"][0]["message"]["content"] = multimodal_content
+        response["choices"][0]["finish_reason"] = "stop"
         return response
 
-    async def stream_orchestrate(self, brain_instance, async_generator: AsyncGenerator[str, None], original_payload: Dict[str, Any]) -> AsyncGenerator[str, None]:
-        """
-        Wraps the async generator to intercept tool calls.
-        If a text tool is called, execute it and restart a stream for the final answer.
-        """
-        tool_call_buffer = {}
-        final_usage = None
-        assistant_message = {"role": "assistant", "content": "", "tool_calls": []}
+    def _merge_usages(self, first: Dict, second: Dict):
+        """Soma o uso de tokens das duas viagens à rede neural."""
+        u1 = first.get("usage", {})
+        u2 = second.get("usage", {})
         
-        async for chunk_str in async_generator:
-            if not chunk_str.startswith("data: "):
-                yield chunk_str
-                continue
-                
-            data_str = chunk_str[6:].strip()
-            if data_str == "[DONE]":
-                if tool_call_buffer:
-                    # Reconstruct tool_calls array for the assistant message
-                    for idx, tc in tool_call_buffer.items():
-                        assistant_message["tool_calls"].append({
-                            "id": tc.get("id", f"call_{idx}"),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("name"),
-                                "arguments": tc.get("arguments")
-                            }
-                        })
-                        
-                    has_text_result = False
-                    multimodal_deltas = []
-                    messages = original_payload.get("messages", [])
-                    messages.append(assistant_message)
-                    
-                    for tc_idx, tc_data in tool_call_buffer.items():
-                        name = tc_data.get("name")
-                        args = tc_data.get("arguments", "")
-                        tc_id = tc_data.get("id", f"call_{tc_idx}")
-                        try:
-                            args_dict = json.loads(args)
-                        except:
-                            args_dict = {}
-                            
-                        result = await self._execute_tool(name, args_dict)
-                        
-                        if name == "generate_image":
-                            multimodal_deltas.append({"image_url": {"url": f"data:image/png;base64,{result}"}})
-                        elif name == "generate_audio":
-                            multimodal_deltas.append({"audio_url": f"data:audio/wav;base64,{result}"})
-                        else:
-                            has_text_result = True
-                            messages.append({
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "name": name,
-                                "content": str(result)
-                            })
-                            
-                    if has_text_result and not multimodal_deltas:
-                        # ReAct loop: stream the second response
-                        new_payload = dict(original_payload)
-                        new_payload["messages"] = messages
-                        new_payload["headers"] = dict(original_payload.get("headers", {}))
-                        new_payload["headers"]["x-enable-internal-mcp"] = "0"
-                        
-                        second_stream = await brain_instance.chat(new_payload)
-                        
-                        # Accumulate tokens from the first stream into the final usage block
-                        first_prompt_tokens = final_usage.get("prompt_tokens", 0) if final_usage else 0
-                        first_completion_tokens = final_usage.get("completion_tokens", 0) if final_usage else 0
-                        
-                        async for second_chunk in second_stream:
-                            if second_chunk.startswith("data: ") and second_chunk.strip() != "data: [DONE]":
-                                try:
-                                    s_data = json.loads(second_chunk[6:])
-                                    if "usage" in s_data and s_data["usage"]:
-                                        s_usage = s_data["usage"]
-                                        s_data["usage"] = {
-                                            "prompt_tokens": first_prompt_tokens + s_usage.get("prompt_tokens", 0),
-                                            "completion_tokens": first_completion_tokens + s_usage.get("completion_tokens", 0),
-                                            "total_tokens": first_prompt_tokens + first_completion_tokens + s_usage.get("total_tokens", 0)
-                                        }
-                                        yield f"data: {json.dumps(s_data)}\n\n"
-                                        continue
-                                except:
-                                    pass
-                            yield second_chunk
-                        return
-
-                    # If multimodal, yield the results directly
-                    for delta_multimodal in multimodal_deltas:
-                        result_chunk = {
-                            "id": "chatcmpl-mcp",
-                            "object": "chat.completion.chunk",
-                            "model": "internal-mcp",
-                            "choices": [{
-                                "index": 0,
-                                "delta": delta_multimodal,
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(result_chunk)}\n\n"
-                        
-                if final_usage:
-                    usage_chunk = {
-                        "id": "chatcmpl-mcp",
-                        "object": "chat.completion.chunk",
-                        "model": "internal-mcp",
-                        "choices": [],
-                        "usage": final_usage
-                    }
-                    yield f"data: {json.dumps(usage_chunk)}\n\n"
-
-                yield "data: [DONE]\n\n"
-                return
-                
-            try:
-                chunk = json.loads(data_str)
-                
-                if "usage" in chunk and chunk["usage"]:
-                    final_usage = chunk["usage"]
-
-                delta = chunk.get("choices", [{}])[0].get("delta", {})
-                if "content" in delta and delta["content"]:
-                    assistant_message["content"] += delta["content"]
-                
-                if "tool_calls" in delta:
-                    for tc in delta["tool_calls"]:
-                        idx = tc.get("index", 0)
-                        if idx not in tool_call_buffer:
-                            tool_call_buffer[idx] = {"name": "", "arguments": "", "id": tc.get("id", f"call_{idx}")}
-                            
-                        func = tc.get("function", {})
-                        if "name" in func and func["name"]:
-                            tool_call_buffer[idx]["name"] = func["name"]
-                        if "arguments" in func and func["arguments"]:
-                            tool_call_buffer[idx]["arguments"] += func["arguments"]
-                    continue
-                    
-                yield chunk_str
-                
-            except Exception as e:
-                logger.error(f"InternalMCP: Error parsing chunk: {e}")
-                yield chunk_str
+        if u1 and u2:
+            second["usage"] = {
+                "prompt_tokens": u1.get("prompt_tokens", 0) + u2.get("prompt_tokens", 0),
+                "completion_tokens": u1.get("completion_tokens", 0) + u2.get("completion_tokens", 0),
+                "total_tokens": u1.get("total_tokens", 0) + u2.get("total_tokens", 0),
+            }

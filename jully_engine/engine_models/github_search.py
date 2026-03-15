@@ -31,6 +31,7 @@ class GithubSearch:
                     "forks": item.get("forks_count"),
                     "description": item.get("description")
                 })
+            logger.info(f"Engine GithubSearch executed successfully on {self.backend} with github")
             return results
         except Exception as e:
             logger.error(f"Github search failed: {e}")

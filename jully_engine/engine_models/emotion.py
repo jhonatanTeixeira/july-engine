@@ -70,6 +70,7 @@ class Emotion:
             emotions = ['neutral', 'happiness', 'surprise', 'sadness', 'anger', 'disgust', 'fear', 'contempt']
             scores = outputs[0][0]
             dominant_emotion = emotions[np.argmax(scores)]
+            logger.info(f"Engine Emotion executed successfully on {self.backend} with Emotion")
             return dominant_emotion
         except Exception as e:
             logger.error(f"Emotion execution failed: {e}")

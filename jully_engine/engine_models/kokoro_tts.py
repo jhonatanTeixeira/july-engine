@@ -56,6 +56,7 @@ class KokoroTTS:
             buffer = BytesIO()
             # Kokoro sample rate is usually 24000
             sf.write(buffer, final_audio, 24000, format='WAV')
+            logger.info(f"Engine KokoroTTS executed successfully on {self.backend} with {self.model_tag}")
             return buffer.getvalue()
         except Exception as e:
             logger.error(f"KokoroTTS execution failed: {e}")

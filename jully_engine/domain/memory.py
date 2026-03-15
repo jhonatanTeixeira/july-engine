@@ -48,7 +48,12 @@ class Memory:
         embedding_result = await self.embed(payload)
         
         if embedding_result and len(embedding_result) > 0:
-            embedding = embedding_result[0]
+            # 🛡️ BLINDAGEM DE DIMENSÃO (Extrai o vetor corretamente)
+            if isinstance(embedding_result[0], list):
+                embedding = embedding_result[0] # Matriz 2D (API)
+            else:
+                embedding = embedding_result    # Array 1D (Local)
+                
             vector_store.add(text, embedding, metadata)
             return True
         return False
@@ -61,7 +66,12 @@ class Memory:
         embedding_result = await self.embed(payload)
         
         if embedding_result and len(embedding_result) > 0:
-            embedding = embedding_result[0]
+            # 🛡️ BLINDAGEM DE DIMENSÃO (Extrai o vetor corretamente)
+            if isinstance(embedding_result[0], list):
+                embedding = embedding_result[0] # Matriz 2D (API)
+            else:
+                embedding = embedding_result    # Array 1D (Local)
+                
             results = vector_store.search(embedding, top_k=top_k)
             return "\n---\n".join(results)
             

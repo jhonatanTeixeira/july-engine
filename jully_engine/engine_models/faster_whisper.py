@@ -56,6 +56,7 @@ class FasterWhisper:
             logger.info("FasterWhisper: Transcribing cleaned audio...")
             segments, info = self.model.transcribe(clean_audio_io, language=language, vad_filter=True, vad_parameters=dict(min_silence_duration_ms=500))
             text = " ".join([segment.text for segment in segments]).strip()
+            logger.info(f"Engine FasterWhisper executed successfully on {self.backend} with {self.model_size}")
             return text
         except Exception as e:
             logger.error(f"FasterWhisper: Transcription failed: {e}")

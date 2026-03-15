@@ -48,6 +48,7 @@ class Pix2Pix:
             # Encode back to base64
             buffered = io.BytesIO()
             edited_image.save(buffered, format="PNG")
+            logger.info(f"Engine Pix2Pix executed successfully on {self.backend} with {self.model_id}")
             return base64.b64encode(buffered.getvalue()).decode()
         except Exception as e:
             logger.error(f"Pix2Pix: Execution failed: {e}")

@@ -35,6 +35,7 @@ class GoogleSearch:
                 return "No relevant information found on Google."
                 
             content_list = [f"- {r.get('title')}: {r.get('snippet')} ({r.get('link')})" for r in results]
+            logger.info(f"Engine GoogleSearch executed successfully on {self.backend} with google")
             return "\n".join(content_list)
         except Exception as e:
             logger.error(f"Google search failed: {e}")

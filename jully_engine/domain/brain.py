@@ -1,9 +1,14 @@
 import logging
 from typing import Any, Dict, List, Optional
+
 from ..engine_models.gguf import GGUF
 from ..engine_models.llm_api import LLMApi
+from ..services.models_service import ModelsService
+from ..services.mcp_emulator import McpEmulator
+from ..services.internal_mcp import InternalMCP
 
 logger = logging.getLogger("JulyEngine.Domain.Brain")
+
 
 class Brain:
     """
@@ -14,18 +19,17 @@ class Brain:
         self.backend = backend
         self.model_tag = model_tag
         self._strategy = self._get_strategy()
+        self._mcp = McpEmulator(InternalMCP())
 
     def _get_strategy(self):
         if self.backend == "api":
             return LLMApi(backend=self.backend)
         
-        # Check if model is in DB or ends with .gguf
-        from ..routers.models import load_models_db
-        db = load_models_db()
-        is_gguf = self.model_tag.endswith(".gguf") or self.model_tag in db
+        model_service = ModelsService()
+        model = model_service.get(self.model_tag) or model_service.resolve_by_settings(self.model_tag)
         
-        if self.backend in ["gpu", "cpu"] and is_gguf:
-            return GGUF(backend=self.backend, model_alias=self.model_tag)
+        if self.backend in ["gpu", "cpu"] and model is not None:
+            return GGUF(backend=self.backend, model=model)
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -33,37 +37,31 @@ class Brain:
         headers = payload.get("headers", {})
         enable_internal_mcp = headers.get("x-enable-internal-mcp", "0") == "1"
         
-        internal_mcp = None
         if enable_internal_mcp:
-            from ..services.internal_mcp import InternalMCP
-            internal_mcp = InternalMCP()
-            tools = internal_mcp.get_tools()
-            if "tools" not in payload:
-                payload["tools"] = tools
-            else:
-                payload["tools"].extend(tools)
-                
-            # If vision is enabled and there's a tool, we might need to add image_edit
-            # This is already returned by get_tools()
+            # 1. INJEÇÃO BARE-METAL: Injeta as tags XML nas 'messages' do payload
+            self._mcp.inject_tools(payload)
+            
+            # 2. BYPASS DA API: Removemos o array 'tools' para impedir que o 
+            # Llama.cpp tente formatar por conta própria e estrague o prompt.
+            payload.pop("tools", None)
 
+        # Salva o payload com a injeção do XML já feita para o segundo turno (ReAct)
         original_payload = dict(payload)
 
         if isinstance(self._strategy, LLMApi):
-            model = payload.pop("model", self.model_tag)
+            del payload["model"]
+            model = self.model_tag
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
-            headers = payload.pop("headers", {})
-            response = await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            req_headers = payload.pop("headers", {})
+            response = await self._strategy.run_chat(model, messages, stream=stream, headers=req_headers, **payload)
             
         elif isinstance(self._strategy, GGUF):
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             response = self._strategy.run_chat(messages, stream=stream, **payload)
 
-        if enable_internal_mcp and internal_mcp:
-            if stream:
-                return internal_mcp.stream_orchestrate(self, response, original_payload)
-            else:
-                return await internal_mcp.orchestrate(self, response, original_payload)
+        if enable_internal_mcp:
+            return await self._mcp.orchestrate(response, self, original_payload)
                 
         return response

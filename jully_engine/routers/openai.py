@@ -1,3 +1,5 @@
+import json
+
 from fastapi import APIRouter, Request, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any, Union, AsyncGenerator
@@ -25,13 +27,13 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 class EmbeddingRequest(BaseModel):
-    model: str
+    model: Optional[str] = "default"
     input: Union[str, List[str]]
 
 class SpeechRequest(BaseModel):
-    model: str
+    model: Optional[str] = "default"
     input: str
-    voice: str
+    voice: Optional[str] = "default"
 
 class ImageGenerationRequest(BaseModel):
     prompt: str
@@ -64,17 +66,33 @@ class ImageResponse(BaseModel):
     created: int = Field(..., examples=[1677652288])
     data: List[Dict[str, str]] = Field(..., examples=[{"b64_json": "iVBORw0KGgoAAAANSUhEUgAA..."}])
 
-@router.post("/chat/completions", response_model=ChatCompletionResponse)
+@router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, http_request: Request):
     payload = request.model_dump()
     headers = dict(http_request.headers)
-    
+    stream = payload.get('stream', False)
     response = await bridge.process_openai_chat(payload, headers)
 
-    if isinstance(response, AsyncGenerator):
-        return StreamingResponse(response, media_type="text/event-stream")
-
-    return response
+    if stream:
+        # 2. O FORMATADOR FINAL (O Tradutor Dict -> Texto)
+        async def sse_formatter(generator):
+            try:
+                async for chunk_dict in generator:
+                    # Pega o dicionário e transforma em string JSON com o prefixo 'data: '
+                    chunk_str = json.dumps(chunk_dict)
+                    yield f"data: {chunk_str}\n\n"
+            finally:
+                # O padrão OpenAI exige que o stream termine com a string [DONE]
+                yield "data: [DONE]\n\n"
+                
+        # Retorna o StreamingResponse empacotando o nosso formatador
+        return StreamingResponse(
+            sse_formatter(response), 
+            media_type="text/event-stream"
+        )
+    else:
+        # Se não for stream, o FastAPI converte o Dict pra JSON automaticamente!
+        return response
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
 async def create_embeddings(request: EmbeddingRequest, http_request: Request):

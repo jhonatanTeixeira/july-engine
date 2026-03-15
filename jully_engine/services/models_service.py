@@ -16,3 +16,6 @@ class ModelsService:
 
     def delete(self, model_alias: str) -> bool:
         return self.backend.delete_model(model_alias)
+    
+    def resolve_by_settings(self, model_alias: str):
+        return self.backend.get_model_by_settings(model_alias)

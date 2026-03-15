@@ -3,11 +3,11 @@ from typing import Dict, Any, List, Optional
 
 class PersistenceBackend(ABC):
     @abstractmethod
-    def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
+    def get_setting(self, key: str) -> Optional[Dict[str, Any] | List[Dict[str, Any]]]:
         pass
 
     @abstractmethod
-    def set_setting(self, key: str, value: Dict[str, Any]) -> None:
+    def set_setting(self, key: str, value: Dict[str, Any] | List[Dict[str, Any]]) -> None:
         pass
         
     @abstractmethod
@@ -53,3 +53,8 @@ class PersistenceBackend(ABC):
     @abstractmethod
     def delete_mcp(self, mcp_id: str) -> bool:
         pass
+    
+    def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:
+        text_presets = self.get_setting("TEXT_PRESETS") or []
+
+        return next((p for p in text_presets if p.get("alias") == model_alias), None)

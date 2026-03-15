@@ -73,5 +73,6 @@ class Replicate:
             input=input_data
         )
 
+        logger.info(f"Engine Replicate executed successfully on {self.backend} with {model}")
         return response.read()        
         

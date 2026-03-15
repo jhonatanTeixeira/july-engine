@@ -44,6 +44,7 @@ class BgeMicro:
             sentence_embeddings = F.normalize(sentence_embeddings, p=2, dim=1)
             
             result = sentence_embeddings[0].detach().cpu().numpy().tolist()
+            logger.info(f"Engine BgeMicro executed successfully on {self.backend} with {self.model_id}")
             return result
             
         except Exception as e:

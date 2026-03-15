@@ -145,9 +145,21 @@ def load_models_db() -> Dict[str, Any]:
     models = models_service.get_all()
     # convert list to dict
     db = {m.get("model_alias"): m for m in models if m.get("model_alias")}
-    
-    db.setdefault('xtts', {
-        'model_alias': 'xtts',
+
+    # Auto-migrate from old json if present
+    old_path = os.path.join(CACHE_DIR, "july_models.json")
+    if os.path.exists(old_path):
+        try:
+            with open(old_path, "r", encoding="utf-8") as f:
+                old_data = json.load(f)
+            for alias, data in old_data.items():
+                if alias not in ['xtts', 'faster-whisper'] and alias not in db:
+                    models_service.set(alias, data)
+                    db[alias] = data
+        except Exception as e:
+            logger.error(f"Failed to migrate old models json: {e}")
+
+    db.setdefault('xtts', {        'model_alias': 'xtts',
         'model_type': 'tts',
         'estimated_vram': 3000
     })

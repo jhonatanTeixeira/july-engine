@@ -98,6 +98,7 @@ class Piper:
                 audio_bytes = f.read()
                 
             os.remove(output_path)
+            logger.info(f"Engine Piper executed successfully on {self.backend} with Piper")
             return audio_bytes
         except Exception as e:
             if 'output_path' in locals() and os.path.exists(output_path):

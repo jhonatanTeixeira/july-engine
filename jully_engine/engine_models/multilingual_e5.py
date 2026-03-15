@@ -23,18 +23,18 @@ class MultilingualE5:
                 logger.error(f"MultilingualE5: Failed to load: {e}")
                 raise e
 
-    # O caller passa is_query=True para buscar, ou is_query=False para gravar
     def run(self, input_text: str) -> List[float]:
         if self.model is None:
             self.load()
             
         try:
             if not input_text.startswith('query: ') and not input_text.startswith('passage: '):
-                raise Exception('must use query for serach embbedings or passage for persisting embeddings')
+                raise Exception('must use query for search embbedings or passage for persisting embeddings')
             
             # E5 usa a lib SentenceTransformer que já faz pooling e normalização se pedirmos
             embedding = self.model.encode(input_text, normalize_embeddings=True)
             
+            logger.info(f"Engine MultilingualE5 executed successfully on {self.backend} with {self.model_id}")
             return embedding.tolist()
             
         except Exception as e:

@@ -62,4 +62,5 @@ class FastVLM:
         clean_description = description.replace(instruction, "").strip()
         clean_description = clean_description.replace("<image>", "").strip()
         
+        logger.info(f"Engine FastVLM executed successfully on {self.backend} with {self.model_id}")
         return clean_description

@@ -100,6 +100,7 @@ class ExternalMCPManager:
             return f"MCP server {mcp_id} not connected"
             
         try:
+            logger.info(f"ExternalMCP executing tool: {full_name} with arguments: {arguments}")
             result = await session.call_tool(tool_name, arguments)
             # Assuming CallToolResult format
             texts = []
