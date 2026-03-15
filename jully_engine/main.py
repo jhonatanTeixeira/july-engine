@@ -20,17 +20,21 @@ from .routers.search import router as search_router
 
 from .routers.settings_router import router as settings_router
 from .routers.mcps_router import router as mcps_router
+from .routers.webhooks_router import router as webhooks_router
 from .services.external_mcp import external_mcp_manager
+from .events import event_manager
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Start the bridge which starts all orchestrators
+    event_manager.start()
     await bridge.start()
     await external_mcp_manager.start()
     yield
     # Shutdown: Stop the bridge which stops all orchestrators
     await external_mcp_manager.stop()
     await bridge.stop()
+    event_manager.stop()
 
 description = """
 **July Engine** is a high-performance multimodal inference engine designed for hybrid operation.
@@ -79,6 +83,7 @@ app.include_router(voice_router)
 app.include_router(search_router)
 app.include_router(settings_router)
 app.include_router(mcps_router)
+app.include_router(webhooks_router)
 
 
 @app.get("/health", tags=["July"])

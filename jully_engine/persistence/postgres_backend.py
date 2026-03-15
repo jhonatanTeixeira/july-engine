@@ -31,6 +31,12 @@ mcps_table = Table(
     Column("data", JSONB)
 )
 
+history_table = Table(
+    "history", metadata,
+    Column("id", String, primary_key=True),
+    Column("data", JSONB)
+)
+
 class PostgresBackend(PersistenceBackend):
     def __init__(self, connection_string: str):
         self.engine: Engine = create_engine(connection_string)
@@ -100,5 +106,11 @@ class PostgresBackend(PersistenceBackend):
             index_elements=['id'],
             set_=dict(data=stmt.excluded.data)
         )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def add_history_event(self, event_data: Dict[str, Any]) -> None:
+        from sqlalchemy.dialects.postgresql import insert
+        stmt = insert(history_table).values(id=event_data["id"], data=event_data)
         with self.engine.begin() as conn:
             conn.execute(stmt)

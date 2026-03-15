@@ -133,12 +133,18 @@ class InternalMCP:
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         from ..model_loader import model_loader
         from ..bridge import bridge
+        from ..events import event_manager
+        import time
         
         try:
             logger.info(f"InternalMCP: Executando '{name}' com args: {arguments}")
+            start_time = time.time()
             
             if "__" in name:
-                return await external_mcp_manager.execute_tool(name, arguments)
+                result = await external_mcp_manager.execute_tool(name, arguments)
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
+                return result
                 
             config_map = {
                 "generate_image": "IMAGE_CREATE",
@@ -161,6 +167,8 @@ class InternalMCP:
                 # response = await model_loader.get_presence(backend, model)._strategy.run_image_gen(model, arguments.get("prompt", ""))
                 response = await bridge.process_image_generation({"prompt": arguments.get("prompt")}, {})
                 
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Image generated",
                     {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}
@@ -170,25 +178,35 @@ class InternalMCP:
                 audio_bytes = bridge.process_tts({"text", arguments.get("text")}, {})
                 audio = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else ""
                 
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Audio generated",
                     {"choices": [{"delta": {"type": "audio_url", "audio_url": f"data:audio/wav;base64,{audio}"}}]}
                 )
             
             elif name == "search_web":
+                res = await bridge.process_search_web({"query": arguments.get("query", "")}, {})
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
-                    await bridge.process_search_web({"query": arguments.get("query", "")}, {}),
+                    res,
                     None
                 )
             
             elif name == "search_memory":
+                res = await model_loader.get_memory(backend, model).search('query: ' + arguments.get("query", ""))
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
-                    await model_loader.get_memory(backend, model).search('query: ' + arguments.get("query", "")),
+                    res,
                     None
                 )
             
             elif name == "save_memory":
                 success = await model_loader.get_memory(backend, model).add_to_rag('passage: ' + arguments.get("fact", ""))
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Fact saved successfully." if success else "Failed to save fact.",
                     None
@@ -199,6 +217,8 @@ class InternalMCP:
                     "prompt": arguments.get("instruction", ""),
                     "image": arguments.get("image", "")
                 }, {})
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Image edited",
                     {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}

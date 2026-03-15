@@ -11,6 +11,7 @@ class TinyDBBackend(PersistenceBackend):
         self.models_table = self.db.table("models")
         self.voices_table = self.db.table("uploaded_voices")
         self.mcps_table = self.db.table("mcp_servers")
+        self.history_table = self.db.table("history")
 
     def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
         Q = Query()
@@ -69,3 +70,6 @@ class TinyDBBackend(PersistenceBackend):
         Q = Query()
         removed = self.mcps_table.remove(Q.id == mcp_id)
         return len(removed) > 0
+
+    def add_history_event(self, event_data: Dict[str, Any]) -> None:
+        self.history_table.insert(event_data)

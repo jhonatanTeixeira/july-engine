@@ -7,8 +7,23 @@ import os
 from fastapi import HTTPException
 from typing import Any, Dict, Optional, Union, AsyncGenerator, List
 from .orchestrators.api_orchestrator import api_orchestrator
+from .events import event_manager
 
 logger = logging.getLogger("JulyEngine.Bridge")
+
+def get_audio_duration(audio_bytes: bytes) -> float:
+    import io
+    try:
+        import soundfile as sf
+        with sf.SoundFile(io.BytesIO(audio_bytes)) as f:
+            return len(f) / f.samplerate
+    except Exception:
+        import wave
+        try:
+            with wave.open(io.BytesIO(audio_bytes), 'rb') as f:
+                return f.getnframes() / float(f.getframerate())
+        except Exception:
+            return 0.0
 
 class Bridge:
     """
@@ -117,7 +132,9 @@ class Bridge:
         return obj
 
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
+        start_time = time.time()
         messages = payload.get("messages", [])
+        input_chars = len(json.dumps(messages)) if messages else 0
         last_message = messages[-1] if messages else None
         
         orch = self.get_orchestrator(headers)
@@ -201,15 +218,23 @@ class Bridge:
             
             # 2. Verifica se é um dicionário OpenAI válido
             if isinstance(normalized_response, dict) and "choices" in normalized_response:
+                gen_time = time.time() - start_time
+                tokens = normalized_response.get("usage", {}).get("total_tokens", 0)
+                interaction_id = normalized_response.get("id")
+                event_manager.emit(task_type, tokens_spent=tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
                 return normalized_response
                 
             # 3. Fallback: Se algum orquestrador retornou apenas texto cru
             logger.warning("Bridge: Orchestrator returned raw string/invalid dict. Estimating tokens.")
             res_content = normalized_response if isinstance(normalized_response, str) else json.dumps(normalized_response)
             est_tokens = len(res_content) // 4
+            
+            interaction_id = f"chatcmpl-{uuid.uuid4().hex[:10]}"
+            
+            event_manager.emit(task_type, tokens_spent=est_tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
     
             return {
-                "id": f"chatcmpl-{uuid.uuid4().hex[:10]}",
+                "id": interaction_id,
                 "object": "chat.completion",
                 "created": int(time.time()),
                 "model": model_name,
@@ -222,19 +247,37 @@ class Bridge:
             }
 
         async def openai_generator():
-            # Fluxo Async/Sync Híbrido: Gera apenas Dicionários Puros
-            if hasattr(response, '__aiter__'):
-                async for chunk in response:
-                    yield self._normalize_object(chunk)
-            else:
-                for chunk in response:
-                    yield self._normalize_object(chunk)
-                    await asyncio.sleep(0) # Libera o event loop
+            tokens = 0
+            interaction_id = f"chatcmpl-{uuid.uuid4().hex[:10]}"
+            try:
+                # Fluxo Async/Sync Híbrido: Gera apenas Dicionários Puros
+                if hasattr(response, '__aiter__'):
+                    async for chunk in response:
+                        normalized = self._normalize_object(chunk)
+                        if "id" in normalized:
+                            interaction_id = normalized["id"]
+                        if "usage" in normalized and normalized["usage"]:
+                            tokens = normalized["usage"].get("total_tokens", tokens)
+                        yield normalized
+                else:
+                    for chunk in response:
+                        normalized = self._normalize_object(chunk)
+                        if "id" in normalized:
+                            interaction_id = normalized["id"]
+                        if "usage" in normalized and normalized["usage"]:
+                            tokens = normalized["usage"].get("total_tokens", tokens)
+                        yield normalized
+                        await asyncio.sleep(0) # Libera o event loop
+            finally:
+                gen_time = time.time() - start_time
+                event_manager.emit(task_type, tokens_spent=tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
 
         return openai_generator()
     
     async def process_anthropic_message(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
+        start_time = time.time()
         messages = payload.get("messages", [])
+        input_chars = len(json.dumps(messages)) if messages else 0
         is_vision = False
         last_message = messages[-1] if messages else None
         if last_message and isinstance(last_message.get("content"), list):
@@ -252,13 +295,18 @@ class Bridge:
         
         if not stream:
             normalized_response = self._normalize_object(response)
+            gen_time = time.time() - start_time
             
             # Converter OpenAI format para Anthropic format
             if isinstance(normalized_response, dict) and "choices" in normalized_response:
                 content_text = normalized_response["choices"][0].get("message", {}).get("content", "")
                 usage = normalized_response.get("usage", {})
+                interaction_id = normalized_response.get("id") or f"msg_{uuid.uuid4().hex[:10]}"
+                
+                event_manager.emit(task_type, tokens_spent=usage.get("total_tokens", 0), generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
+                
                 return {
-                    "id": f"msg_{uuid.uuid4().hex[:10]}",
+                    "id": interaction_id,
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "text", "text": content_text}],
@@ -272,8 +320,10 @@ class Bridge:
 
             if isinstance(normalized_response, str):
                 est_tokens = len(normalized_response) // 4
+                interaction_id = f"msg_{uuid.uuid4().hex[:10]}"
+                event_manager.emit(task_type, tokens_spent=est_tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
                 return {
-                    "id": f"msg_{uuid.uuid4().hex[:10]}",
+                    "id": interaction_id,
                     "type": "message",
                     "role": "assistant",
                     "content": [{"type": "text", "text": normalized_response}],
@@ -286,41 +336,45 @@ class Bridge:
 
         async def anthropic_generator():
             msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-            model_name = payload.get("model", "claude-3")
-            
-            # Inicializa a mensagem (Anthropic spec) - Mantido como String SSE pois o padrão Anthropic exige os blocos "event:"
-            yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
-            yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
-            
-            final_output_tokens = 0
-
-            def process_chunk(chunk_dict):
-                nonlocal final_output_tokens
-                events = []
+            try:
+                model_name = payload.get("model", "claude-3")
                 
-                if 'choices' in chunk_dict and len(chunk_dict['choices']) > 0:
-                    delta = chunk_dict['choices'][0].get('delta', {})
-                    if 'content' in delta and delta['content']:
-                        events.append(f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n")
+                # Inicializa a mensagem (Anthropic spec) - Mantido como String SSE pois o padrão Anthropic exige os blocos "event:"
+                yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
+                yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
                 
-                if 'usage' in chunk_dict and chunk_dict['usage']:
-                     final_output_tokens = chunk_dict['usage'].get('completion_tokens', 0)
-                     
-                return events
+                final_output_tokens = 0
 
-            if hasattr(response, '__aiter__'):
-                async for chunk in response:
-                    for event in process_chunk(self._normalize_object(chunk)):
-                        yield event
-            else:
-                for chunk in response:
-                    for event in process_chunk(self._normalize_object(chunk)):
-                        yield event
-                    await asyncio.sleep(0)
-            
-            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-            yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
-            yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+                def process_chunk(chunk_dict):
+                    nonlocal final_output_tokens
+                    events = []
+                    
+                    if 'choices' in chunk_dict and len(chunk_dict['choices']) > 0:
+                        delta = chunk_dict['choices'][0].get('delta', {})
+                        if 'content' in delta and delta['content']:
+                            events.append(f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n")
+                    
+                    if 'usage' in chunk_dict and chunk_dict['usage']:
+                         final_output_tokens = chunk_dict['usage'].get('completion_tokens', 0)
+                         
+                    return events
+
+                if hasattr(response, '__aiter__'):
+                    async for chunk in response:
+                        for event in process_chunk(self._normalize_object(chunk)):
+                            yield event
+                else:
+                    for chunk in response:
+                        for event in process_chunk(self._normalize_object(chunk)):
+                            yield event
+                        await asyncio.sleep(0)
+                
+                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
+                yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+            finally:
+                gen_time = time.time() - start_time
+                event_manager.emit(task_type, generation_time=gen_time, input_chars=input_chars, interaction_id=msg_id)
 
         return anthropic_generator()
     
@@ -336,39 +390,67 @@ class Bridge:
         return response
 
     async def process_tts(self, payload: Dict[str, Any], headers: Dict[str, str]) -> bytes:
+        start_time = time.time()
+        input_chars = len(payload.get("input", ""))
         self._enrich_headers_and_payload("tts", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("tts", payload))
+        audio_bytes = await self._await_orch_task(orch.submit_task("tts", payload))
+        gen_time = time.time() - start_time
+        audio_duration = get_audio_duration(audio_bytes) if audio_bytes else 0.0
+        event_manager.emit("voice", generation_time=gen_time, input_chars=input_chars, audio_duration=audio_duration)
+        return audio_bytes
 
     async def process_stt(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        start_time = time.time()
+        audio_bytes = payload.get("audio", b"")
+        audio_duration = get_audio_duration(audio_bytes) if audio_bytes else 0.0
         self._enrich_headers_and_payload("stt", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("stt", payload))
+        result = await self._await_orch_task(orch.submit_task("stt", payload))
+        gen_time = time.time() - start_time
+        event_manager.emit("stt", generation_time=gen_time, audio_duration=audio_duration)
+        return result
 
     async def process_image_edit(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        start_time = time.time()
         self._enrich_headers_and_payload("pix2pix", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("pix2pix", payload))
+        result = await self._await_orch_task(orch.submit_task("pix2pix", payload))
+        gen_time = time.time() - start_time
+        event_manager.emit("image", generation_time=gen_time)
+        return result
 
     async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        start_time = time.time()
         self._enrich_headers_and_payload("image_generation", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("image_generation", payload))
+        result = await self._await_orch_task(orch.submit_task("image_generation", payload))
+        gen_time = time.time() - start_time
+        event_manager.emit("image", generation_time=gen_time)
+        return result
 
     async def process_search_web(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        start_time = time.time()
         self._enrich_headers_and_payload("search_web", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("search_web", payload))
+        res = await self._await_orch_task(orch.submit_task("search_web", payload))
+        gen_time = time.time() - start_time
+        event_manager.emit("search_web", generation_time=gen_time)
+        return res
 
     async def process_search_code(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
+        start_time = time.time()
         self._enrich_headers_and_payload("search_code", payload, headers)
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
-        return await self._await_orch_task(orch.submit_task("search_code", payload))
+        res = await self._await_orch_task(orch.submit_task("search_code", payload))
+        gen_time = time.time() - start_time
+        event_manager.emit("search_code", generation_time=gen_time)
+        return res
 
 bridge = Bridge()
