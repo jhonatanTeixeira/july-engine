@@ -118,17 +118,66 @@ class Bridge:
 
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         messages = payload.get("messages", [])
-        is_vision = False
         last_message = messages[-1] if messages else None
         
-        if last_message and isinstance(last_message.get("content"), list):
-            if any(p.get("type") == "image_url" for p in last_message["content"]):
-                is_vision = True
+        orch = self.get_orchestrator(headers)
 
-        task_type = "vision_chat" if is_vision else "text_chat"
+        if last_message and isinstance(last_message.get("content"), list):
+            new_content = []
+            for item in last_message["content"]:
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type == "image_url":
+                        new_content.append(item)
+                        try:
+                            vision_payload = {
+                                "image": item["image_url"]["url"],
+                                "prompt": "Describe this image in detail.",
+                                "model": "default"
+                            }
+                            vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
+                            
+                            analysis = ""
+                            if isinstance(vision_res, dict) and "choices" in vision_res:
+                                analysis = vision_res["choices"][0].get("message", {}).get("content", "")
+                            elif isinstance(vision_res, str):
+                                analysis = vision_res
+                                
+                            if analysis:
+                                new_content.append({"type": "text", "text": f"User sent an image: {analysis}"})
+                        except Exception as e:
+                            logger.error(f"Failed to analyze image inline: {e}")
+                    elif item_type in ["audio_url", "input_audio"]:
+                        new_content.append(item)
+                        try:
+                            if item_type == "input_audio":
+                                b64_audio = item.get("input_audio", {}).get("data", "")
+                            else:
+                                b64_audio = item.get("audio_url", {}).get("url", "").split(",")[-1]
+                            
+                            import base64
+                            audio_bytes = base64.b64decode(b64_audio)
+                            stt_payload = {"audio": audio_bytes, "model": "default"}
+                            
+                            transcription = await self._await_orch_task(orch.submit_task("stt", stt_payload))
+                            if transcription:
+                                if isinstance(transcription, dict) and "text" in transcription:
+                                    text_val = transcription["text"]
+                                else:
+                                    text_val = str(transcription)
+                                new_content.append({"type": "text", "text": text_val})
+                        except Exception as e:
+                            logger.error(f"Failed to transcribe audio inline: {e}")
+                    else:
+                        new_content.append(item)
+                else:
+                    new_content.append(item)
+            
+            last_message["content"] = new_content
+
+        task_type = "text_chat"
         self._enrich_headers_and_payload(task_type, payload, headers)
 
-        orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         
         stream = payload.get("stream", False)

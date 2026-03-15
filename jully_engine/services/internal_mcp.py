@@ -195,7 +195,14 @@ class InternalMCP:
                 )
             
             elif name == "image_edit":
-                return "Image edit executed."
+                response = await bridge.process_image_edit({
+                    "prompt": arguments.get("instruction", ""),
+                    "image": arguments.get("image", "")
+                }, {})
+                return (
+                    "Image edited",
+                    {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}
+                )
 
         except Exception as e:
             logger.error(f"InternalMCP: Erro na tool {name}: {e}")

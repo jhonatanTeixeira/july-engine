@@ -46,7 +46,13 @@ class Brain:
             payload.pop("tools", None)
 
         # Salva o payload com a injeção do XML já feita para o segundo turno (ReAct)
-        original_payload = dict(payload)
+        import copy
+        original_payload = copy.deepcopy(payload)
+
+        # Filtra imagens e áudios pois o Brain é puro texto
+        for msg in payload.get("messages", []):
+            if isinstance(msg.get("content"), list):
+                msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") == "text"]
 
         if isinstance(self._strategy, LLMApi):
             del payload["model"]

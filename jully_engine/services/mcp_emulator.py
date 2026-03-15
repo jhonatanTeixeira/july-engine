@@ -188,11 +188,6 @@ Assistant: <search_web>current weather in Tokyo</search_web>
         return args
 
     async def orchestrate(self, response: Union[Dict, AsyncGenerator], brain, original_payload: Dict):
-        def clear_system_prompt():
-            if original_payload.get('messages') and original_payload['messages'][0].get('role') == 'system':
-                sys_content = original_payload['messages'][0].get('content', '')
-                if "# TOOLING" in sys_content:
-                    original_payload['messages'][0]['content'] = sys_content.split("# TOOLING")[0].strip() or "Você é uma assistente prestativa."
 
         if isinstance(response, Dict):
             # ==============================
@@ -232,6 +227,17 @@ Assistant: <search_web>current weather in Tokyo</search_web>
             # 2. Executa todas as ferramentas sequencialmente
             for item in tools_to_execute:
                 args = self._build_args(item.name, item.arguments)
+                
+                if item.name == "image_edit":
+                    for msg in reversed(original_payload.get("messages", [])):
+                        if isinstance(msg.get("content"), list):
+                            for sub in msg["content"]:
+                                if isinstance(sub, dict) and sub.get("type") == "image_url":
+                                    args["image"] = sub.get("image_url", {}).get("url")
+                                    break
+                        if args.get("image"):
+                            break
+                            
                 llm, user = await self.internal_mcp.execute_tool(item.name, args)
                 
                 # Guarda o visual (UI) para o final
@@ -246,7 +252,6 @@ Assistant: <search_web>current weather in Tokyo</search_web>
 
             # 3. Dispara o Turno 2 (ReAct Loop)
             original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
-            clear_system_prompt()
             
             second_response = await brain.chat(original_payload)
             second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
@@ -290,6 +295,17 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                         
                         # Executa On-The-Fly!
                         args = self._build_args(item.name, item.arguments)
+                        
+                        if item.name == "image_edit":
+                            for msg in reversed(original_payload.get("messages", [])):
+                                if isinstance(msg.get("content"), list):
+                                    for sub in msg["content"]:
+                                        if isinstance(sub, dict) and sub.get("type") == "image_url":
+                                            args["image"] = sub.get("image_url", {}).get("url")
+                                            break
+                                if args.get("image"):
+                                    break
+                                    
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
                         if user:
@@ -304,7 +320,6 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                 
                 if tools_executed:
                     original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
-                    # clear_system_prompt()
                                 
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):
