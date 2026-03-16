@@ -89,9 +89,6 @@ class Bridge:
                     headers["authorization"] = f"Bearer {config['api_key']}"
 
                 payload["model"] = config.get("model")
-                
-                if setting_key == 'TTS' and 'language' not in payload:
-                    payload['language'] = config.get('language')
                     
         except Exception as e:
             logger.warning(f"Failed to enrich headers and payload from persistence: {e}")
@@ -218,6 +215,12 @@ class Bridge:
         payload['headers'] = headers
         stream = payload.get("stream", False)
         model_name = payload.get("model", "default")
+        
+        logger.info("Text request received: " + json.dumps({
+            "headers": headers,
+            "model": model_name,
+            "stream": stream
+        }))
         
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
         if not response:
@@ -385,6 +388,20 @@ class Bridge:
         start_time = time.time()
         input_chars = len(payload.get("input", ""))
         self._enrich_headers_and_payload("tts", payload, headers)
+        
+        # Inject defaults from config if not strictly provided
+        if not payload.get("voice") or not payload.get("language"):
+            from .persistence import get_backend
+            
+            db = get_backend()
+            tts_config = db.get_setting("TTS") or {}
+            
+            if not payload.get("voice") and tts_config.get("voice"):
+                payload["voice"] = tts_config["voice"]
+            
+            if not payload.get("language") and tts_config.get("language"):
+                payload["language"] = tts_config["language"]
+                
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
         audio_bytes = await self._await_orch_task(orch.submit_task("tts", payload))

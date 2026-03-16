@@ -41,26 +41,13 @@ class Mouth:
 
     def _resolve_voice(self, voice_id: str) -> Dict[str, Any]:
         """
-        Resolves a voice ID to its configuration by checking voices.json and uploaded voices from persistence.
+        Resolves a voice ID to its configuration by checking uploaded voices from persistence.
         """
-        # 1. Try uploaded voices from database
         uploaded_voices = self.persistence_backend.get_uploaded_voices()
         for v in uploaded_voices:
             if v.get("id") == voice_id:
                 return v
 
-        # 2. Try static voices.json
-        config_path = os.path.join(self.voices_dir, "voices.json")
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, "r", encoding="utf-8") as f:
-                    voices = json.load(f)
-                    for v in voices:
-                        if v.get("id") == voice_id:
-                            return v
-            except Exception as e:
-                logger.error(f"Mouth: Error reading voices.json: {e}")
-        
         return {}
 
     async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
@@ -70,29 +57,38 @@ class Mouth:
         language = payload.get("language", "a")
 
         voice_info = self._resolve_voice(voice_id)
-        language = voice_info.get("language", None) or language
-        voice_id = voice_info.get("id", None) or voice_id
+
+        # Override language if it was bound to the uploaded voice
+        if voice_info.get("language"):
+            language = voice_info.get("language")
 
         if isinstance(self._strategy, (LLMApi, Replicate)):
             model = payload.pop("model", self.model_tag)
             text = payload.pop("input", payload.pop("text", ""))
-            voice_id = payload.pop("voice", "")
+            voice_id = payload.pop("voice", voice_id)
             headers = payload.pop("headers", {})
             payload.setdefault('voice_info', voice_info)
-            
+
             audio_content = self._strategy.run_tts(model, text, voice_id, headers=headers, **payload)
             return audio_content
-        
+
         if isinstance(self._strategy, XTTS2):
             rel_path = voice_info.get("path")
-            full_voice_path = os.path.join(self.voices_dir, rel_path)
+            if not rel_path:
+                logger.warning(f"Mouth(XTTS): Could not find valid 'path' for voice_id {voice_id}.")
+                # fallback simple just to not break immediately
+                full_voice_path = ""
+            else:
+                full_voice_path = os.path.join(self.voices_dir, rel_path)
             return self._strategy.run(text, full_voice_path, language)
-            
+
         elif isinstance(self._strategy, Piper):
+            # For Piper we use 'voice_id' as the model name if it's standard, 
+            # or 'piper_path' if uploaded specifically. 
             hf_path = voice_info.get("piper_path")
             return self._strategy.run(text, voice_id, hf_path=hf_path)
-            
+
         elif isinstance(self._strategy, KokoroTTS):
             return await self._strategy.run(text, voice_id, language)
-            
+
         return None

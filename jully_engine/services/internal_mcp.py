@@ -57,7 +57,7 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_web",
-                    "description": "Searches the web for current information, news, facts. Always use it in case the user asks for latest news and facts you might not be updated enough about",
+                    "description": "Searches the web for current information, news, facts. Always use it in case the user asks for latest news and facts",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -157,7 +157,7 @@ class InternalMCP:
             
             cfg_key = config_map.get(name)
             if not cfg_key:
-                return "Unknown tool."
+                return (None, None)
                 
             config = self._get_config_for(cfg_key)
             backend, model = config.get("backend"), config.get("model")

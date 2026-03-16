@@ -319,7 +319,7 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                             })
                 
                 if tools_executed:
-                    original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
+                    # original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
                                 
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):
