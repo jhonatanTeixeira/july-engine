@@ -37,6 +37,7 @@ class KokoroTTS:
 
     async def run(self, text: str, voice_id: str, lang_code: str) -> bytes:
         self.load(lang_code)
+        print(voice_id, lang_code)
             
         try:
             # generate returns a generator of (graphemes, phonemes, audio_array)

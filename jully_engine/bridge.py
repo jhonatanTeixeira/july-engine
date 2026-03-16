@@ -89,6 +89,9 @@ class Bridge:
                     headers["authorization"] = f"Bearer {config['api_key']}"
 
                 payload["model"] = config.get("model")
+                
+                if setting_key == 'TTS' and 'language' not in payload:
+                    payload['language'] = config.get('language')
                     
         except Exception as e:
             logger.warning(f"Failed to enrich headers and payload from persistence: {e}")
@@ -123,14 +126,38 @@ class Bridge:
             return await future_or_coro
         return await asyncio.wrap_future(future_or_coro)
 
-    # --- NORMALIZADOR UNIVERSAL ---
-    def _normalize_object(self, obj: Any) -> Dict[str, Any]:
-        """Extrai o dicionário nativo de qualquer modelo Pydantic ou retorna as-is se já for dict."""
-        if hasattr(obj, 'model_dump'):
-            # exclude_unset evita que campos None desnecessários quebrem a estrutura
-            return obj.model_dump(exclude_unset=True)
-        return obj
-
+    def _normalize_object(self, obj: Any) -> Any:
+        """
+        Desmonta modelos Pydantic (LiteLLM/Llama.cpp) e classes genéricas
+        em dicionários puros de Python, garantindo o JSON Serializable.
+        """
+        # Caminho rápido para primitivos
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+            
+        # Pydantic v2
+        if hasattr(obj, "model_dump") and callable(obj.model_dump):
+            return self._normalize_object(obj.model_dump())
+            
+        # Pydantic v1 / Objetos nativos do LiteLLM (como ModelResponse)
+        if hasattr(obj, "dict") and callable(obj.dict):
+            return self._normalize_object(obj.dict())
+            
+        # Se for um dicionário, normaliza os valores recursivamente
+        if isinstance(obj, dict):
+            return {k: self._normalize_object(v) for k, v in obj.items()}
+            
+        # Se for lista ou tupla (como a lista de 'choices')
+        if isinstance(obj, (list, tuple)):
+            return [self._normalize_object(i) for i in obj]
+            
+        # Se for uma classe qualquer do Python (como StreamingChoices)
+        if hasattr(obj, "__dict__"):
+            return self._normalize_object(vars(obj))
+            
+        # Fallback de segurança
+        return str(obj)
+    
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         start_time = time.time()
         messages = payload.get("messages", [])
@@ -139,6 +166,7 @@ class Bridge:
         
         orch = self.get_orchestrator(headers)
 
+        # 1. PROCESSAMENTO INLINE DE MÍDIA (Visão/Áudio) - Mantido igual, pois é o core da sua engine
         if last_message and isinstance(last_message.get("content"), list):
             new_content = []
             for item in last_message["content"]:
@@ -153,13 +181,11 @@ class Bridge:
                                 "model": "default"
                             }
                             vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
-                            
                             analysis = ""
                             if isinstance(vision_res, dict) and "choices" in vision_res:
                                 analysis = vision_res["choices"][0].get("message", {}).get("content", "")
                             elif isinstance(vision_res, str):
                                 analysis = vision_res
-                                
                             if analysis:
                                 new_content.append({"type": "text", "text": f"User sent an image: {analysis}"})
                         except Exception as e:
@@ -171,17 +197,12 @@ class Bridge:
                                 b64_audio = item.get("input_audio", {}).get("data", "")
                             else:
                                 b64_audio = item.get("audio_url", {}).get("url", "").split(",")[-1]
-                            
                             import base64
                             audio_bytes = base64.b64decode(b64_audio)
                             stt_payload = {"audio": audio_bytes, "model": "default"}
-                            
                             transcription = await self._await_orch_task(orch.submit_task("stt", stt_payload))
                             if transcription:
-                                if isinstance(transcription, dict) and "text" in transcription:
-                                    text_val = transcription["text"]
-                                else:
-                                    text_val = str(transcription)
+                                text_val = transcription["text"] if isinstance(transcription, dict) and "text" in transcription else str(transcription)
                                 new_content.append({"type": "text", "text": text_val})
                         except Exception as e:
                             logger.error(f"Failed to transcribe audio inline: {e}")
@@ -189,85 +210,58 @@ class Bridge:
                         new_content.append(item)
                 else:
                     new_content.append(item)
-            
             last_message["content"] = new_content
 
+        # 2. CONFIGURAÇÃO DO PAYLOAD E CHAMADA
         task_type = "text_chat"
         self._enrich_headers_and_payload(task_type, payload, headers)
-
         payload['headers'] = headers
-        
         stream = payload.get("stream", False)
         model_name = payload.get("model", "default")
         
-        logger.info('received request: %s', json.dumps({
-            'task_type': task_type,
-            'stream': stream,
-            'model_name': model_name,
-            'headers': headers
-        }))
-        
         response = await self._await_orch_task(orch.submit_task(task_type, payload))
-
         if not response:
             raise HTTPException(status_code=500, detail="Orchestrator returned an empty response")
 
+        # 3. RETORNO SÍNCRONO (Limpo, preservando a estrutura original do LiteLLM)
         if not stream:
-            # 1. Normaliza imediatamente (LiteLLM ou GGUF)
             normalized_response = self._normalize_object(response)
+            gen_time = time.time() - start_time
             
-            # 2. Verifica se é um dicionário OpenAI válido
-            if isinstance(normalized_response, dict) and "choices" in normalized_response:
-                gen_time = time.time() - start_time
-                tokens = normalized_response.get("usage", {}).get("total_tokens", 0)
-                interaction_id = normalized_response.get("id")
-                event_manager.emit(task_type, tokens_spent=tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
-                return normalized_response
-                
-            # 3. Fallback: Se algum orquestrador retornou apenas texto cru
-            logger.warning("Bridge: Orchestrator returned raw string/invalid dict. Estimating tokens.")
-            res_content = normalized_response if isinstance(normalized_response, str) else json.dumps(normalized_response)
-            est_tokens = len(res_content) // 4
+            # Pega o usage e id diretamente do dicionário normalizado, se existirem
+            tokens = normalized_response.get("usage", {}).get("total_tokens", 0) if isinstance(normalized_response, dict) else 0
+            interaction_id = normalized_response.get("id", f"chatcmpl-{uuid.uuid4().hex[:10]}") if isinstance(normalized_response, dict) else f"chatcmpl-{uuid.uuid4().hex[:10]}"
             
-            interaction_id = f"chatcmpl-{uuid.uuid4().hex[:10]}"
+            # Fallback para string crua (caso extremo)
+            if isinstance(normalized_response, str):
+                est_tokens = len(normalized_response) // 4
+                event_manager.emit(task_type, tokens_spent=est_tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
+                return {
+                    "id": interaction_id, "object": "chat.completion", "created": int(time.time()), "model": model_name,
+                    "choices": [{"index": 0, "message": {"role": "assistant", "content": normalized_response}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": 0, "completion_tokens": est_tokens, "total_tokens": est_tokens}
+                }
             
-            event_manager.emit(task_type, tokens_spent=est_tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
-    
-            return {
-                "id": interaction_id,
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": model_name,
-                "choices": [{
-                    "index": 0,
-                    "message": {"role": "assistant", "content": res_content},
-                    "finish_reason": "stop"
-                }],
-                "usage": {"prompt_tokens": 0, "completion_tokens": est_tokens, "total_tokens": est_tokens}
-            }
+            event_manager.emit(task_type, tokens_spent=tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
+            return normalized_response
 
+        # 4. RETORNO ASSÍNCRONO (STREAM)
         async def openai_generator():
             tokens = 0
             interaction_id = f"chatcmpl-{uuid.uuid4().hex[:10]}"
             try:
-                # Fluxo Async/Sync Híbrido: Gera apenas Dicionários Puros
-                if hasattr(response, '__aiter__'):
-                    async for chunk in response:
-                        normalized = self._normalize_object(chunk)
+                # O LiteLLM/Llama.cpp já gerenciam o iterador corretamente.
+                iterator = response if hasattr(response, '__aiter__') else response
+                
+                async for chunk in iterator:
+                    normalized = self._normalize_object(chunk)
+                    if isinstance(normalized, dict):
                         if "id" in normalized:
                             interaction_id = normalized["id"]
                         if "usage" in normalized and normalized["usage"]:
                             tokens = normalized["usage"].get("total_tokens", tokens)
-                        yield normalized
-                else:
-                    for chunk in response:
-                        normalized = self._normalize_object(chunk)
-                        if "id" in normalized:
-                            interaction_id = normalized["id"]
-                        if "usage" in normalized and normalized["usage"]:
-                            tokens = normalized["usage"].get("total_tokens", tokens)
-                        yield normalized
-                        await asyncio.sleep(0) # Libera o event loop
+                    yield normalized
+                    await asyncio.sleep(0)
             finally:
                 gen_time = time.time() - start_time
                 event_manager.emit(task_type, tokens_spent=tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
@@ -275,106 +269,104 @@ class Bridge:
         return openai_generator()
     
     async def process_anthropic_message(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[str, None]]:
-        start_time = time.time()
-        messages = payload.get("messages", [])
-        input_chars = len(json.dumps(messages)) if messages else 0
-        is_vision = False
-        last_message = messages[-1] if messages else None
-        if last_message and isinstance(last_message.get("content"), list):
-            if any(p.get("type") == "image" for p in last_message["content"]):
-                is_vision = True
+        # 1. ADAPTER IN: Convertendo Payload Anthropic para OpenAI
+        openai_payload = {"model": payload.get("model", "claude-3"), "stream": payload.get("stream", False)}
         
-        task_type = "vision_chat" if is_vision else "text_chat"
-        self._enrich_headers_and_payload(task_type, payload, headers)
+        # O Anthropic passa parâmetros adicionais (temperature, max_tokens, etc)
+        for key in ["temperature", "max_tokens", "top_p", "top_k"]:
+            if key in payload:
+                openai_payload[key] = payload[key]
 
-        orch = self.get_orchestrator(headers)
-        payload['headers'] = headers
-        stream = payload.get("stream", False)
+        openai_messages = []
         
-        response = await self._await_orch_task(orch.submit_task(task_type, payload))
-        
-        if not stream:
-            normalized_response = self._normalize_object(response)
-            gen_time = time.time() - start_time
+        # O Anthropic manda o System Prompt solto na raiz do payload. Convertemos para role: system.
+        if "system" in payload:
+            system_content = payload["system"]
+            # Às vezes o system vem como array de blocos de texto no Anthropic
+            if isinstance(system_content, list):
+                system_text = "".join(b.get("text", "") for b in system_content if b.get("type") == "text")
+                openai_messages.append({"role": "system", "content": system_text})
+            else:
+                openai_messages.append({"role": "system", "content": str(system_content)})
+
+        # Tradução das mensagens (role: user e role: assistant)
+        for msg in payload.get("messages", []):
+            role = msg.get("role")
+            content = msg.get("content")
             
-            # Converter OpenAI format para Anthropic format
-            if isinstance(normalized_response, dict) and "choices" in normalized_response:
-                content_text = normalized_response["choices"][0].get("message", {}).get("content", "")
-                usage = normalized_response.get("usage", {})
-                interaction_id = normalized_response.get("id") or f"msg_{uuid.uuid4().hex[:10]}"
+            if isinstance(content, str):
+                openai_messages.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                openai_content = []
+                for block in content:
+                    if block.get("type") == "text":
+                        openai_content.append({"type": "text", "text": block.get("text", "")})
+                    elif block.get("type") == "image":
+                        # Anthropic: {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+                        source = block.get("source", {})
+                        mime = source.get("media_type", "image/jpeg")
+                        b64_data = source.get("data", "")
+                        openai_content.append({
+                            "type": "image_url",
+                            "image_url": {"url": f"data:{mime};base64,{b64_data}"}
+                        })
+                openai_messages.append({"role": role, "content": openai_content})
                 
-                event_manager.emit(task_type, tokens_spent=usage.get("total_tokens", 0), generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
-                
-                return {
-                    "id": interaction_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": content_text}],
-                    "model": payload.get("model", "claude-3"),
-                    "stop_reason": "end_turn",
-                    "usage": {
-                        "input_tokens": usage.get("prompt_tokens", 0),
-                        "output_tokens": usage.get("completion_tokens", 0)
-                    }
-                }
+        openai_payload["messages"] = openai_messages
 
-            if isinstance(normalized_response, str):
-                est_tokens = len(normalized_response) // 4
-                interaction_id = f"msg_{uuid.uuid4().hex[:10]}"
-                event_manager.emit(task_type, tokens_spent=est_tokens, generation_time=gen_time, input_chars=input_chars, interaction_id=interaction_id)
-                return {
-                    "id": interaction_id,
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [{"type": "text", "text": normalized_response}],
-                    "model": payload.get("model", "claude-3"),
-                    "stop_reason": "end_turn",
-                    "usage": {"input_tokens": 0, "output_tokens": est_tokens}
-                }
-                
-            return normalized_response
+        # 2. PROCESSAMENTO: Chama o tubo universal da OpenAI
+        # Isso já vai lidar com análise inline de imagem, stt, chamadas ao orquestrador e normalização!
+        openai_response = await self.process_openai_chat(openai_payload, headers)
+        
+        stream = openai_payload["stream"]
 
+        # 3. ADAPTER OUT (Sync)
+        if not stream:
+            # Pega o dicionário validado do OpenAI e transforma no formato Claude
+            content_text = openai_response["choices"][0].get("message", {}).get("content", "")
+            usage = openai_response.get("usage", {})
+            interaction_id = openai_response.get("id", f"msg_{uuid.uuid4().hex[:10]}")
+            
+            return {
+                "id": interaction_id,
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": content_text}],
+                "model": openai_payload["model"],
+                "stop_reason": "end_turn",
+                "usage": {
+                    "input_tokens": usage.get("prompt_tokens", 0),
+                    "output_tokens": usage.get("completion_tokens", 0)
+                }
+            }
+
+        # 4. ADAPTER OUT (Async - SSE Stream Anthropic)
         async def anthropic_generator():
             msg_id = f"msg_{uuid.uuid4().hex[:10]}"
-            try:
-                model_name = payload.get("model", "claude-3")
+            model_name = openai_payload["model"]
+            
+            # Handshake inicial do protocolo Anthropic
+            yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
+            yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
+            
+            final_output_tokens = 0
+            
+            # openai_response aqui é o async generator retornado por process_openai_chat
+            async for openai_chunk in openai_response:
+                # O chunk já vem limpo e normalizado pelo process_openai_chat!
+                if 'choices' in openai_chunk and len(openai_chunk['choices']) > 0:
+                    delta = openai_chunk['choices'][0].get('delta', {})
+                    if 'content' in delta and delta['content']:
+                        yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n"
                 
-                # Inicializa a mensagem (Anthropic spec) - Mantido como String SSE pois o padrão Anthropic exige os blocos "event:"
-                yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
-                yield f"event: content_block_start\ndata: {json.dumps({'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}})}\n\n"
-                
-                final_output_tokens = 0
-
-                def process_chunk(chunk_dict):
-                    nonlocal final_output_tokens
-                    events = []
-                    
-                    if 'choices' in chunk_dict and len(chunk_dict['choices']) > 0:
-                        delta = chunk_dict['choices'][0].get('delta', {})
-                        if 'content' in delta and delta['content']:
-                            events.append(f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n")
-                    
-                    if 'usage' in chunk_dict and chunk_dict['usage']:
-                         final_output_tokens = chunk_dict['usage'].get('completion_tokens', 0)
-                         
-                    return events
-
-                if hasattr(response, '__aiter__'):
-                    async for chunk in response:
-                        for event in process_chunk(self._normalize_object(chunk)):
-                            yield event
-                else:
-                    for chunk in response:
-                        for event in process_chunk(self._normalize_object(chunk)):
-                            yield event
-                        await asyncio.sleep(0)
-                
-                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
-                yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
-                yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
-            finally:
-                gen_time = time.time() - start_time
-                event_manager.emit(task_type, generation_time=gen_time, input_chars=input_chars, interaction_id=msg_id)
+                # Se o chunk trouxer o usage final (comum na última iteração do LiteLLM)
+                if 'usage' in openai_chunk and openai_chunk['usage']:
+                     final_output_tokens = openai_chunk['usage'].get('completion_tokens', final_output_tokens)
+                     
+            # Encerramento do Stream SSE no padrão Anthropic
+            yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+            yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn', 'stop_sequence': None}, 'usage': {'output_tokens': final_output_tokens}})}\n\n"
+            yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
 
         return anthropic_generator()
     

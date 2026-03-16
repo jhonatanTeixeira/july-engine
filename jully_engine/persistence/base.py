@@ -58,6 +58,7 @@ class PersistenceBackend(ABC):
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         pass
 
-    def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:        text_presets = self.get_setting("TEXT_PRESETS") or []
-
+    def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:        
+        text_presets = self.get_setting("TEXT_PRESETS") or []
+        
         return next((p for p in text_presets if p.get("alias") == model_alias), None)
