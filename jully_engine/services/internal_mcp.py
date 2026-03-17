@@ -3,7 +3,7 @@ import json
 import logging
 import base64
 from pprint import pprint
-from typing import Dict, Any, List, AsyncGenerator
+from typing import Dict, Any, List, AsyncGenerator, Tuple
 
 from numpy import append
 
@@ -11,6 +11,33 @@ from ..persistence import get_backend
 from .external_mcp import external_mcp_manager
 
 logger = logging.getLogger("JulyEngine.InternalMCP")
+
+
+class UserToolReponse:
+    def __init__(self, response, content_type: str = 'text'):
+        self._response = response
+        self.content_type = content_type.lower()
+            
+    @property
+    def delta(self):
+        if self.content_type == 'image':
+            return {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{self._response}"}}]}
+        elif self.content_type == 'audio':
+            return {"choices": [{"delta": {"type": "audio_url", "audio_url": f"data:audio/wav;base64,{self._response}"}}]}
+        else:
+            return {"choices": [{"delta": {"type": "text", "text": self._response}}]}
+
+    @property
+    def response(self):
+        if self.content_type == 'image':
+            # FIXED: image_url exige o objeto com a chave "url"
+            return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{self._response}"}}
+        elif self.content_type == 'audio':
+            # Padrão OpenAI usa 'input_audio' para envio, mas 'audio_url' serve se for seu próprio padrão.
+            return {"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{self._response}"}}
+        else:
+            return {"type": "text", "text": self._data}
+
 
 class InternalMCP:
     def __init__(self):
@@ -129,8 +156,11 @@ class InternalMCP:
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
         config = self.backend_db.get_setting(setting_key)
         return config if config else {"backend": "api", "model": ""}
+    
+    def inject_tools(self, payload: Dict):
+        payload['tools'] = self.get_tools()
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
         from ..model_loader import model_loader
         from ..bridge import bridge
         from ..events import event_manager
@@ -144,7 +174,11 @@ class InternalMCP:
                 result = await external_mcp_manager.execute_tool(name, arguments)
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
-                return result
+                
+                return (
+                    result,
+                    None
+                )
                 
             config_map = {
                 "generate_image": "IMAGE_CREATE",
@@ -169,9 +203,10 @@ class InternalMCP:
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
+                
                 return (
                     "Image generated",
-                    {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}
+                    UserToolReponse(response, 'image')
                 )
             
             elif name == "generate_audio":
@@ -180,9 +215,10 @@ class InternalMCP:
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
+                
                 return (
                     "Audio generated",
-                    {"choices": [{"delta": {"type": "audio_url", "audio_url": f"data:audio/wav;base64,{audio}"}}]}
+                    UserToolReponse(audio, 'audio')
                 )
             
             elif name == "search_web":
@@ -221,7 +257,7 @@ class InternalMCP:
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Image edited",
-                    {"choices": [{"delta": {"type": "image_url", "image_url": f"data:image/png;base64,{response}"}}]}
+                    UserToolReponse(response, 'image')
                 )
 
         except Exception as e:
@@ -235,8 +271,12 @@ class InternalMCP:
         is_calling = False
         tools = {}
         assistant_content = ''
+        tool_messages = []
+        assistant_tool_calls = []
         
         async for chunk in stream:
+            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
+             
             if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
                 is_calling = True
                 
@@ -253,13 +293,8 @@ class InternalMCP:
                     tool["response"] = await self.execute_tool(name, json.loads(tool['arguments']))
                 
                 is_calling = False
-                
-                continue
             
             if chunk.get('choices')[0].get('finish_reason') == 'tool_calls':
-                tool_messages = []
-                assistant_tool_calls = []
-                
                 for name, tool in tools.items():
                     llm, user = tool.get("response")
                     
@@ -270,7 +305,7 @@ class InternalMCP:
                         "content": llm
                     })
                     
-                    assistant_tool_calls,append({
+                    assistant_tool_calls.append({
                         "id": tool.get('id'),
                         "type": 'function',
                         "function": {
@@ -280,9 +315,9 @@ class InternalMCP:
                     })
                     
                     if user:
-                        yield user
+                        yield user.delta
                         await asyncio.sleep(0)
-                
+    
                 original_payload['messages'].append({
                     "role": "assistant",
                     "content": assistant_content,
@@ -294,60 +329,56 @@ class InternalMCP:
                 async for chunk in brain_instance.chat(original_payload):
                     yield chunk
                     await asyncio.sleep(0)
-                
-                continue
-            
-            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
+
             yield chunk
             await asyncio.sleep(0)
         
     # --- UTILITÁRIO ---
-    async def orchestrate(self, brain_instance, response: Dict[str, Any], original_payload: Dict[str, Any]) -> Dict[str, Any]:
-        choice = response.get("choices", [{}])[0]
-        message = choice.get("message", {})
-        
-        # Se não tem tool call, apenas devolve a resposta intacta
-        if choice.get("finish_reason") != "tool_calls" or "tool_calls" not in message:
-            return response
+    async def orchestrate(self, brain, response: Dict[str, Any] | AsyncGenerator, original_payload: Dict[str, Any]) -> Dict[str, Any] | AsyncGenerator:
+        if isinstance(response, AsyncGenerator):
+            return self.stream_orchestrate(brain, response, original_payload)
+        else:
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
             
-        messages = original_payload.get("messages", [])
-        messages.append(message)
-        
-        has_text_result = False
-        multimodal_content = []
-        
-        for tc in message.get("tool_calls", []):
-            name = tc.get("function", {}).get("name")
-            args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+            # Se não tem tool call, apenas devolve a resposta intacta
+            if choice.get("finish_reason") != "tool_calls" or "tool_calls" not in message:
+                return response
+                
+            messages: list = original_payload.setdefault("messages", [])
+            messages.append(message)
             
-            result = await self.execute_tool(name, args)
+            multimodal_content = []
             
-            if name == "generate_image":
-                multimodal_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{result}"}})
-            elif name == "generate_audio":
-                multimodal_content.append({"type": "audio_url", "audio_url": f"data:audio/wav;base64,{result}"})
-            else:
-                has_text_result = True
+            for tc in message.get("tool_calls", []):
+                name = tc.get("function", {}).get("name")
+                args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                
+                llm, user = await self.execute_tool(name, args)
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": name,
-                    "content": str(result)
+                    "content": str(llm)
                 })
-        
-        # O ReAct Loop (Ping-Pong com a LLM)
-        if has_text_result and not multimodal_content:
-            new_payload = dict(original_payload, messages=messages)
-            new_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
-            
-            second_response = await brain_instance.chat(new_payload)
-            self._merge_usages(response, second_response) # Soma os tokens
-            return second_response
 
-        # Se for imagem/áudio, devolve direto
-        response["choices"][0]["message"]["content"] = multimodal_content
-        response["choices"][0]["finish_reason"] = "stop"
-        return response
+                if user:
+                    multimodal_content.append(user._response)
+
+            second_response = await brain.chat(original_payload)
+            second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            if isinstance(second_content, list):
+                multimodal_content.extend(second_content)
+            else:
+                multimodal_content.append(second_content)
+                
+            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
+            
+            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+
+            return second_response
 
     def _merge_usages(self, first: Dict, second: Dict):
         """Soma o uso de tokens das duas viagens à rede neural."""

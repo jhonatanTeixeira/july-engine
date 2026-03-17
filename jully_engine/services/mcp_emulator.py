@@ -250,7 +250,8 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                 
                 # Guarda o visual (UI) para o final
                 if user:
-                    multimodal_content.append(user)
+                    multimodal_content.append(user.response)
+                
                 # Guarda o texto para o LLM ler no segundo turno
                 if llm:
                     original_payload['messages'].append({
@@ -258,20 +259,17 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                         "content": f"[SYSTEM MESSAGE TOOL {item.name} CALLED]: {llm}"
                     })
 
-            # 3. Dispara o Turno 2 (ReAct Loop)
-            original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
-            
             second_response = await brain.chat(original_payload)
             second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
             
-            # 4. Anexa o conteúdo multimodal (ex: Base64 gerado pela tool) na resposta de texto final
-            if len(multimodal_content) > 0:
-                if isinstance(second_content, str):
-                    multimodal_content.append({"type": "text", "text": second_content})
-                else:
-                    multimodal_content.extend(second_content)
-                    
-                second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = multimodal_content
+            if isinstance(second_content, list):
+                multimodal_content.extend(second_content)
+            else:
+                multimodal_content.append(second_content)
+                
+            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
+            
+            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
 
             return second_response
             
@@ -317,7 +315,7 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
                         if user:
-                            yield user
+                            yield user.delta
                             
                         if llm:
                             # 2. Injeta o resultado do LLM (Tavily, etc)
