@@ -20,14 +20,22 @@ class World:
         engine = payload.get("model", None)
         headers = payload.get("headers", {})
         
+        config = get_backend().get_setting('WEB_SEARCH')
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+
         if not engine:
-            config = get_backend().get_setting('WEB_SEARCH')
-            
             if not config:
                 raise ValueError('no model provided and no configuration set for WEB_SEARCH')
             
             engine = config.get('model')
-            headers['x-api-key'] = config.get('api_key')
+            if 'x-api-key' not in headers and config.get('api_key'):
+                headers['x-api-key'] = config.get('api_key')
 
         if engine.lower() == "google":
             return await self.google.search(query, headers=headers)
@@ -36,4 +44,15 @@ class World:
 
     async def search_code(self, payload: Dict[str, Any]):
         query = payload.get("query", "")
+        headers = payload.get("headers", {})
+        
+        config = get_backend().get_setting('REPOSITORY_SEARCH')
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+                
         return await self.github.search(query)

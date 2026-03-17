@@ -35,15 +35,47 @@ class Brain:
 
     async def chat(self, payload: Dict[str, Any]):
         headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        backend_db = get_backend()
+        text_presets = backend_db.get_setting("TEXT_PRESETS") or []
+        config = next((p for p in text_presets if p.get("alias") == self.model_tag), None)
+        if not config and text_presets:
+            config = text_presets[0]
+            
+        mcp_option = "emulated"
+        
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+
+            if config.get("reasoning_enabled"):
+                payload["reasoning_enabled"] = config.get("reasoning_enabled")
+                payload["reasoning_effort"] = config.get("reasoning_effort", "medium")
+                
+            mcp_option = config.get("mcp_option", "emulated")
+
         enable_internal_mcp = headers.get("x-enable-internal-mcp", "0") == "1"
+        mcp_handler = None
         
         if enable_internal_mcp:
-            # 1. INJEÇÃO BARE-METAL: Injeta as tags XML nas 'messages' do payload
-            self._mcp.inject_tools(payload)
+            if mcp_option == "emulated":
+                mcp_handler = self._mcp
+            elif mcp_option == "internal":
+                from ..services.internal_mcp import InternalMCP
+                mcp_handler = InternalMCP()
+            elif mcp_option == "external_only":
+                from ..services.external_mcp import external_mcp_manager
+                mcp_handler = external_mcp_manager
             
-            # 2. BYPASS DA API: Removemos o array 'tools' para impedir que o 
-            # Llama.cpp tente formatar por conta própria e estrague o prompt.
-            payload.pop("tools", None)
+        if mcp_handler:
+            mcp_handler.inject_tools(payload)
+            if mcp_option == "emulated":
+                payload.pop("tools", None)
 
         # Salva o payload com a injeção do XML já feita para o segundo turno (ReAct)
         import copy
@@ -67,7 +99,7 @@ class Brain:
             stream = payload.pop("stream", False)
             response = self._strategy.run_chat(messages, stream=stream, **payload)
 
-        if enable_internal_mcp:
-            return await self._mcp.orchestrate(response, self, original_payload)
+        if mcp_handler:
+            return await mcp_handler.orchestrate(response, self, original_payload)
                 
         return response

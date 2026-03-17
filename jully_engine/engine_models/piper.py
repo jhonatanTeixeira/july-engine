@@ -68,6 +68,12 @@ class Piper:
             return onnx_path
 
     def run(self, text: str, voice_id: str, hf_path: Optional[str] = None) -> bytes:
+        if not hf_path:
+            from ..persistence import get_backend
+            uploaded_voices = get_backend().get_uploaded_voices()
+            voice_info = next((v for v in uploaded_voices if v.get("id") == voice_id), {})
+            hf_path = voice_info.get("piper_path")
+
         onnx_path = self._ensure_voice_files(voice_id, hf_path)
         # Piper expects the config file in the same dir as onnx, or passed via --config
         config_path = f"{onnx_path}.json"

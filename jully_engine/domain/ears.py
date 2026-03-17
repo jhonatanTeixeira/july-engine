@@ -28,9 +28,21 @@ class Ears:
         if payload is None:
             payload = {}
             
+        headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        config = get_backend().get_setting("STT")
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+            
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
-            headers = payload.pop("headers", {})
+            headers = payload.pop("headers", headers)
             
             # litellm transcription support
             audio_file = io.BytesIO(audio_data)

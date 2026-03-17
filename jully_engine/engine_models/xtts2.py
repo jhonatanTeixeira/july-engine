@@ -26,7 +26,18 @@ class XTTS2:
                 logger.error(f"XTTS2: Failed to load: {e}")
                 raise e
 
-    def run(self, text: str, voice_path: str, language: str) -> bytes:
+    def run(self, text: str, voice_id: str, language: str) -> bytes:
+        from ..persistence import get_backend
+        uploaded_voices = get_backend().get_uploaded_voices()
+        voice_info = next((v for v in uploaded_voices if v.get("id") == voice_id), {})
+        rel_path = voice_info.get("path")
+        
+        voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
+        if rel_path:
+            voice_path = os.path.join(voices_dir, rel_path)
+        else:
+            voice_path = ""
+
         if self.model is None:
             self.load()
             

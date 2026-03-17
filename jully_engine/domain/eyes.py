@@ -53,6 +53,23 @@ class Eyes:
         return Image.open(io.BytesIO(image_data)).convert("RGB")
 
     async def analyze(self, payload: Dict[str, Any]):
+        headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        backend_db = get_backend()
+        text_presets = backend_db.get_setting("TEXT_PRESETS") or []
+        config = next((p for p in text_presets if p.get("alias") == self.model_tag), None)
+        if not config and text_presets:
+            config = text_presets[0]
+            
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             messages = payload.pop("messages", [])

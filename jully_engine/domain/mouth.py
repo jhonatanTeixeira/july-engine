@@ -39,54 +39,40 @@ class Mouth:
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    def _resolve_voice(self, voice_id: str) -> Dict[str, Any]:
-        """
-        Resolves a voice ID to its configuration by checking uploaded voices from persistence.
-        """
-        uploaded_voices = self.persistence_backend.get_uploaded_voices()
-        for v in uploaded_voices:
-            if v.get("id") == voice_id:
-                return v
-
-        return {}
-
     async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
         # For local strategies, unpack payload
         text = payload.get("input", payload.get("text", ""))
-        voice_id = payload.get("voice", "af_heart")
-        language = payload.get("language", "a")
 
-        voice_info = self._resolve_voice(voice_id)
+        headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        config = get_backend().get_setting("TTS") or {}
+        
+        voice_id = payload.get("voice") or config.get("voice") or "af_heart"
+        language = payload.get("language") or config.get("language") or "a"
 
-        # Override language if it was bound to the uploaded voice
-        if voice_info.get("language"):
-            language = voice_info.get("language")
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
 
         if isinstance(self._strategy, (LLMApi, Replicate)):
             model = payload.pop("model", self.model_tag)
             text = payload.pop("input", payload.pop("text", ""))
             voice_id = payload.pop("voice", voice_id)
-            headers = payload.pop("headers", {})
-            payload.setdefault('voice_info', voice_info)
+            headers = payload.pop("headers", headers)
 
             audio_content = self._strategy.run_tts(model, text, voice_id, headers=headers, **payload)
             return audio_content
 
         if isinstance(self._strategy, XTTS2):
-            rel_path = voice_info.get("path")
-            if not rel_path:
-                logger.warning(f"Mouth(XTTS): Could not find valid 'path' for voice_id {voice_id}.")
-                # fallback simple just to not break immediately
-                full_voice_path = ""
-            else:
-                full_voice_path = os.path.join(self.voices_dir, rel_path)
-            return self._strategy.run(text, full_voice_path, language)
+            return self._strategy.run(text, voice_id, language)
 
         elif isinstance(self._strategy, Piper):
-            # For Piper we use 'voice_id' as the model name if it's standard, 
-            # or 'piper_path' if uploaded specifically. 
-            hf_path = voice_info.get("piper_path")
-            return self._strategy.run(text, voice_id, hf_path=hf_path)
+            return self._strategy.run(text, voice_id)
 
         elif isinstance(self._strategy, KokoroTTS):
             return await self._strategy.run(text, voice_id, language)

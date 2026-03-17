@@ -1,6 +1,6 @@
 import logging
 import json
-from typing import Dict, Any, List
+from typing import AsyncGenerator, Dict, Any, List
 from contextlib import AsyncExitStack
 
 # Only import MCP conditionally to avoid breaking if not installed properly
@@ -89,6 +89,118 @@ class ExternalMCPManager:
         for tools in self.server_tools.values():
             all_tools.extend(tools)
         return all_tools
+
+    def inject_tools(self, payload: Dict):
+        tools = self.get_all_tools()
+        if tools:
+            payload['tools'] = tools
+
+    async def stream_orchestrate(self, response: AsyncGenerator[Dict, None], brain_instance, original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
+        import asyncio
+        is_calling = False
+        tools = {}
+        assistant_content = ''
+        tool_messages = []
+        assistant_tool_calls = []
+        
+        async for chunk in response:
+            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
+             
+            if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
+                is_calling = True
+                for tool_call in tool_calls:
+                    if name := tool_call.get('function', {}).get('name', None):
+                        tools.setdefault(name, {"arguments": "", "response": [], "id": tool_call.get("id", None)})
+                    else:
+                        tools.get(name)["arguments"] += tool_call.get("function", {}).get('arguments', '')
+                continue
+            
+            if is_calling:
+                for name, tool in tools.items():
+                    res = await self.execute_tool(name, json.loads(tool['arguments']))
+                    tool["response"] = (res, None)
+                is_calling = False
+            
+            if chunk.get('choices')[0].get('finish_reason') == 'tool_calls':
+                for name, tool in tools.items():
+                    llm, user = tool.get("response")
+                    
+                    tool_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tool.get('id'),
+                        "name": name,
+                        "content": str(llm)
+                    })
+                    
+                    assistant_tool_calls.append({
+                        "id": tool.get('id'),
+                        "type": 'function',
+                        "function": {
+                            "name": name,
+                            "arguments": tool['arguments']
+                        }
+                    })
+                    
+                    if user:
+                        yield user.delta
+                        await asyncio.sleep(0)
+    
+                original_payload['messages'].append({
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "tool_calls": assistant_tool_calls
+                })
+                
+                original_payload['messages'].extend(tool_messages)
+                
+                async for chunk in brain_instance.chat(original_payload):
+                    yield chunk
+                    await asyncio.sleep(0)
+
+            yield chunk
+            await asyncio.sleep(0)
+
+    async def orchestrate(self, response: Any, brain, original_payload: Dict[str, Any]) -> Any:
+        from typing import AsyncGenerator
+        if isinstance(response, AsyncGenerator):
+            return self.stream_orchestrate(response, brain, original_payload)
+        else:
+            choice = response.get("choices", [{}])[0]
+            message = choice.get("message", {})
+            
+            if choice.get("finish_reason") != "tool_calls" or "tool_calls" not in message:
+                return response
+                
+            messages: list = original_payload.setdefault("messages", [])
+            messages.append(message)
+            
+            multimodal_content = []
+            
+            for tc in message.get("tool_calls", []):
+                name = tc.get("function", {}).get("name")
+                args = json.loads(tc.get("function", {}).get("arguments", "{}"))
+                
+                llm = await self.execute_tool(name, args)
+
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id"),
+                    "name": name,
+                    "content": str(llm)
+                })
+
+            second_response = await brain.chat(original_payload)
+            second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            if isinstance(second_content, list):
+                multimodal_content.extend(second_content)
+            else:
+                multimodal_content.append(second_content)
+                
+            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
+            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+
+            return second_response
 
     async def execute_tool(self, full_name: str, arguments: Dict[str, Any]) -> Any:
         if "__" not in full_name:

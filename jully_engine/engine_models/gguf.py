@@ -95,6 +95,9 @@ class GGUF:
             kwargs["repeat_penalty"] = kwargs.pop("repetition_penalty")
             
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        kwargs.pop("reasoning_enabled", None)
+        kwargs.pop("reasoning_effort", None)
+        
         force_reasoning = self.meta.get("force_reasoning", False)
 
         if "max_tokens" not in kwargs:

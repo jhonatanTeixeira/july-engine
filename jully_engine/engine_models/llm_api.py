@@ -29,12 +29,23 @@ class LLMApi:
 
     async def run_chat(self, model: str, messages: List[Dict[str, Any]], stream: bool = False, headers: Optional[Dict[str, str]] = None, **kwargs):
         """Runs chat/vision completions via litellm."""
+        reasoning_enabled = kwargs.pop("reasoning_enabled", None)
+        reasoning_effort = kwargs.pop("reasoning_effort", None)
+        
         params = {
             "model": model,
             "messages": messages,
             "stream": stream,
             **kwargs
         }
+        
+        if reasoning_enabled:
+            params["extra_body"] = {
+                "reasoning": {
+                    "enabled": True,
+                    "effort": reasoning_effort or "medium"
+                }
+            }
         
         api_base = self._extract_base_url(headers)
         if api_base:

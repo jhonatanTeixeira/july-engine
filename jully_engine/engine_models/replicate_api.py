@@ -30,7 +30,9 @@ class Replicate:
 
     def run_tts(self, model: str, text: str, voice: str = None, headers: Optional[Dict[str, str]] = None, voice_info=None, **kwargs):
         if not voice_info:
-            voice_info = {}
+            from ..persistence import get_backend
+            uploaded_voices = get_backend().get_uploaded_voices()
+            voice_info = next((v for v in uploaded_voices if v.get("id") == voice), {})
             
         model = self._extract_model(model)
 

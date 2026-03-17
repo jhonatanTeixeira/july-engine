@@ -78,20 +78,12 @@ class Bridge:
             if config:
                 if "x-backend" not in headers and "backend" in config:
                     headers["x-backend"] = config["backend"]
-            
-                if "x-base-url" not in headers and "base_url" in config:
-                    headers["x-base-url"] = config["base_url"]
-                
-                has_auth = "authorization" in headers or "x-api-key" in headers
-            
-                if not has_auth and "api_key" in config and config["api_key"]:
-                    headers["x-api-key"] = config["api_key"]
-                    headers["authorization"] = f"Bearer {config['api_key']}"
 
-                payload["model"] = config.get("model")
+                if "model" in config and not payload.get("model"):
+                    payload["model"] = config["model"]
                     
         except Exception as e:
-            logger.warning(f"Failed to enrich headers and payload from persistence: {e}")
+            logger.warning(f"Failed to enrich backend from persistence: {e}")
 
     async def start(self):
         for name, orch in self.orchestrators.items():

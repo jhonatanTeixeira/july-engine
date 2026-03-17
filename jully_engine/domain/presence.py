@@ -24,11 +24,23 @@ class Presence:
             raise ValueError(f"Presence: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def edit(self, payload: Dict[str, Any]):
+        headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        config = get_backend().get_setting("IMAGE_EDIT")
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+                
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             image_data = payload.pop("image", "")
             prompt = payload.pop("prompt", "")
-            headers = payload.pop("headers", {})
+            headers = payload.pop("headers", headers)
             
             import base64
             import io
@@ -48,10 +60,22 @@ class Presence:
         return None
 
     async def generate(self, payload: Dict[str, Any]):
+        headers = payload.get("headers", {})
+        
+        from ..persistence import get_backend
+        config = get_backend().get_setting("IMAGE_CREATE")
+        if config:
+            if "x-base-url" not in headers and "base_url" in config:
+                headers["x-base-url"] = config["base_url"]
+            has_auth = "authorization" in headers or "x-api-key" in headers
+            if not has_auth and "api_key" in config and config["api_key"]:
+                headers["x-api-key"] = config["api_key"]
+                headers["authorization"] = f"Bearer {config['api_key']}"
+
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             prompt = payload.pop("prompt", "")
-            headers = payload.pop("headers", {})
+            headers = payload.pop("headers", headers)
             return self._strategy.run_image_gen(model, prompt, headers=headers, **payload)
             
         elif isinstance(self._strategy, Pix2Pix):

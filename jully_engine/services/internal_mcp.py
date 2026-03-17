@@ -3,7 +3,7 @@ import json
 import logging
 import base64
 from pprint import pprint
-from typing import Dict, Any, List, AsyncGenerator, Tuple
+from typing import Dict, Any, List, AsyncGenerator, Tuple, Union
 
 from numpy import append
 
@@ -267,14 +267,14 @@ class InternalMCP:
                 None
             )
 
-    async def stream_orchestrate(self, brain_instance, stream: AsyncGenerator[Dict, None], original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
+    async def stream_orchestrate(self, response: AsyncGenerator[Dict, None], brain_instance, original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
         is_calling = False
         tools = {}
         assistant_content = ''
         tool_messages = []
         assistant_tool_calls = []
         
-        async for chunk in stream:
+        async for chunk in response:
             assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
              
             if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
@@ -334,9 +334,9 @@ class InternalMCP:
             await asyncio.sleep(0)
         
     # --- UTILITÁRIO ---
-    async def orchestrate(self, brain, response: Dict[str, Any] | AsyncGenerator, original_payload: Dict[str, Any]) -> Dict[str, Any] | AsyncGenerator:
+    async def orchestrate(self, response: Union[Dict[str, Any], AsyncGenerator], brain, original_payload: Dict[str, Any]) -> Union[Dict[str, Any], AsyncGenerator]:
         if isinstance(response, AsyncGenerator):
-            return self.stream_orchestrate(brain, response, original_payload)
+            return self.stream_orchestrate(response, brain, original_payload)
         else:
             choice = response.get("choices", [{}])[0]
             message = choice.get("message", {})
