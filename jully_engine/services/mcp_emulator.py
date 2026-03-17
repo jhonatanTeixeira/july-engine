@@ -1,3 +1,4 @@
+import asyncio
 import re
 import html
 import json
@@ -15,16 +16,25 @@ class Tool:
     arguments: str
 
 class Chunk:
-    def __init__(self, raw_chunk: dict, content: str = "", is_reasoning: bool = False):
+    def __init__(self, raw_chunk: dict):
         self.raw_chunk = raw_chunk
-        self.content = content
-        self.is_reasoning = is_reasoning
+        
+        delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
+        
+        self.content = delta['content'] if 'content' in delta else None
+        self.is_reasoning = True if 'reasoning_content' in delta else False
+        self.reasoning_content = delta['reasoning_content'] if self.is_reasoning else None
+        
+    @classmethod
+    def from_str(cls, text):
+        return cls({"choices": [{"delta": {"content": text}}]})
 
     @property
     def delta(self):
         """Reconstrói o objeto delta no formato OpenAI-Compatible"""
         return dict(self.raw_chunk)
-    
+
+
 class XMLStreamParser:
     """
     Atua como um Buffer inteligente. 
@@ -38,54 +48,52 @@ class XMLStreamParser:
         self.suspect_tag = re.compile(r"<[a-zA-Z_]*$")
 
     async def __aiter__(self):
+        buffer: str = ''
+        tag_opened: str = None
+        arguments: str = None
+        
         async for chunk in self.stream:
-            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            delta = Chunk(chunk)
             
-            # 1. Raciocínio (Passa direto, sem ir pro buffer)
-            if "reasoning_content" in delta:
-                yield Chunk(chunk, content=delta["reasoning_content"], is_reasoning=True)
+            if not delta.content:
+                yield chunk
                 continue
-                
-            # 2. Conteúdo (Vai pro buffer de análise)
-            raw_text = delta.get("content", "")
-            if not raw_text:
-                continue
-                
-            self.buffer += html.unescape(raw_text)
             
-            # 3. Procura ferramentas prontas
-            while True:
-                match = self.full_tag.search(self.buffer)
-                if match:
-                    safe_text = self.buffer[:match.start()]
-                    if safe_text:
-                        yield Chunk(chunk, content=safe_text, is_reasoning=False)
-                    
-                    yield Tool(name=match.group(1), arguments=match.group(2).strip())
-                    self.buffer = self.buffer[match.end():]
+            buffer += delta.content
+            
+            if '<' in buffer and re.match(r'(.*?)?<$|<\w+$|<\w+$', buffer) and not tag_opened:
+                continue
+            
+            if (match := re.search('<(\w+)>', buffer)) and not tag_opened:
+                tag_opened = match.group(1)
+                before, after = buffer.split(f'<{tag_opened}>')
+                
+                yield Chunk.from_str(before)
+                
+                buffer = after
+            
+            if not tag_opened:
+                yield Chunk.from_str(buffer)
+                buffer = ''
+            
+            if tag_opened and (match := re.search('<\/\w+>', buffer)):
+                split = buffer.split(match.group(0), maxsplit=1)
+                arguments = split[0]
+                
+                if len(split) > 1:
+                    buffer = split[1]
                 else:
-                    break
-
-            # 4. Trava de segurança (Prende fragmentos suspeitos de '<')
-            trap_start = -1
-            open_match = self.open_tag.search(self.buffer)
-            if open_match:
-                trap_start = open_match.start()
-            else:
-                suspect_match = self.suspect_tag.search(self.buffer)
-                if suspect_match:
-                    trap_start = suspect_match.start()
-
-            # 5. Libera o texto seguro pra tela
-            if trap_start != -1:
-                safe_text = self.buffer[:trap_start]
-                if safe_text:
-                    yield Chunk(chunk, content=safe_text, is_reasoning=False)
-                self.buffer = self.buffer[trap_start:]
-            else:
-                if self.buffer:
-                    yield Chunk(chunk, content=self.buffer, is_reasoning=False)
-                    self.buffer = ""
+                    buffer = ''
+                
+                yield Tool(tag_opened, arguments)
+            
+                tag_opened = None
+                arguments = None
+            
+            await asyncio.sleep(0)
+        
+        if buffer:
+            yield Chunk.from_str(buffer)
 
 
 # ==========================================
