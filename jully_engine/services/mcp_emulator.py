@@ -76,7 +76,7 @@ class XMLStreamParser:
                 yield Chunk.from_str(buffer)
                 buffer = ''
             
-            if tag_opened and (match := re.search('<\/\w+>', buffer)):
+            if tag_opened and (match := re.search(f'<\/{tag_opened}>', buffer)):
                 split = buffer.split(match.group(0), maxsplit=1)
                 arguments = split[0]
                 
@@ -110,7 +110,7 @@ class McpEmulator:
     def json_tools_to_xml_prompt(self, tools: List[Dict[str, Any]]) -> str:
         """
         Converte uma lista de tools no formato OpenAI JSON para um prompt de 
-        instruções em texto puro usando tags XML.
+        instruções usando blocos XML hierárquicos (Child Nodes).
         """
         prompt_lines = []
         
@@ -125,45 +125,46 @@ class McpEmulator:
             properties = func.get("parameters", {}).get("properties", {})
             required = func.get("parameters", {}).get("required", [])
             
-            if required:
-                param_name = required[0].upper()
-            elif properties:
-                param_name = list(properties.keys())[0].upper()
+            prompt_lines.append(f"### Tool: `{name}`")
+            prompt_lines.append(f"Description: {description}")
+            prompt_lines.append("USAGE FORMAT:")
+            prompt_lines.append(f"<{name}>")
+            
+            if properties:
+                for prop, data in properties.items():
+                    prop_type = data.get('type', 'any')
+                    prop_desc = data.get('description', '')
+                    req_status = "REQUIRED" if prop in required else "OPTIONAL"
+                    
+                    # Desenha a tag do parâmetro com as instruções de preenchimento dentro
+                    prompt_lines.append(f"  <{prop}>[{prop_type}, {req_status}] {prop_desc}</{prop}>")
             else:
-                param_name = "VALOR"
+                prompt_lines.append("  ")
                 
-            line = f"* <{name}>{param_name}</{name}> -> {description}"
-            prompt_lines.append(line)
+            prompt_lines.append(f"</{name}>\n")
             
         return "\n".join(prompt_lines)
     
     def inject_tools(self, payload: Dict):
         system_prompt = textwrap.dedent(f'''
-# TOOLING
-You are an intelligent agent equipped with external tools. 
+# TOOLING CAPABILITIES
+You are an intelligent agent equipped with external tools. The environment will execute the tool and return the results to you.
 
 ## 🛑 ANTI-REFUSAL PROTOCOL (CRITICAL)
 NEVER say "I cannot create images", "I cannot save memories", or "As an AI, I don't have access to...". 
-You DO have access to these capabilities through your tools. The external system will execute the tags you provide. Just output the correct XML tag and the system will do the rest.
+You DO have access to these capabilities through your tools. Just output the correct XML tag block and the external system will do the rest.
 
-## ⚠️ CRITICAL SYNTAX AND EXECUTION RULES (MANDATORY)
-1. STRICT SYNTAX: Use ONLY less-than/greater-than signs for tags. It is STRICTLY FORBIDDEN to use square brackets (e.g., `[search]`).
-2. NO MARKDOWN IN TAGS: NEVER wrap XML tags in code blocks (```). Insert them as plain text.
-3. REASONING ISOLATION: The system DOES NOT read your internal `<think>` block. To execute a tool, the XML tag MUST be written in your FINAL RESPONSE.
-4. SILENT EXECUTION: Do not explain that you are going to use a tool. Just output the tag.
+## ⚠️ CRITICAL SYNTAX RULES (MANDATORY)
+1. STRICT XML ONLY: You must use properly formatted XML tags with child nodes for parameters.
+2. NO JSON/YAML/ATTRIBUTES: Do NOT use HTML-style attributes (e.g., `<tool param="value">`). Do NOT use JSON, YAML, or square brackets.
+3. NO MARKDOWN: NEVER wrap your XML blocks in markdown code fences (```xml). Output them as plain raw text.
+4. REASONING ISOLATION: The system DOES NOT read your internal `<think>` blocks. Tool calls MUST be in your final visible response.
+5. SILENT EXECUTION: Do not announce or explain that you are going to use a tool. Just output the XML block.
 
-## TOOL AND ACTION GUIDELINES
+## ⚙️ AVAILABLE TOOLS AND GUIDELINES
+To execute a tool, you MUST output the EXACT XML block structure shown in the "USAGE FORMAT" for the chosen tool. Replace the bracketed instructions with your actual parameter values.
+
 {self.xml_tags}
-
-## FEW-SHOT EXAMPLES (HOW TO RESPOND)
-User: "Create a picture of a blue mustang."
-Assistant: <generate_image>A beautiful blue Ford Mustang, realistic, 8k</generate_image>
-
-User: "Remember that I love muscle cars."
-Assistant: <save_memory>The user loves muscle cars.</save_memory> I will remember that!
-
-User: "What is the weather in Tokyo?"
-Assistant: <search_web>current weather in Tokyo</search_web>
         ''').strip() # <-- O .strip() garante que não há quebras de linha fantasmas
         
         system_msg = {
@@ -177,22 +178,48 @@ Assistant: <search_web>current weather in Tokyo</search_web>
         else:
             payload.setdefault("messages", []).insert(0, system_msg)
 
+    import re
+
     def _build_args(self, name: str, value: str) -> Dict:
         args = {}
-        
-        # Garante que acessa as ferramentas indexadas (ajuste se vier do internal_mcp)
         indexed_tools = self.indexed_tools
         
+        # 1. Extração à prova de falhas: Captura qualquer padrão <tag>conteudo</tag>
+        # O re.DOTALL garante que ele vai capturar mesmo se a IA pular linhas dentro do valor
+        matches = re.findall(r'<([a-zA-Z0-9_]+)>(.*?)</\1>', value, re.DOTALL)
+        
+        if not matches:
+            # Se não achou tags, ou a tool não tem parâmetros, ou a IA errou muito.
+            if name in indexed_tools:
+                props = indexed_tools[name]["function"].get("parameters", {}).get("properties", {})
+                if props:
+                    first_param = list(props.keys())[0]
+                    args[first_param] = value.strip()
+            return args
+
+        # Pega a especificação de tipos da ferramenta para recriar o JSON
+        props = {}
         if name in indexed_tools:
             props = indexed_tools[name]["function"].get("parameters", {}).get("properties", {})
-            if props:
-                # Pega dinamicamente o nome do primeiro parâmetro exigido pela ferramenta
-                first_param = list(props.keys())[0]
-                args[first_param] = value
-        else:
-            # Fallback genérico caso a ferramenta não seja encontrada no index
-            args["VALOR"] = value
+
+        # 2. Constrói o dicionário já aplicando o Type Casting correto!
+        for key, val in matches:
+            val_clean = val.strip()
+            expected_type = props.get(key, {}).get("type", "string").lower()
             
+            try:
+                if expected_type == "number" or expected_type == "float":
+                    args[key] = float(val_clean)
+                elif expected_type == "integer":
+                    args[key] = int(val_clean)
+                elif expected_type == "boolean":
+                    args[key] = val_clean.lower() in ["true", "1", "yes"]
+                else:
+                    args[key] = val_clean # Default é string
+            except ValueError:
+                # Se a IA alucinou texto onde era número, salva como string para não quebrar
+                args[key] = val_clean
+                
         return args
 
     async def orchestrate(self, response: Union[Dict, AsyncGenerator], brain, original_payload: Dict):
@@ -325,8 +352,6 @@ Assistant: <search_web>current weather in Tokyo</search_web>
                             })
                 
                 if tools_executed:
-                    # original_payload.setdefault("headers", {})["x-enable-internal-mcp"] = "0"
-                                
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):
                         yield dict(second_chunk)
