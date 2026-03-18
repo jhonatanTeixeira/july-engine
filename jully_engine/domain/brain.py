@@ -74,6 +74,7 @@ class Brain:
             
         if mcp_handler:
             mcp_handler.inject_tools(payload)
+            
             if mcp_option == "emulated":
                 payload.pop("tools", None)
 

@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass
 import textwrap
 from typing import Any, Dict, AsyncGenerator, List, Union
+import re
 
 # ==========================================
 # 1. CLASSES DE DOMÍNIO (DATA E PARSER)
@@ -146,6 +147,10 @@ class McpEmulator:
         return "\n".join(prompt_lines)
     
     def inject_tools(self, payload: Dict):
+        
+        if 'tools' in payload:
+            self.xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
+            
         system_prompt = textwrap.dedent(f'''
 # TOOLING CAPABILITIES
 You are an intelligent agent equipped with external tools. The environment will execute the tool and return the results to you.
@@ -177,8 +182,6 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             messages[0]["content"] += f"\n\n{system_msg['content']}"
         else:
             payload.setdefault("messages", []).insert(0, system_msg)
-
-    import re
 
     def _build_args(self, name: str, value: str) -> Dict:
         args = {}

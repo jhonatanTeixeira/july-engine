@@ -151,6 +151,7 @@ class InternalMCP:
         ]
         
         external_tools = external_mcp_manager.get_all_tools()
+        
         return internal_tools + external_tools
 
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
@@ -158,7 +159,8 @@ class InternalMCP:
         return config if config else {"backend": "api", "model": ""}
     
     def inject_tools(self, payload: Dict):
-        payload['tools'] = self.get_tools()
+        if 'tools' not in payload:
+            payload['tools'] = self.get_tools()
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
         from ..model_loader import model_loader

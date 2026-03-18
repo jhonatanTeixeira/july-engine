@@ -91,9 +91,11 @@ class ExternalMCPManager:
         return all_tools
 
     def inject_tools(self, payload: Dict):
-        tools = self.get_all_tools()
-        if tools:
-            payload['tools'] = tools
+        if 'tools' not in payload:
+            tools = self.get_all_tools()
+            
+            if tools:
+                payload['tools'] = tools
 
     async def stream_orchestrate(self, response: AsyncGenerator[Dict, None], brain_instance, original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
         import asyncio
