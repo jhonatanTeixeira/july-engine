@@ -11,10 +11,37 @@ from ..bridge import bridge
 
 router = APIRouter(tags=["OpenAI"])
 
+class ToolFunctionProperty(BaseModel):
+    type: str
+    description: Optional[str] = None
+    enum: Optional[List[str]] = None
+
+class ToolFunctionParameters(BaseModel):
+    type: str = "object"
+    properties: Optional[Dict[str, Any]] = None
+    required: Optional[List[str]] = None
+
+class ToolFunction(BaseModel):
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[ToolFunctionParameters] = None
+
+class ToolDefinition(BaseModel):
+    type: str = "function"
+    function: ToolFunction
+    fire_and_forget: Optional[bool] = Field(None, alias="fire-and-forget")
+    
+    # Allow extra fields without breaking validation
+    model_config = {
+        "populate_by_name": True,
+        "extra": "allow"
+    }
+
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: List[Dict[str, Any]]
     stream: Optional[bool] = False
+    tools: Optional[List[ToolDefinition]] = None
     max_tokens: Optional[int] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None

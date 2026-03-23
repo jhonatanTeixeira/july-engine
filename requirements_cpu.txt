@@ -10,10 +10,9 @@ diffusers
 faster-whisper
 sentence-transformers
 pydub
-numpy
 pillow
 ollama
-huggingface_hub
+huggingface_hub[hf_transfer]
 pandas
 piper-tts
 optimum[onnxruntime]
@@ -23,3 +22,10 @@ noisereduce
 pyinstaller
 kokoro
 py-cpuinfo
+timm
+mediapipe
+ultralytics
+deepface
+retina-face
+tensorflow
+tf-keras

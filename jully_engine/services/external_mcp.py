@@ -177,32 +177,47 @@ class ExternalMCPManager:
             messages.append(message)
             
             multimodal_content = []
+            requires_second_call = False
             
             for tc in message.get("tool_calls", []):
                 name = tc.get("function", {}).get("name")
                 args = json.loads(tc.get("function", {}).get("arguments", "{}"))
                 
                 llm = await self.execute_tool(name, args)
+                
+                is_faf = False
+                # If the tool is external and the result is empty, it's fire-and-forget.
+                # Actually, any external tool call with empty return is fire-and-forget.
+                if "__" in name and not llm:
+                    is_faf = True
+                
+                if not is_faf:
+                    requires_second_call = True
 
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": name,
-                    "content": str(llm)
+                    "content": str(llm) if llm else ""
                 })
 
-            second_response = await brain.chat(original_payload)
-            second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
-            if isinstance(second_content, list):
-                multimodal_content.extend(second_content)
-            else:
-                multimodal_content.append(second_content)
+            if requires_second_call:
+                second_response = await brain.chat(original_payload)
+                second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                 
-            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
-            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                if isinstance(second_content, list):
+                    multimodal_content.extend(second_content)
+                else:
+                    multimodal_content.append(second_content)
+                    
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
 
-            return second_response
+                return second_response
+            else:
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                return response
 
     async def execute_tool(self, full_name: str, arguments: Dict[str, Any]) -> Any:
         if "__" not in full_name:

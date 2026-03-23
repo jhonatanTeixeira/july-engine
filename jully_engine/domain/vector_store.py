@@ -136,5 +136,51 @@ class VectorStore:
             
             scored.sort(key=lambda x: x[0], reverse=True)
             return [item[1] for item in scored[:top_k]]
+        
+    def search_with_details(self, query_embedding: List[float], top_k: int = 1) -> List[Dict[str, Any]]:
+        """Busca retornando IDs, Distâncias, Metadados e o Vetor Antigo."""
+        if self.db_type == "chroma":
+            # Pedimos explicitamente para o Chroma trazer o embedding antigo e a distância
+            results = self.collection.query(
+                query_embeddings=[query_embedding],
+                n_results=top_k,
+                include=["embeddings", "metadatas", "distances", "documents"]
+            )
+            
+            matches = []
+            if results["ids"] and len(results["ids"][0]) > 0:
+                for i in range(len(results["ids"][0])):
+                    matches.append({
+                        "id": results["ids"][0][i],
+                        "distance": results["distances"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "embedding": results["embeddings"][0][i]
+                    })
+            return matches
+            
+        elif self.db_type == "pgvector":
+            # Implementação futura para pgvector...
+            pass
+        else:
+            # Implementação in-memory...
+            pass
+        return []
+
+    def update_embedding(self, doc_id: str, new_embedding: List[float]):
+        """Atualiza um vetor existente direto no VectorStore."""
+        if self.db_type == "chroma":
+            self.collection.update(
+                ids=[doc_id],
+                embeddings=[new_embedding]
+            )
+        elif self.db_type == "pgvector":
+            # Implementação futura para pgvector...
+            pass
+        else:
+            for item in self.memory_data:
+                if item["id"] == doc_id:
+                    item["embedding"] = new_embedding
+                    break
+            self._save_in_memory()
 
 vector_store = VectorStore()

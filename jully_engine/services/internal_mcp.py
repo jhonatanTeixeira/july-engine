@@ -48,6 +48,7 @@ class InternalMCP:
         internal_tools = [
             {
                 "type": "function",
+                "fire-and-forget": True,
                 "function": {
                     "name": "generate_image",
                     "description": "Generates a new image based on a prompt.",
@@ -65,6 +66,7 @@ class InternalMCP:
             },
             {
                 "type": "function",
+                "fire-and-forget": True,
                 "function": {
                     "name": "generate_audio",
                     "description": "Generates an audio speech from text. Always use if the user asks to read something",
@@ -116,6 +118,7 @@ class InternalMCP:
             },
             {
                 "type": "function",
+                "fire-and-forget": True,
                 "function": {
                     "name": "save_memory",
                     "description": "Saves an important fact or piece of information about the user or the conversation to the long-term memory vector database.",
@@ -133,6 +136,7 @@ class InternalMCP:
             },
             {
                 "type": "function",
+                "fire-and-forget": True,
                 "function": {
                     "name": "image_edit",
                     "description": "Edits an existing image based on an instruction.",
@@ -297,14 +301,24 @@ class InternalMCP:
                 is_calling = False
             
             if chunk.get('choices')[0].get('finish_reason') == 'tool_calls':
+                requires_second_call = False
+                all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
+                
                 for name, tool in tools.items():
                     llm, user = tool.get("response")
                     
+                    is_faf = all_indexed_tools.get(name, {}).get("fire-and-forget", False)
+                    if "__" in name and not llm:
+                        is_faf = True
+                        
+                    if not is_faf:
+                        requires_second_call = True
+                        
                     tool_messages.append({
                         "role": "tool",
                         "tool_call_id": tool.get('id'),
                         "name": name,
-                        "content": llm
+                        "content": llm if llm else ""
                     })
                     
                     assistant_tool_calls.append({
@@ -328,9 +342,10 @@ class InternalMCP:
                 
                 original_payload['messages'].extend(tool_messages)
                 
-                async for chunk in brain_instance.chat(original_payload):
-                    yield chunk
-                    await asyncio.sleep(0)
+                if requires_second_call:
+                    async for chunk in brain_instance.chat(original_payload):
+                        yield chunk
+                        await asyncio.sleep(0)
 
             yield chunk
             await asyncio.sleep(0)
@@ -351,6 +366,8 @@ class InternalMCP:
             messages.append(message)
             
             multimodal_content = []
+            requires_second_call = False
+            all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
             
             for tc in message.get("tool_calls", []):
                 name = tc.get("function", {}).get("name")
@@ -358,29 +375,41 @@ class InternalMCP:
                 
                 llm, user = await self.execute_tool(name, args)
 
+                is_faf = all_indexed_tools.get(name, {}).get("fire-and-forget", False)
+                if "__" in name and not llm:
+                    is_faf = True
+                    
+                if not is_faf:
+                    requires_second_call = True
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id"),
                     "name": name,
-                    "content": str(llm)
+                    "content": str(llm) if llm else ""
                 })
 
                 if user:
                     multimodal_content.append(user._response)
 
-            second_response = await brain.chat(original_payload)
-            second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
-            if isinstance(second_content, list):
-                multimodal_content.extend(second_content)
-            else:
-                multimodal_content.append(second_content)
+            if requires_second_call:
+                second_response = await brain.chat(original_payload)
+                second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                 
-            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
-            
-            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                if isinstance(second_content, list):
+                    multimodal_content.extend(second_content)
+                else:
+                    multimodal_content.append(second_content)
+                    
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                
+                second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
 
-            return second_response
+                return second_response
+            else:
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                return response
 
     def _merge_usages(self, first: Dict, second: Dict):
         """Soma o uso de tokens das duas viagens à rede neural."""

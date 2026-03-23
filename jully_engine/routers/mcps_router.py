@@ -1,9 +1,15 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, List
 from ..services.mcps_service import McpsService
+from ..services.internal_mcp import InternalMCP
 
 router = APIRouter(prefix="/v1/mcps", tags=["MCPs"])
 service = McpsService()
+
+@router.get("/tools", response_model=List[Dict[str, Any]])
+def get_all_tools():
+    internal_mcp = InternalMCP()
+    return internal_mcp.get_tools()
 
 @router.get("/", response_model=List[Dict[str, Any]])
 def get_all_mcps():

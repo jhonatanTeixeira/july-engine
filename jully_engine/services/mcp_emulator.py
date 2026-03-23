@@ -263,6 +263,8 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             multimodal_content = []
             
             # 2. Executa todas as ferramentas sequencialmente
+            requires_second_call = False
+            
             for item in tools_to_execute:
                 args = self._build_args(item.name, item.arguments)
                 
@@ -278,6 +280,13 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                             
                 llm, user = await self.internal_mcp.execute_tool(item.name, args)
                 
+                is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
+                if "__" in item.name and not llm:
+                    is_faf = True
+                    
+                if not is_faf:
+                    requires_second_call = True
+                
                 # Guarda o visual (UI) para o final
                 if user:
                     multimodal_content.append(user.response)
@@ -289,19 +298,24 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         "content": f"[SYSTEM MESSAGE TOOL {item.name} CALLED]: {llm}"
                     })
 
-            second_response = await brain.chat(original_payload)
-            second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
-            
-            if isinstance(second_content, list):
-                multimodal_content.extend(second_content)
-            else:
-                multimodal_content.append(second_content)
+            if requires_second_call:
+                second_response = await brain.chat(original_payload)
+                second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                 
-            content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0]
-            
-            second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                if isinstance(second_content, list):
+                    multimodal_content.extend(second_content)
+                else:
+                    multimodal_content.append(second_content)
+                    
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                
+                second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
 
-            return second_response
+                return second_response
+            else:
+                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
+                response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                return response
             
         else:
             # ==============================
@@ -310,6 +324,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             async def stream_orchestrator():
                 first_response = ''
                 tools_executed = False
+                requires_second_call = False
                 
                 # O Parser consome a rede neural, nós consumimos o Parser!
                 async for item in XMLStreamParser(response):
@@ -344,6 +359,13 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                     
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
+                        is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
+                        if "__" in item.name and not llm:
+                            is_faf = True
+                            
+                        if not is_faf:
+                            requires_second_call = True
+                        
                         if user:
                             yield user.delta
                             
@@ -354,7 +376,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                 "content": f"[SYSTEM MESSAGE: TOOL {item.name} CALLED]: {llm}"
                             })
                 
-                if tools_executed:
+                if tools_executed and requires_second_call:
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):
                         yield dict(second_chunk)
