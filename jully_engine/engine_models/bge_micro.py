@@ -17,11 +17,11 @@ class BgeMicro:
     def load(self):
         if self.model is None:
             try:
-                from optimum.onnxruntime import ORTModelForFeatureExtraction
+                import onnxruntime as ort
                 from transformers import AutoTokenizer
                 
                 logger.info(f"BgeMicro: Loading model {self.model_id} on {self.backend}")
-                self.model = ORTModelForFeatureExtraction.from_pretrained(self.model_id, provider="CPUExecutionProvider")
+                self.model = ort.InferenceSession(self.model_id, provider="CPUExecutionProvider")
                 self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
                 logger.info("BgeMicro loaded successfully.")
             except Exception as e:

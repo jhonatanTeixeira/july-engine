@@ -15,7 +15,7 @@ ollama
 huggingface_hub[hf_transfer]
 pandas
 piper-tts
-optimum[onnxruntime]
+onnxruntime-gpu
 hf_xet
 opencv-python-headless
 noisereduce

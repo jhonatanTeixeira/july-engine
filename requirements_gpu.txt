@@ -9,3 +9,9 @@ coqui-tts
 nvidia-ml-py
 llama-cpp-python
 pynvml
+diffusers 
+transformers
+accelerate 
+peft
+safetensors 
+insightface
