@@ -152,6 +152,8 @@ class Bridge:
         messages = payload.get("messages", [])
         input_chars = len(json.dumps(messages)) if messages else 0
         last_message = messages[-1] if messages else None
+        task_type = "text_chat"
+        self._enrich_headers_and_payload(task_type, payload, headers)
         
         orch = self.get_orchestrator(headers)
 
@@ -202,8 +204,6 @@ class Bridge:
             last_message["content"] = new_content
 
         # 2. CONFIGURAÇÃO DO PAYLOAD E CHAMADA
-        task_type = "text_chat"
-        self._enrich_headers_and_payload(task_type, payload, headers)
         payload['headers'] = headers
         stream = payload.get("stream", False)
         model_name = payload.get("model", "default")

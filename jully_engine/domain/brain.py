@@ -49,6 +49,7 @@ class Brain:
             if "x-base-url" not in headers and "base_url" in config:
                 headers["x-base-url"] = config["base_url"]
             has_auth = "authorization" in headers or "x-api-key" in headers
+            
             if not has_auth and "api_key" in config and config["api_key"]:
                 headers["x-api-key"] = config["api_key"]
                 headers["authorization"] = f"Bearer {config['api_key']}"
@@ -56,6 +57,8 @@ class Brain:
             if config.get("reasoning_enabled"):
                 payload["reasoning_enabled"] = config.get("reasoning_enabled")
                 payload["reasoning_effort"] = config.get("reasoning_effort", "medium")
+                
+            payload['model'] = config.get('model', self.model_tag)
                 
             mcp_option = config.get("mcp_option", "emulated")
 
@@ -88,8 +91,7 @@ class Brain:
                 msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") == "text"]
 
         if isinstance(self._strategy, LLMApi):
-            del payload["model"]
-            model = self.model_tag
+            model = payload.pop('model', self.model_tag)
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             req_headers = payload.pop("headers", {})

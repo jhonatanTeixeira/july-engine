@@ -148,7 +148,7 @@ class McpEmulator:
     
     def inject_tools(self, payload: Dict):
         
-        if 'tools' in payload:
+        if 'tools' in payload and payload['tools']:
             self.xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
             
         system_prompt = textwrap.dedent(f'''
