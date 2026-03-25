@@ -147,9 +147,10 @@ class McpEmulator:
         return "\n".join(prompt_lines)
     
     def inject_tools(self, payload: Dict):
+        xml_tags = self.xml_tags
         
         if 'tools' in payload and payload['tools']:
-            self.xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
+            xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
             
         system_prompt = textwrap.dedent(f'''
 # TOOLING CAPABILITIES
@@ -169,7 +170,7 @@ You DO have access to these capabilities through your tools. Just output the cor
 ## ⚙️ AVAILABLE TOOLS AND GUIDELINES
 To execute a tool, you MUST output the EXACT XML block structure shown in the "USAGE FORMAT" for the chosen tool. Replace the bracketed instructions with your actual parameter values.
 
-{self.xml_tags}
+{xml_tags}
         ''').strip() # <-- O .strip() garante que não há quebras de linha fantasmas
         
         system_msg = {
