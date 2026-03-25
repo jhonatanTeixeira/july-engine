@@ -36,14 +36,14 @@ class UserToolReponse:
             # Padrão OpenAI usa 'input_audio' para envio, mas 'audio_url' serve se for seu próprio padrão.
             return {"type": "audio_url", "audio_url": {"url": f"data:audio/wav;base64,{self._response}"}}
         else:
-            return {"type": "text", "text": self._data}
+            return {"type": "text", "text": self._response}
 
 
 class InternalMCP:
     def __init__(self):
         self.backend_db = get_backend()
 
-    def get_tools(self) -> List[Dict[str, Any]]:
+    def get_tools(self, whitelist: List[str] = None) -> List[Dict[str, Any]]:
         # O Cardápio de Ferramentas Internas (mantido intacto)
         internal_tools = [
             {
@@ -154,17 +154,21 @@ class InternalMCP:
             }
         ]
         
-        external_tools = external_mcp_manager.get_all_tools()
+        external_tools = external_mcp_manager.get_all_tools(whitelist)
         
-        return internal_tools + external_tools
+        all_tools = internal_tools + external_tools
+        if whitelist is not None:
+            all_tools = [t for t in all_tools if t["function"]["name"] in whitelist]
+            
+        return all_tools
 
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
         config = self.backend_db.get_setting(setting_key)
         return config if config else {"backend": "api", "model": ""}
     
-    def inject_tools(self, payload: Dict):
+    def inject_tools(self, payload: Dict, whitelist: List[str] = None):
         if 'tools' not in payload:
-            payload['tools'] = self.get_tools()
+            payload['tools'] = self.get_tools(whitelist)
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
         from ..model_loader import model_loader
@@ -181,10 +185,34 @@ class InternalMCP:
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 
-                return (
-                    result,
-                    None
-                )
+                # Check for multimodal content in result (MCP CallToolResult)
+                texts = []
+                images = []
+                audios = []
+                
+                content_list = []
+                if hasattr(result, "content"):
+                    content_list = result.content
+                elif isinstance(result, dict) and "content" in result:
+                    content_list = result["content"]
+                
+                for item in content_list:
+                    itype = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None)
+                    if itype == "text":
+                        texts.append(getattr(item, "text", None) or item.get("text", ""))
+                    elif itype == "image":
+                        images.append(getattr(item, "data", None) or item.get("data", ""))
+                    elif itype == "audio":
+                        audios.append(getattr(item, "data", None) or item.get("data", ""))
+                
+                text_res = "\n".join(texts) if texts else "Tool executed."
+                
+                if images:
+                    return ("Image generated", UserToolReponse(images[0], 'image'))
+                if audios:
+                    return ("Audio generated", UserToolReponse(audios[0], 'audio'))
+                    
+                return (text_res, None)
                 
             config_map = {
                 "generate_image": "IMAGE_CREATE",
@@ -216,7 +244,7 @@ class InternalMCP:
                 )
             
             elif name == "generate_audio":
-                audio_bytes = bridge.process_tts({"text", arguments.get("text")}, {})
+                audio_bytes = await bridge.process_tts({"text": arguments.get("text")}, {})
                 audio = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else ""
                 
                 gen_time = time.time() - start_time

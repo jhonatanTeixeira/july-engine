@@ -84,15 +84,17 @@ class ExternalMCPManager:
         except Exception as e:
             logger.error(f"Failed to connect to MCP {conf.get('name', mcp_id)}: {e}")
 
-    def get_all_tools(self) -> List[Dict[str, Any]]:
+    def get_all_tools(self, whitelist: List[str] = None) -> List[Dict[str, Any]]:
         all_tools = []
         for tools in self.server_tools.values():
-            all_tools.extend(tools)
+            for t in tools:
+                if whitelist is None or t["function"]["name"] in whitelist:
+                    all_tools.append(t)
         return all_tools
 
-    def inject_tools(self, payload: Dict):
+    def inject_tools(self, payload: Dict, whitelist: List[str] = None):
         if 'tools' not in payload:
-            tools = self.get_all_tools()
+            tools = self.get_all_tools(whitelist)
             
             if tools:
                 payload['tools'] = tools
@@ -231,15 +233,7 @@ class ExternalMCPManager:
         try:
             logger.info(f"ExternalMCP executing tool: {full_name} with arguments: {arguments}")
             result = await session.call_tool(tool_name, arguments)
-            # Assuming CallToolResult format
-            texts = []
-            if hasattr(result, "content"):
-                for c in result.content:
-                    if hasattr(c, "type") and c.type == "text":
-                        texts.append(c.text)
-                    elif isinstance(c, dict) and c.get("type") == "text":
-                        texts.append(c.get("text", ""))
-            return "\n".join(texts) if texts else "Tool executed successfully but returned no text."
+            return result
         except Exception as e:
             logger.error(f"Error executing external tool {full_name}: {e}")
             return f"Error executing tool: {e}"

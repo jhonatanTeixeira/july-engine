@@ -157,31 +157,18 @@ class Bridge:
         
         orch = self.get_orchestrator(headers)
 
-        # 1. PROCESSAMENTO INLINE DE MÍDIA (Visão/Áudio) - Mantido igual, pois é o core da sua engine
+        # 1. PROCESSAMENTO INLINE DE MÍDIA (Visão/Áudio) - Refatorado para BATCHING
         if last_message and isinstance(last_message.get("content"), list):
             new_content = []
+            image_items = []
+            
             for item in last_message["content"]:
                 if isinstance(item, dict):
                     item_type = item.get("type")
                     if item_type == "image_url":
-                        new_content.append(item)
-                        try:
-                            vision_payload = {
-                                "image": item["image_url"]["url"],
-                                "prompt": "Describe this image in detail.",
-                                "model": "default"
-                            }
-                            vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
-                            analysis = ""
-                            if isinstance(vision_res, dict) and "choices" in vision_res:
-                                analysis = vision_res["choices"][0].get("message", {}).get("content", "")
-                            elif isinstance(vision_res, str):
-                                analysis = vision_res
-                            if analysis:
-                                new_content.append({"type": "text", "text": f"User sent an image: {analysis}"})
-                        except Exception as e:
-                            logger.error(f"Failed to analyze image inline: {e}")
+                        image_items.append(item)
                     elif item_type in ["audio_url", "input_audio"]:
+                        # Áudio continua um por um por enquanto (latência menor individualmente)
                         new_content.append(item)
                         try:
                             if item_type == "input_audio":
@@ -201,6 +188,43 @@ class Bridge:
                         new_content.append(item)
                 else:
                     new_content.append(item)
+
+            # Processamento em BATCH de imagens
+            if image_items:
+                try:
+                    images_to_analyze = [item["image_url"]["url"] for item in image_items]
+                    vision_payload = {
+                        "images": images_to_analyze, # Nota: mudamos de 'image' para 'images'
+                        "prompt": "Describe this image in detail.",
+                        "model": "default"
+                    }
+                    
+                    # O orquestrador deve lidar com a lista de imagens
+                    vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
+                    
+                    # Mapear os resultados de volta para o conteúdo
+                    # Se vier uma lista de strings ou lista de objetos OpenAI
+                    batch_analyses = []
+                    if isinstance(vision_res, list):
+                        for r in vision_res:
+                            if isinstance(r, dict) and "choices" in r:
+                                batch_analyses.append(r["choices"][0].get("message", {}).get("content", ""))
+                            else:
+                                batch_analyses.append(str(r))
+                    elif isinstance(vision_res, dict) and "choices" in vision_res:
+                        # Se o orquestrador retornar apenas uma resposta (talvez concatenada ou erro de batching)
+                        batch_analyses = [vision_res["choices"][0].get("message", {}).get("content", "")] * len(image_items)
+                    
+                    for i, item in enumerate(image_items):
+                        new_content.append(item)
+                        if i < len(batch_analyses) and batch_analyses[i]:
+                            new_content.append({"type": "text", "text": f"User sent an image: {batch_analyses[i]}"})
+                except Exception as e:
+                    logger.error(f"Failed to analyze images in batch: {e}")
+                    # Fallback: re-adicionar as imagens sem análise se falhar
+                    for item in image_items:
+                        new_content.append(item)
+
             last_message["content"] = new_content
 
         # 2. CONFIGURAÇÃO DO PAYLOAD E CHAMADA

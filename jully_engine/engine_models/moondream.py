@@ -1,6 +1,7 @@
 import logging
 from PIL import Image
 import gc
+from typing import Any, Dict, List, Optional
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
@@ -55,21 +56,39 @@ class MoondreamVLM:
             logger.error(f"Falha ao carregar o Moondream2: {e}")
             raise
 
-    def create_batch_completion(self, valid_image_paths: list, prompt_text: str):
-        if not valid_image_paths: return []
+    def run(self, payload: Dict[str, Any]):
+        image_data = payload.get("image")
+        prompt = payload.get("prompt", "Describe this image.")
+        
+        if not image_data:
+            return ""
+
+        if isinstance(image_data, list):
+            return self.run_batch(image_data, prompt)
+
+        img = self.decode_image(image_data)
+        results = self.run_batch([img], prompt)
+        return results[0] if results else ""
+
+    def run_batch(self, images: List[Any], prompt: str):
+        if not images: return []
 
         # 1. Carregamos as imagens do disco
-        images = [Image.open(img_path).convert("RGB") for img_path in valid_image_paths]
+        pil_images = []
+        for img_data in images:
+            if isinstance(img_data, Image.Image):
+                pil_images.append(img_data.convert("RGB"))
+            else:
+                pil_images.append(self.decode_image(img_data))
         
         # 2. Criamos uma lista com o MESMO prompt repetido para cada imagem
-        prompts = [prompt_text] * len(images)
+        prompts = [prompt] * len(pil_images)
 
         results = []
         with torch.no_grad():
             # 3. O Moondream2 faz toda a mágica do batching de tensores por debaixo dos panos!
-            # Muito mais seguro que concatenar matrizes na mão.
             answers = self.vlm.batch_answer(
-                images=images,
+                images=pil_images,
                 prompts=prompts,
                 tokenizer=self.tokenizer
             )
@@ -78,6 +97,16 @@ class MoondreamVLM:
             results = [ans.strip() for ans in answers]
             
         return results
+
+    def decode_image(self, image_data):
+        import base64
+        import io
+        if isinstance(image_data, str):
+            if image_data.startswith("data:image"):
+                image_data = image_data.split(",")[1]
+            img_bytes = base64.b64decode(image_data)
+            return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        return Image.open(io.BytesIO(image_data)).convert("RGB")
 
     def unload(self):
         if self.vlm:

@@ -86,10 +86,13 @@ class Eyes:
             return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
 
         # Generalize extraction for local models
-        image_data = payload.get("image")
+        images_data = payload.get("images", [])
+        if not images_data and payload.get("image"):
+            images_data = [payload.get("image")]
+            
         prompt = payload.get("prompt", "")
         
-        if not image_data:
+        if not images_data:
             messages = payload.get("messages", [])
             if messages:
                 last_msg = messages[-1]
@@ -100,39 +103,64 @@ class Eyes:
                         if part.get("type") == "image_url":
                             url = part["image_url"]["url"]
                             if url.startswith("data:"):
-                                image_data = url.split(",")[1]
+                                images_data.append(url.split(",")[1])
                             else:
-                                image_data = url
+                                images_data.append(url)
                         elif part.get("type") == "text":
                             prompt = part.get("text", prompt)
             
-            if image_data:
-                payload["image"] = image_data
+            if images_data:
+                payload["images"] = images_data
             if prompt:
                 payload["prompt"] = prompt
 
         if isinstance(self._strategy, Emotion):
-            image_data = payload.get("image")
-            if not image_data:
+            if not images_data:
                 raise ValueError("Eyes: No image data for emotion analysis")
             
-            img = self.decode_image(image_data)
+            results = []
+            for img_data in images_data:
+                img = self.decode_image(img_data)
+                results.append(self._strategy.run(img))
             
-            return self._strategy.run(img)
+            return results if len(images_data) > 1 else results[0]
 
         elif isinstance(self._strategy, FastVLM):
+            if len(images_data) > 1:
+                return self._strategy.run_batch(images_data, prompt)
+            return self._strategy.run(payload)
+
+        elif isinstance(self._strategy, MoondreamVLM):
+            if len(images_data) > 1:
+                return self._strategy.run_batch(images_data, prompt)
             return self._strategy.run(payload)
 
         elif isinstance(self._strategy, GGUF):
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
+            # GGUF doesn't support batching natively in this implementation yet, 
+            # so we run it one by one if multiple images provided
+            if len(images_data) > 1:
+                results = []
+                for img_data in images_data:
+                    single_msg = [{
+                        "role": "user",
+                        "content": [
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data}" if not img_data.startswith("http") else img_data}},
+                            {"type": "text", "text": prompt}
+                        ]
+                    }]
+                    results.append(await self._strategy.run_chat(single_msg, stream=False))
+                return results
+            
             return self._strategy.run_chat(messages, stream=stream, **payload)
 
         elif isinstance(self._strategy, ONNXTagger):
-            if not image_data:
+            if not images_data:
                 raise ValueError("Eyes: No image data for tagger analysis")
             
-            return self._strategy.tag(self.decode_image(image_data))
+            results = [self._strategy.tag(self.decode_image(img_data)) for img_data in images_data]
+            return results if len(images_data) > 1 else results[0]
 
     def describe_person_faces(self, image: Image.Image) -> str:
         """Decoupled logic to describe faces using VLM without saving temp files."""

@@ -63,6 +63,7 @@ class Brain:
             mcp_option = config.get("mcp_option", "emulated")
 
         enable_internal_mcp = headers.get("x-enable-internal-mcp", "0") == "1"
+        tools_whitelist = payload.get("tools_whitelist")
         mcp_handler = None
         
         if enable_internal_mcp:
@@ -76,7 +77,7 @@ class Brain:
                 mcp_handler = external_mcp_manager
             
         if mcp_handler:
-            mcp_handler.inject_tools(payload)
+            mcp_handler.inject_tools(payload, tools_whitelist)
             
             if mcp_option == "emulated":
                 payload.pop("tools", None)

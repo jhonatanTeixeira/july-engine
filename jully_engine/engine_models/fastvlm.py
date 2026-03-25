@@ -1,6 +1,7 @@
 import logging
 from PIL import Image
 import gc
+from typing import Any, Dict, List, Optional
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
@@ -64,13 +65,34 @@ class FastVLM:
             logger.error(f"Falha ao carregar o VLM no backend {self.backend}: {e}")
             raise
 
-    def create_batch_completion(self, valid_image_paths: list, prompt_text: str):
-        batch_len = len(valid_image_paths)
+    def run(self, payload: Dict[str, Any]):
+        image_data = payload.get("image")
+        prompt = payload.get("prompt", "Describe this image.")
         
-        if batch_len == 0: 
-            return []
+        if not image_data:
+            return ""
 
-        chat = [{"role": "user", "content": f"<image>\n{prompt_text}"}]
+        # Se for uma lista, redireciona para batch
+        if isinstance(image_data, list):
+            return self.run_batch(image_data, prompt)
+
+        img = self.decode_image(image_data)
+        results = self.run_batch([img], prompt)
+        return results[0] if results else ""
+
+    def run_batch(self, images: List[Any], prompt: str):
+        batch_len = len(images)
+        if batch_len == 0: return []
+
+        # Preparar imagens (converter base64 para PIL se necessário)
+        pil_images = []
+        for img_data in images:
+            if isinstance(img_data, Image.Image):
+                pil_images.append(img_data.convert("RGB"))
+            else:
+                pil_images.append(self.decode_image(img_data))
+
+        chat = [{"role": "user", "content": f"<image>\n{prompt}"}]
         rendered = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
         pre, post = rendered.split("<image>", 1)
 
@@ -85,13 +107,10 @@ class FastVLM:
         attention_mask = torch.ones_like(input_ids, device=self.vlm.device)
 
         px_list = []
-
-        for img_path in valid_image_paths:
-            img = Image.open(img_path).convert("RGB")
+        for img in pil_images:
             px = self.vlm.get_vision_tower().image_processor(images=img, return_tensors="pt")["pixel_values"]
             px_list.append(px)
         
-        # O self.vlm.dtype garante que se for CPU vai em Float32, e GPU em Float16
         batched_px = torch.cat(px_list, dim=0).to(self.vlm.device, dtype=self.vlm.dtype)
 
         with torch.no_grad():
@@ -104,13 +123,22 @@ class FastVLM:
             )
 
         results = []
-        
         for i in range(batch_len):
             full_text = self.tokenizer.decode(out[i], skip_special_tokens=True)
             clean_content = full_text.split("ASSISTANT:")[-1] if "ASSISTANT:" in full_text else full_text
             results.append(clean_content.strip())
             
         return results
+
+    def decode_image(self, image_data):
+        import base64
+        import io
+        if isinstance(image_data, str):
+            if image_data.startswith("data:image"):
+                image_data = image_data.split(",")[1]
+            img_bytes = base64.b64decode(image_data)
+            return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        return Image.open(io.BytesIO(image_data)).convert("RGB")
 
     def unload(self):
         """Limpa a memória RAM e a VRAM ativamente."""

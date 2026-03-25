@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union, List
 
 logger = logging.getLogger("JulyEngine.Models.Emotion")
 
@@ -25,10 +25,16 @@ class Emotion:
                 logger.error(f"Emotion: Failed to load: {e}")
                 raise e
 
-    def run(self, image: Image.Image) -> str:
+    def run(self, image: Union[Image.Image, List[Image.Image]]) -> Union[str, List[str]]:
         if self.session is None:
             self.load()
 
+        if isinstance(image, list):
+            return [self._run_single(img) for img in image]
+        
+        return self._run_single(image)
+
+    def _run_single(self, image: Image.Image) -> str:
         img_rgb = np.array(image.convert('RGB'))
         input_data = self.face_detector.detect_faces(img_rgb)
 
