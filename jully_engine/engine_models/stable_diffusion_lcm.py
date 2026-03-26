@@ -91,6 +91,9 @@ class LCMFaceIDPipeline:
         use_cpu_offload: bool = False,
         use_sequential_offload: bool = False,
         ip_adapter_scale: float = 1.0,
+        use_face_id = True,
+        use_vae_slicing = False,
+        use_vae_tiling = False,
     ):
         self.base_model_path    = base_model_path  or self.DEFAULT_BASE_MODEL
         self.ip_adapter_path    = ip_adapter_path  or self.DEFAULT_IP_ADAPTER
@@ -105,6 +108,9 @@ class LCMFaceIDPipeline:
         self.pipe     = None
         self.ip_model = None
         self._loaded  = False
+        self.use_face_id = use_face_id,
+        self.use_vae_slicing = use_vae_slicing,
+        self.use_vae_tiling = use_vae_tiling,
 
     def _resolve_image_encoder(self) -> str:
         local = Path(self.DEFAULT_IMAGE_ENCODER)
@@ -131,11 +137,12 @@ class LCMFaceIDPipeline:
         print(">> Aplicando otimizações de VRAM...")
         self._apply_memory_optimizations()
 
-        print(">> Carregando IP-Adapter FaceID Plus...")
-        self._load_ip_adapter()
+        if self.use_face_id:
+            print(">> Carregando IP-Adapter FaceID Plus...")
+            self._load_ip_adapter()
 
-        print(">> Inicializando InsightFace...")
-        self._load_face_analysis()
+            print(">> Inicializando InsightFace...")
+            self._load_face_analysis()
 
         self._loaded = True
         print_vram("Após carregamento completo")
@@ -167,10 +174,14 @@ class LCMFaceIDPipeline:
             except Exception as e:
                 print(f"  [aviso] xformers indisponível: {e}")
 
-        # self.pipe.enable_vae_slicing()
-        # print("  [ok] VAE slicing ativado")
-        # self.pipe.enable_vae_tiling()
-        # print("  [ok] VAE tiling ativado")
+        if self.use_vae_slicing:
+            self.pipe.enable_vae_slicing()
+            print("  [ok] VAE slicing ativado")
+
+        if self.use_vae_tiling:
+            self.pipe.enable_vae_tiling()
+            print("  [ok] VAE tiling ativado")
+
         self.pipe.enable_attention_slicing(slice_size="auto")
         print("  [ok] Attention slicing ativado")
 
@@ -285,8 +296,26 @@ class LCMFaceIDPipeline:
 
         scale = ip_adapter_scale if ip_adapter_scale is not None else self.ip_adapter_scale
         print_vram("Antes da inferência")
+        
+        if not self.use_face_id:
+            generator = None
 
-        if face_image is not None:
+            if seed is not None:
+                generator = torch.Generator(device=self.device).manual_seed(seed)
+
+            result = self.pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                width=width,
+                height=height,
+                generator=generator,
+                num_images_per_prompt=num_images_per_prompt,
+            )
+            images = result.images
+
+        elif face_image is not None:
             # ---- COM face ----
             face_pil         = self._preprocess_face_image(face_image, crop=crop_face)
             faceid_embeds    = self.extract_face_embeds(face_pil)
@@ -307,36 +336,25 @@ class LCMFaceIDPipeline:
             )
 
         else:
-            # ---- SEM face ----
-            # Desconecta temporariamente o encoder_hid_proj que o wrapper
-            # injetou no UNet para poder chamar o pipe base sem embeds
-            generator = None
-            if seed is not None:
-                generator = torch.Generator(device=self.device).manual_seed(seed)
 
-            unet = self.pipe.unet
-            orig_proj      = unet.encoder_hid_proj
-            orig_hid_type  = unet.config.encoder_hid_dim_type
+            dummy_pil    = Image.new('RGB', (512, 512))
+            dummy_embeds = torch.zeros((1, 512), dtype=self.dtype, device=self.device)
 
-            try:
-                unet.encoder_hid_proj          = None
-                unet.config.encoder_hid_dim_type = None
-
-                result = self.pipe(
-                    prompt=prompt,
-                    negative_prompt=negative_prompt,
-                    num_inference_steps=num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    width=width,
-                    height=height,
-                    generator=generator,
-                    num_images_per_prompt=num_images_per_prompt,
-                )
-                images = result.images
-            finally:
-                unet.encoder_hid_proj          = orig_proj
-                unet.config.encoder_hid_dim_type = orig_hid_type
-
+            images = self.ip_model.generate(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                face_image=dummy_pil,        # CLIP processa o nada
+                faceid_embeds=dummy_embeds,  # Tensor zerado (sem rosto)
+                shortcut=shortcut,
+                s_scale=0.0,                 # A MAGIA: Multiplica o IP-Adapter por ZERO
+                num_samples=num_images_per_prompt,
+                width=width,
+                height=height,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                seed=seed if seed is not None else -1,
+            )
+                            
         print_vram("Após inferência")
         free_vram()
         return images
@@ -401,16 +419,16 @@ if __name__ == "__main__":
     # -----------------------------------------------------------------------
     # Teste SEM face
     # -----------------------------------------------------------------------
-    # images = pipeline(
-    #     prompt="1girl, portrait, beautiful, cinematic lighting, detailed skin",
-    #     negative_prompt="blurry, deformed, ugly, bad anatomy, lowres",
-    #     num_inference_steps=10,
-    #     guidance_scale=1.5,
-    #     width=512,
-    #     height=512,
-    #     seed=42,
-    # )
-    # images[0].save("output_no_face.png")
-    # print("Salvo: output_no_face.png")
+    images = pipeline(
+        prompt="1girl, portrait, beautiful, cinematic lighting, detailed skin",
+        negative_prompt="blurry, deformed, ugly, bad anatomy, lowres",
+        num_inference_steps=6,
+        guidance_scale=1.5,
+        width=512,
+        height=512,
+        # seed=42,
+    )
+    images[0].save("output_no_face.png")
+    print("Salvo: output_no_face.png")
 
     pipeline.unload()

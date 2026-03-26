@@ -143,7 +143,7 @@ class Presence:
         elif isinstance(self._strategy, LCMFaceIDPipeline):
             images = self._strategy(
                 prompt=payload.get("prompt", ""),
-                num_inference_steps=payload.get("steps", 10),
+                num_inference_steps=payload.get("steps", 6),
                 guidance_scale=payload.get("guidance_scale", 1.5)
             )
             if images:
