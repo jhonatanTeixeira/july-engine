@@ -400,6 +400,12 @@ class Bridge:
                 # O chunk já vem limpo e normalizado pelo process_openai_chat!
                 if 'choices' in openai_chunk and len(openai_chunk['choices']) > 0:
                     delta = openai_chunk['choices'][0].get('delta', {})
+                    
+                    # 1. Raciocínio (Reasoning)
+                    if 'reasoning_content' in delta and delta['reasoning_content']:
+                        yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['reasoning_content']}})}\n\n"
+                    
+                    # 2. Conteúdo Final
                     if 'content' in delta and delta['content']:
                         yield f"event: content_block_delta\ndata: {json.dumps({'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': delta['content']}})}\n\n"
                 

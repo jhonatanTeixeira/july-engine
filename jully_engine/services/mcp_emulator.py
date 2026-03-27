@@ -65,7 +65,7 @@ class XMLStreamParser:
             if '<' in buffer and re.match(r'(.*?)?<$|<\w+$|<\w+$', buffer) and not tag_opened:
                 continue
             
-            if (match := re.search('<(\w+)>', buffer)) and not tag_opened:
+            if (match := re.search(r'<(\w+)>', buffer)) and not tag_opened:
                 tag_opened = match.group(1)
                 before, after = buffer.split(f'<{tag_opened}>')
                 
@@ -77,7 +77,7 @@ class XMLStreamParser:
                 yield Chunk.from_str(buffer)
                 buffer = ''
             
-            if tag_opened and (match := re.search(f'<\/{tag_opened}>', buffer)):
+            if tag_opened and (match := re.search(fr'<\/{tag_opened}>', buffer)):
                 split = buffer.split(match.group(0), maxsplit=1)
                 arguments = split[0]
                 
@@ -234,6 +234,9 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             # ==============================
             message = response["choices"][0].get("message", {})
             raw_content = message.get("content") or ""
+            
+            # Unescape HTML entities (e.g., &lt; -> <)
+            import html
             raw_content = html.unescape(raw_content)
             
             tools_to_execute = []

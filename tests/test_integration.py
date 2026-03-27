@@ -45,7 +45,9 @@ async def client():
     
     text_presets = [
         {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
-        {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu"}
+        {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu"},
+        {"alias": "qwen3-gpu-reasoning", "model": "qwen3-0.6b-reasoning", "backend": "gpu"},
+        {"alias": "qwen3-gpu-mcp", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option": "internal"}
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
@@ -64,6 +66,23 @@ async def client():
             "quantization": "F16",
             "num_layers": -1,
             "force_reasoning": None,
+            "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
+            "mmproj_path": None
+    })
+    
+    backend.set_model("qwen3-0.6b-reasoning", {
+            "model_alias": "Qwen3-0.6B-FP16-Reasoning",
+            "model_type": "text",
+            "model_id": "appleyu/Qwen3-0.6B-FP16-gguf",
+            "filename": "Qwen3-0.6B-FP16.gguf",
+            "mmproj_id": None,
+            "mmproj_filename": None,
+            "template": "chatml-function-calling",
+            "context_window": 4096,
+            "num_params": 0.6,
+            "quantization": "F16",
+            "num_layers": -1,
+            "force_reasoning": True,
             "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
             "mmproj_path": None
     })
@@ -183,3 +202,151 @@ async def test_other_endpoints(client):
     search_payload = {"query": "test search"}
     resp = await client.post("/search/web", json=search_payload)
     assert resp.status_code in [200, 500, 501]
+
+# --- OpenAI Streaming with Reasoning ---
+@pytest.mark.anyio
+async def test_openai_streaming_reasoning(client):
+    print("\n[Test] Running OpenAI Streaming Reasoning Integration...")
+    payload = {
+        "model": "qwen3-gpu-reasoning",
+        "messages": [
+            {"role": "user", "content": "olá, tudo bem?"}
+        ],
+        "stream": True
+    }
+    headers = {"x-backend": "gpu"}
+    
+    reasoning_found = False
+    content_found = False
+    
+    async with client.stream("POST", "/v1/openai/chat/completions", json=payload, headers=headers) as response:
+        assert response.status_code == 200
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:].strip()
+                if data_str == "[DONE]":
+                    break
+                
+                chunk = json.loads(data_str)
+                delta = chunk["choices"][0].get("delta", {})
+                
+                if "reasoning_content" in delta:
+                    reasoning_found = True
+                    print(f"R: {delta['reasoning_content']}", end="", flush=True)
+                
+                if "content" in delta:
+                    content_found = True
+                    print(delta["content"], end="", flush=True)
+    
+    print("\n")
+    assert reasoning_found, "Reasoning content was not streamed"
+    assert content_found, "Main content was not streamed"
+
+# --- Anthropic Streaming with Reasoning ---
+@pytest.mark.anyio
+async def test_anthropic_streaming_reasoning(client):
+    print("\n[Test] Running Anthropic Streaming Reasoning Integration...")
+    payload = {
+        "model": "qwen3-gpu-reasoning",
+        "messages": [
+            {"role": "user", "content": "olá, tudo bem?"}
+        ],
+        "max_tokens": 100,
+        "stream": True
+    }
+    headers = {"x-backend": "gpu"}
+    
+    # In Anthropic Bridge, we yield both reasoning and content as text_delta
+    # in content_block_delta events.
+    deltas_found = 0
+    
+    async with client.stream("POST", "/v1/anthropic/messages", json=payload, headers=headers) as response:
+        assert response.status_code == 200
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:].strip()
+                try:
+                    chunk = json.loads(data_str)
+                    if chunk.get("type") == "content_block_delta":
+                        text = chunk.get("delta", {}).get("text", "")
+                        if text:
+                            deltas_found += 1
+                            print(text, end="", flush=True)
+                except json.JSONDecodeError:
+                    continue
+    
+    print("\n")
+    assert deltas_found > 0, "No content deltas were streamed in Anthropic mode"
+
+# --- Internal MCP Image Generation (Non-Stream and Stream) ---
+@pytest.mark.anyio
+async def test_internal_mcp_image_generation(client):
+    print("\n[Test] Running Internal MCP Image Generation Integration...")
+    
+    # 1. Non-Stream Mode
+    print("Testing Non-Stream MCP...")
+    payload_sync = {
+        "model": "qwen3-gpu-mcp",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
+            {"role": "user", "content": "Gere uma imagem de um gato de óculos"}
+        ],
+        "stream": False
+    }
+    headers = {
+        "x-backend": "gpu",
+        "x-enable-internal-mcp": "1"
+    }
+    
+    # Force the model to use the tool in its response (it's internal tool calling)
+    # The internal MCP will inject the tool definition.
+    
+    response = await client.post("/v1/openai/chat/completions", json=payload_sync, headers=headers)
+    assert response.status_code == 200
+    res_json = response.json()
+    
+    # The InternalMCP returns the image as a b64 string in the content if successful
+    content = res_json["choices"][0]["message"]["content"]
+    
+    # Verify if it contains a base64 image (or is a list containing image object)
+    image_found = False
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and (part.get("type") == "image_url" or "image_url" in part):
+                image_found = True
+                break
+    elif isinstance(content, str):
+        if "data:image/png;base64," in content or "data:image/jpeg;base64," in content:
+            image_found = True
+        
+    assert image_found, f"Image was not generated in non-stream MCP mode. Content received: {content}"
+    print("Non-Stream MCP Image Generation: OK")
+
+    # 2. Stream Mode
+    print("Testing Stream MCP...")
+    payload_stream = {
+        "model": "qwen3-gpu-mcp",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
+            {"role": "user", "content": "Gere uma imagem de um gato de óculos"}
+        ],
+        "stream": True
+    }
+    
+    stream_image_found = False
+    async with client.stream("POST", "/v1/openai/chat/completions", json=payload_stream, headers=headers) as response:
+        assert response.status_code == 200
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data_str = line[6:].strip()
+                if data_str == "[DONE]": break
+                
+                chunk = json.loads(data_str)
+                delta = chunk["choices"][0].get("delta", {})
+                
+                if delta.get("type") == "image_url" or "image_url" in delta:
+                    stream_image_found = True
+                    print("[Image Chunk Found]", flush=True)
+    
+    assert stream_image_found, "Image was not generated in stream MCP mode"
+    print("Stream MCP Image Generation: OK")
