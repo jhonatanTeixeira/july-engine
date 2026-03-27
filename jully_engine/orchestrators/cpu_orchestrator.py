@@ -71,19 +71,19 @@ class CpuOrchestrator:
             logger.info(f"CpuOrchestrator: Executing {task_type} with tag {model_tag}")
             if task_type == "text_chat":
                 brain = model_loader.get_brain(backend, model_tag)
-                return asyncio.run(brain.chat(payload))
+                return brain.chat(payload)
             elif task_type == "vision_chat":
                 eyes = model_loader.get_eyes(backend, model_tag)
-                return asyncio.run(eyes.analyze(payload))
+                return eyes.analyze(payload)
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
-                return asyncio.run(mouth.speak(payload))
+                return mouth.speak(payload)
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
-                return asyncio.run(ears.listen(payload.get('audio'), payload.get('language'), payload))
+                return ears.listen(payload.get('audio'), payload.get('language'), payload)
             elif task_type == "embedding":
                 memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.embed(payload))
+                return memory.embed(payload)
             else:
                 raise ValueError(f"Unknown CPU task type: {task_type}")
         except Exception as e:

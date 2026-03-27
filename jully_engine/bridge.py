@@ -53,27 +53,37 @@ class Bridge:
             backend_db = get_backend()
             
             config = None
+            model_alias = payload.get("model")
             
-            if task_key in ["text_chat", "vision_chat", "embedding"]:
-                preset_alias = payload.get("model")
+            # 1. Tenta buscar em presets de texto/visão/embedding
+            if task_key in ["text_chat"]:
                 text_presets = backend_db.get_setting("TEXT_PRESETS") or []
-                config = next((p for p in text_presets if p.get("alias") == preset_alias), None)
+                config = next((p for p in text_presets if p.get("alias") == model_alias), None)
             
-                if not config and text_presets:
+                if not config and text_presets and task_key == "text_chat":
                     config = text_presets[0]
-            else:
+            
+            # 2. Se não achou em presets, ou se for tarefa específica, busca mapeamento direto
+            if not config:
                 mapping = {
                     "tts": "TTS",
                     "stt": "STT",
+                    "vision_chat": "VISION",
+                    "embeddings": "EMBEDDINGS",
                     "pix2pix": "IMAGE_EDIT",
                     "image_generation": "IMAGE_CREATE",
                     "search_web": "WEB_SEARCH",
                     "search_code": "REPOSITORY_SEARCH"
                 }
+                
                 setting_key = mapping.get(task_key)
-            
+                
                 if setting_key:
                     config = backend_db.get_setting(setting_key)
+
+            # 3. Fallback para modelos de visão conhecidos se ainda não tiver config
+            if not config and task_key == "vision_chat" and model_alias in ["fastvlm", "moondream"]:
+                headers.setdefault("x-backend", "gpu")
 
             if config:
                 if "x-backend" not in headers and "backend" in config:
@@ -112,8 +122,14 @@ class Bridge:
 
     async def _await_orch_task(self, future_or_coro):
         if asyncio.iscoroutine(future_or_coro):
-            return await future_or_coro
-        return await asyncio.wrap_future(future_or_coro)
+            res = await future_or_coro
+        else:
+            res = await asyncio.wrap_future(future_or_coro)
+        
+        # Se o que voltou da thread/future for outra coroutine, aguarda ela aqui no loop principal
+        if asyncio.iscoroutine(res):
+            return await res
+        return res
 
     def _normalize_object(self, obj: Any) -> Any:
         """
@@ -165,6 +181,7 @@ class Bridge:
             for item in last_message["content"]:
                 if isinstance(item, dict):
                     item_type = item.get("type")
+                    
                     if item_type == "image_url":
                         image_items.append(item)
                     elif item_type in ["audio_url", "input_audio"]:
@@ -196,8 +213,9 @@ class Bridge:
                     vision_payload = {
                         "images": images_to_analyze, # Nota: mudamos de 'image' para 'images'
                         "prompt": "Describe this image in detail.",
-                        "model": "default"
                     }
+                    
+                    self._enrich_headers_and_payload('vision_chat', vision_payload, headers)
                     
                     # O orquestrador deve lidar com a lista de imagens
                     vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
@@ -335,10 +353,9 @@ class Bridge:
 
         # 2. PROCESSAMENTO: Chama o tubo universal da OpenAI
         # Isso já vai lidar com análise inline de imagem, stt, chamadas ao orquestrador e normalização!
+        stream = openai_payload.get("stream", False)
         openai_response = await self.process_openai_chat(openai_payload, headers)
         
-        stream = openai_payload["stream"]
-
         # 3. ADAPTER OUT (Sync)
         if not stream:
             # Pega o dicionário validado do OpenAI e transforma no formato Claude

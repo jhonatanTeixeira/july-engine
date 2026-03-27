@@ -58,3 +58,12 @@ class Ears:
             return self._strategy.run(audio_data, language=language)
             
         return None
+
+    def unload(self):
+        """Libera os recursos da estratégia"""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload()
+            logger.info(f"Ears: Strategy {self.model_tag} unloaded.")
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Ears: Strategy {self.model_tag} cleared.")

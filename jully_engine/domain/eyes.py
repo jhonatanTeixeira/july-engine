@@ -38,12 +38,11 @@ class Eyes:
         elif self.model_tag == "tagger" and self.backend == 'cpu':
             return ONNXTagger()
         
-        from ..routers.models import load_models_db
-        db = load_models_db()
-        is_gguf = self.model_tag.endswith(".gguf") or self.model_tag in db
+        from ..persistence.persistence import get_backend
+        model = get_backend().get_model(self.model_tag)
 
-        if self.backend in ["gpu", "cpu"] and is_gguf:
-            return GGUF(backend=self.backend, model_alias=self.model_tag)
+        if self.backend in ["gpu", "cpu"]:
+            return GGUF(backend=self.backend, model=model)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
     
@@ -216,3 +215,12 @@ class Eyes:
 
         # Se houver múltiplos rostos na foto, concatenamos com um separador elegante
         return " | ".join(descriptions) if descriptions else ""
+
+    def unload(self):
+        """Libera os recursos da estratégia (VLM, GGUF, etc)."""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload(self.model_tag)
+            logger.info(f"Eyes: Strategy {self.model_tag} unloaded.")
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Eyes: Strategy {self.model_tag} cleared.")

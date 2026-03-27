@@ -105,6 +105,8 @@ class GGUF:
 
         # O Truque do Force Reasoning: A IA começa já pensando
         if force_reasoning:
+            # Verifica se já não existe uma mensagem do sistema ou se o modelo já suporta nativamente
+            # Para o nosso caso, apenas concatenamos se a última não for assistente começando com think
             messages.append({"role": "assistant", "content": "<think>\n"})
 
         response = self.model.create_chat_completion(
@@ -119,38 +121,40 @@ class GGUF:
                 buffer = ''
                 
                 for chunk in response:
-                    raw_text = chunk["choices"][0].get("delta", {}).get("content", "")
+                    delta = chunk["choices"][0].get("delta", {})
+                    raw_text = delta.get("content", "")
                     
                     if not raw_text:
                         yield chunk
                         continue
                     
-                    buffer += raw_text
+                    # Lógica simplificada de detecção de tags
+                    if "<think>" in raw_text:
+                        in_reasoning = True
+                        raw_text = raw_text.replace("<think>", "")
                     
-                    if re.search('<\/?(\w+)?$', buffer):
-                        continue
-                    
-                    if '<think>' in buffer:
-                        in_reasoning=True
-                        raw_text = buffer.replace('<think>', '')
-                        buffer = ''
-                    
-                    if '</think>' in buffer:
-                        in_reasoning=False
-                        raw_text = raw_text.rsplit('>')[1]
-                        buffer = ''
+                    if "</think>" in raw_text:
+                        in_reasoning = False
+                        # O que vem antes do fechamento é pensamento, o que vem depois é conteúdo
+                        parts = raw_text.split("</think>")
+                        
+                        # Emite a parte do pensamento
+                        if parts[0]:
+                            mod_chunk = dict(chunk)
+                            mod_chunk["choices"][0]["delta"] = {"reasoning_content": parts[0]}
+                            yield mod_chunk
+                        
+                        # Continua com a parte do conteúdo
+                        raw_text = parts[1]
+                        if not raw_text: continue
 
                     mod_chunk = dict(chunk)
-                    
                     if in_reasoning:
                         mod_chunk["choices"][0]["delta"] = {"reasoning_content": raw_text}
                     else:
                         mod_chunk["choices"][0]["delta"] = {"content": raw_text}
                         
                     yield mod_chunk
-                    
-                    buffer = ''
-                    
                     await asyncio.sleep(0)
             return stream_adapter()
             
@@ -158,28 +162,42 @@ class GGUF:
             # MODO NÃO-STREAM: Limpa a tag e separa tudo na raiz do JSON
             raw_content = response["choices"][0]["message"].get("content", "")
             
-            # Remove a tag <think> do final que o modelo pode ter esquecido de fechar
-            if force_reasoning and not "</think>" in raw_content:
-                raw_content += "</think>"
-                
-            # Se forçou, já sabemos que começa com o pensamento (o parser C++ do llama mescla)
-            # Mas vamos usar Regex para capturar tudo de forma segura:
-            pattern = re.compile(r"<(?:think|thought|reasoning)>(.*?)</(?:think|thought|reasoning)>", re.DOTALL)
-            match = pattern.search(raw_content)
+            # Parser robusto para tags <think> mesmo não fechadas
+            think_pattern = re.compile(r"<think>(.*?)(?:</think>|$)", re.DOTALL)
+            match = think_pattern.search(raw_content)
             
             if match:
                 reasoning = match.group(1).strip()
-                content = (raw_content[:match.start()] + raw_content[match.end():]).strip()
+                # Remove o bloco de pensamento do conteúdo principal
+                content = raw_content.replace(match.group(0), "").strip()
+                
+                # Se sobrar uma tag de fechamento solta (devido ao replace parcial do group 0)
+                content = content.replace("</think>", "").strip()
+                
                 response["choices"][0]["message"]["reasoning_content"] = reasoning
                 response["choices"][0]["message"]["content"] = content if content else None
             
             return response
 
     def unload(self, model_name: str):
-        self.model = None
+        if self.model:
+            # Deletar explicitamente para disparar o __del__ do C++
+            del self.model
+            self.model = None
+            
         import gc
         gc.collect()
-        logger.info(f"GGUF: Unloaded {model_name}")
+        
+        # Se estivermos usando CUDA, tenta esvaziar o cache via torch se disponível
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except ImportError:
+            pass
+            
+        logger.info(f"GGUF: Unloaded {model_name} and cleared CUDA cache")
 
     def is_loaded(self):
         return self.model is not None

@@ -1,6 +1,7 @@
 import logging
 import base64
 import io
+import os
 from PIL import Image
 from typing import Any, Dict, Optional, List
 
@@ -27,7 +28,7 @@ class Presence:
         elif self.model_tag == "pix2pix":
             return Pix2Pix(backend=self.backend)
         elif self.model_tag == "lcm":
-            return LCMFaceIDPipeline()
+            return LCMFaceIDPipeline(use_face_id=False)
         elif self.model_tag == "video":
             return LCMVideoPipeline()
         else:
@@ -175,3 +176,12 @@ class Presence:
                 return base64.b64encode(gif_data).decode()
         
         return None
+
+    def unload(self):
+        """Libera os recursos da estratégia (SD, Pix2Pix, etc)."""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload()
+            logger.info(f"Presence: Strategy {self.model_tag} unloaded.")
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Presence: Strategy {self.model_tag} cleared.")

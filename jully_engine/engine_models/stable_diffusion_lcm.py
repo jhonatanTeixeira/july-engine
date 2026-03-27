@@ -23,6 +23,8 @@ ARQUIVOS em models/:
         config.json
         model.safetensors
 """
+from diffusers.utils import logging as diffusers_logging
+diffusers_logging.disable_progress_bar()
 
 import gc
 import logging
@@ -95,6 +97,10 @@ class LCMFaceIDPipeline:
         use_vae_slicing = False,
         use_vae_tiling = False,
     ):
+        self.use_face_id = use_face_id
+        self.use_vae_slicing = use_vae_slicing
+        self.use_vae_tiling = use_vae_tiling
+
         self.base_model_path    = base_model_path  or self.DEFAULT_BASE_MODEL
         self.ip_adapter_path    = ip_adapter_path  or self.DEFAULT_IP_ADAPTER
         self.image_encoder_path = image_encoder_path or self._resolve_image_encoder()
@@ -108,9 +114,6 @@ class LCMFaceIDPipeline:
         self.pipe     = None
         self.ip_model = None
         self._loaded  = False
-        self.use_face_id = use_face_id,
-        self.use_vae_slicing = use_vae_slicing,
-        self.use_vae_tiling = use_vae_tiling,
 
     def _resolve_image_encoder(self) -> str:
         local = Path(self.DEFAULT_IMAGE_ENCODER)

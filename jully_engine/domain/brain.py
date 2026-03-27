@@ -107,3 +107,12 @@ class Brain:
             return await mcp_handler.orchestrate(response, self, original_payload)
                 
         return response
+
+    def unload(self):
+        """Libera os recursos da estratégia (GGUF, etc)."""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload(self.model_tag)
+            logger.info(f"Brain: Strategy {self.model_tag} unloaded.")
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Brain: Strategy {self.model_tag} cleared.")

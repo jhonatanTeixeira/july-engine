@@ -78,3 +78,12 @@ class Mouth:
             return await self._strategy.run(text, voice_id, language)
 
         return None
+
+    def unload(self):
+        """Libera os recursos da estratégia (XTTS2, Piper, etc)."""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload()
+            logger.info(f"Mouth: Strategy {self.model_tag} unloaded.")
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Mouth: Strategy {self.model_tag} cleared.")

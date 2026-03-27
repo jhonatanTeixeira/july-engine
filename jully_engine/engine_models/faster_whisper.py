@@ -1,5 +1,8 @@
 import os
 import logging
+
+# os.environ["CT2_CUDA_ALLOCATOR"] = "cudaMalloc"
+
 import torch
 from typing import Any, Dict, Optional
 from faster_whisper import WhisperModel
@@ -24,6 +27,10 @@ class FasterWhisper:
             except Exception as e:
                 logger.error(f"FasterWhisper: Failed to load: {e}")
                 raise e
+            
+    def unload(self):
+        del self.model
+        self.model = None
 
     def run(self, audio_data: bytes, language: Optional[str] = None) -> str:
         if self.model is None:
