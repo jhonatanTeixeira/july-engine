@@ -359,11 +359,14 @@ class Bridge:
         # 3. ADAPTER OUT (Sync)
         if not stream:
             # Pega o dicionário validado do OpenAI e transforma no formato Claude
-            content_text = openai_response["choices"][0].get("message", {}).get("content", "")
+            message = openai_response["choices"][0].get("message", {})
+            content_text = message.get("content") or ""
+            reasoning_text = message.get("reasoning_content") or ""
+            
             usage = openai_response.get("usage", {})
             interaction_id = openai_response.get("id", f"msg_{uuid.uuid4().hex[:10]}")
             
-            return {
+            res = {
                 "id": interaction_id,
                 "type": "message",
                 "role": "assistant",
@@ -375,6 +378,11 @@ class Bridge:
                     "output_tokens": usage.get("completion_tokens", 0)
                 }
             }
+            
+            if reasoning_text:
+                res["reasoning_content"] = reasoning_text
+                
+            return res
 
         # 4. ADAPTER OUT (Async - SSE Stream Anthropic)
         async def anthropic_generator():

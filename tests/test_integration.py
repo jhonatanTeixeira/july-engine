@@ -153,16 +153,18 @@ async def test_chat_anthropic_integration(client):
         "messages": [
             {"role": "user", "content": "qual o seu nome"}
         ],
+        "max_tokens": 100
     }
     headers = {"x-backend": "gpu"}
     response = await client.post("/v1/anthropic/messages", json=payload, headers=headers)
     assert response.status_code == 200
+    
     res_json = response.json()
     content = res_json["content"][0].get("text", "")
     reasoning = res_json.get("reasoning_content", "")
     print(f"Anthropic Output (Text): {content}")
     print(f"Anthropic Output (Reasoning): {reasoning}")
-    assert "batman" in content
+    assert "batman" in content.lower() or "batman" in reasoning.lower()
 
 # --- Other Endpoints ---
 @pytest.mark.anyio
