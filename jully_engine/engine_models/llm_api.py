@@ -5,7 +5,6 @@ import litellm
 from litellm import completion, embedding, image_generation, transcription, speech
 
 litellm.drop_params = True
-litellm.set_verbose = True
 
 logger = logging.getLogger("JulyEngine.Models.LLMApi")
 

@@ -54,19 +54,19 @@ class ChatCompletionRequest(BaseModel):
     model_config = {"extra": "allow"}
 
 class EmbeddingRequest(BaseModel):
-    model: Optional[str] = "default"
+    model: Optional[str] = None
     input: Union[str, List[str]]
 
 class SpeechRequest(BaseModel):
-    model: Optional[str] = "default"
+    model: Optional[str] = None
     input: str
-    voice: Optional[str] = "default"
+    voice: Optional[str] = None
 
 class ImageGenerationRequest(BaseModel):
     prompt: str
-    model: Optional[str] = "pix2pix"
+    model: Optional[str] = None
     n: Optional[int] = 1
-    size: Optional[str] = "1024x1024"
+    size: Optional[str] = None
     response_format: Optional[str] = "b64_json"
 
 # --- Response DTOs for Swagger Documentation ---

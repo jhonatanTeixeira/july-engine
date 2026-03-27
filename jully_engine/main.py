@@ -1,5 +1,45 @@
 import os
+import logging
 from dotenv import load_dotenv
+
+# --- CONFIGURAÇÃO DE LOGS GLOBAL (COLORIDO) ---
+class ColorFormatter(logging.Formatter):
+    grey = "\x1b[38;20m"
+    blue = "\x1b[34;20m"
+    yellow = "\x1b[33;20m"
+    red = "\x1b[31;20m"
+    bold_red = "\x1b[31;1m"
+    reset = "\x1b[0m"
+    format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
+
+    FORMATS = {
+        logging.DEBUG: grey + format_str + reset,
+        logging.INFO: blue + format_str + reset,
+        logging.WARNING: yellow + format_str + reset,
+        logging.ERROR: red + format_str + reset,
+        logging.CRITICAL: bold_red + format_str + reset
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
+        return formatter.format(record)
+
+# Configura o logger raiz para o ecossistema JulyEngine
+root_logger = logging.getLogger("JulyEngine")
+root_logger.setLevel(logging.INFO)
+root_logger.propagate = False # Evita duplicidade se o root do sistema também estiver configurado
+
+if not root_logger.handlers:
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(ColorFormatter())
+    root_logger.addHandler(console_handler)
+
+# Silenciar logs barulhentos de bibliotecas externas
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
+# --- FIM CONFIGURAÇÃO DE LOGS ---
 
 env = os.environ['ENV'] if 'ENV' in os.environ else None
 load_dotenv(f'.env.{env}' if env else '.env', verbose=True)

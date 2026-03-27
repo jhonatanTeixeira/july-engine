@@ -43,21 +43,18 @@ class Mouth:
         # For local strategies, unpack payload
         text = payload.get("input", payload.get("text", ""))
 
-        headers = payload.get("headers", {})
+        headers: dict = payload.get("headers", {})
         
         from ..persistence import get_backend
         config = get_backend().get_setting("TTS") or {}
         
-        voice_id = payload.get("voice") or config.get("voice") or "af_heart"
-        language = payload.get("language") or config.get("language") or "a"
+        voice_id = payload.get("voice", None) or config.get('voice', 'af_heart')
+        language = payload.get("language", None) or config.get('language', 'a')
 
         if config:
-            if "x-base-url" not in headers and "base_url" in config:
-                headers["x-base-url"] = config["base_url"]
-            has_auth = "authorization" in headers or "x-api-key" in headers
-            if not has_auth and "api_key" in config and config["api_key"]:
-                headers["x-api-key"] = config["api_key"]
-                headers["authorization"] = f"Bearer {config['api_key']}"
+            headers.setdefault('x-base-url', config.get('base_url', None))
+            headers.setdefault("x-api-key", config.get('api_key', None))
+            headers.setdefault("authorization", f"Bearer {config.get('api_key', None)}")
 
         if isinstance(self._strategy, (LLMApi, Replicate)):
             model = payload.pop("model", self.model_tag)

@@ -28,7 +28,7 @@ class Presence:
         elif self.model_tag == "pix2pix":
             return Pix2Pix(backend=self.backend)
         elif self.model_tag == "lcm":
-            return LCMFaceIDPipeline(use_face_id=False)
+            return LCMFaceIDPipeline(use_face_id=False, use_cpu_offload=True)
         elif self.model_tag == "video":
             return LCMVideoPipeline()
         else:

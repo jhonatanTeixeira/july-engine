@@ -232,33 +232,42 @@ class InternalMCP:
 
             # Roteamento Simples
             if name == "generate_image":
+                prompt = arguments.get("prompt", "")
+                logger.info(f"InternalMCP: Generating image with prompt: '{prompt[:100]}...'")
                 # response = await model_loader.get_presence(backend, model)._strategy.run_image_gen(model, arguments.get("prompt", ""))
-                response = await bridge.process_image_generation({"prompt": arguments.get("prompt")}, {})
+                response = await bridge.process_image_generation({"prompt": prompt}, {})
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 
+                logger.info(f"InternalMCP: Image generated successfully (base64 length: {len(response)})")
                 return (
                     "Image generated",
                     UserToolReponse(response, 'image')
                 )
             
             elif name == "generate_audio":
-                audio_bytes = await bridge.process_tts({"text": arguments.get("text")}, {})
+                text = arguments.get("text", "")
+                logger.info(f"InternalMCP: Generating audio for text: '{text[:100]}...'")
+                audio_bytes = await bridge.process_tts({"text": text}, {})
                 audio = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else ""
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 
+                logger.info(f"InternalMCP: Audio generated successfully (base64 length: {len(audio)})")
                 return (
                     "Audio generated",
                     UserToolReponse(audio, 'audio')
                 )
             
             elif name == "search_web":
-                res = await bridge.process_search_web({"query": arguments.get("query", "")}, {})
+                query = arguments.get("query", "")
+                logger.info(f"InternalMCP: Searching web for: '{query}'")
+                res = await bridge.process_search_web({"query": query}, {})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
+                logger.info(f"InternalMCP: Web search completed (result length: {len(str(res))})")
                 return (
                     res,
                     None

@@ -146,8 +146,14 @@ class McpEmulator:
             
         return "\n".join(prompt_lines)
     
-    def inject_tools(self, payload: Dict):
+    def inject_tools(self, payload: Dict, tools_whitelist: List = []):
         xml_tags = self.xml_tags
+        
+        if tools_whitelist:
+            tools: list = payload.setdefault('tools', [])
+            
+            for tool in tools_whitelist:
+                tools.append(self.indexed_tools[tool])
         
         if 'tools' in payload and payload['tools']:
             xml_tags = self.json_tools_to_xml_prompt(payload['tools'])

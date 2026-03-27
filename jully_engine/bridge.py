@@ -80,17 +80,16 @@ class Bridge:
                 
                 if setting_key:
                     config = backend_db.get_setting(setting_key)
-
+                    
             # 3. Fallback para modelos de visão conhecidos se ainda não tiver config
             if not config and task_key == "vision_chat" and model_alias in ["fastvlm", "moondream"]:
                 headers.setdefault("x-backend", "gpu")
-
+                
             if config:
-                if "x-backend" not in headers and "backend" in config:
-                    headers["x-backend"] = config["backend"]
-
-                if "model" in config and not payload.get("model"):
-                    payload["model"] = config["model"]
+                headers.setdefault("x-backend", config.get('backend', 'gpu'))
+                
+                if not payload.get("model", None):
+                    payload["model"] = config.get('model', 'default')
                     
         except Exception as e:
             logger.warning(f"Failed to enrich backend from persistence: {e}")
@@ -192,15 +191,24 @@ class Bridge:
                                 b64_audio = item.get("input_audio", {}).get("data", "")
                             else:
                                 b64_audio = item.get("audio_url", {}).get("url", "").split(",")[-1]
+                            
+                            logger.info(f"Multimodal: Processing audio input (base64 length: {len(b64_audio)})")
                             import base64
                             audio_bytes = base64.b64decode(b64_audio)
+                            stt_headers = {}
                             stt_payload = {"audio": audio_bytes, "model": "default"}
-                            transcription = await self._await_orch_task(orch.submit_task("stt", stt_payload))
+                            self._enrich_headers_and_payload('stt', stt_payload, stt_headers)
+                            stt_orch = self.get_orchestrator(stt_headers)
+                            payload['headers'] = stt_headers
+                            
+                            transcription = await self._await_orch_task(stt_orch.submit_task("stt", stt_payload))
+                            
                             if transcription:
                                 text_val = transcription["text"] if isinstance(transcription, dict) and "text" in transcription else str(transcription)
+                                logger.info(f"Multimodal: Audio transcribed: '{text_val[:50]}...'")
                                 new_content.append({"type": "text", "text": text_val})
                         except Exception as e:
-                            logger.error(f"Failed to transcribe audio inline: {e}")
+                            logger.error(f"Multimodal: Failed to transcribe audio inline: {e}")
                     else:
                         new_content.append(item)
                 else:
@@ -210,35 +218,49 @@ class Bridge:
             if image_items:
                 try:
                     images_to_analyze = [item["image_url"]["url"] for item in image_items]
+                    logger.info(f"Multimodal: Processing {len(images_to_analyze)} image(s) in batch")
+                    
                     vision_payload = {
                         "images": images_to_analyze, # Nota: mudamos de 'image' para 'images'
                         "prompt": "Describe this image in detail.",
                     }
+                    vision_headers = {}
                     
-                    self._enrich_headers_and_payload('vision_chat', vision_payload, headers)
+                    self._enrich_headers_and_payload('vision_chat', vision_payload, vision_headers)
+                    vision_model = vision_payload.get("model", "default vision model")
+                    logger.info(f"Multimodal: Calling vision model '{vision_model}' on backend '{vision_headers.get('x-backend')}'")
+                    vision_payload["headers"] = vision_headers
+                    
+                    vision_orch = self.get_orchestrator(vision_headers)
                     
                     # O orquestrador deve lidar com a lista de imagens
-                    vision_res = await self._await_orch_task(orch.submit_task("vision_chat", vision_payload))
+                    vision_res = await self._await_orch_task(vision_orch.submit_task("vision_chat", vision_payload))
                     
                     # Mapear os resultados de volta para o conteúdo
                     # Se vier uma lista de strings ou lista de objetos OpenAI
                     batch_analyses = []
+                
                     if isinstance(vision_res, list):
                         for r in vision_res:
                             if isinstance(r, dict) and "choices" in r:
                                 batch_analyses.append(r["choices"][0].get("message", {}).get("content", ""))
                             else:
                                 batch_analyses.append(str(r))
+                    
                     elif isinstance(vision_res, dict) and "choices" in vision_res:
                         # Se o orquestrador retornar apenas uma resposta (talvez concatenada ou erro de batching)
                         batch_analyses = [vision_res["choices"][0].get("message", {}).get("content", "")] * len(image_items)
                     
                     for i, item in enumerate(image_items):
                         new_content.append(item)
+                    
                         if i < len(batch_analyses) and batch_analyses[i]:
-                            new_content.append({"type": "text", "text": f"User sent an image: {batch_analyses[i]}"})
+                            analysis_text = batch_analyses[i]
+                            logger.info(f"Multimodal: Image {i} analysis result: '{analysis_text[:50]}...'")
+                            new_content.append({"type": "text", "text": f"User sent an image: {analysis_text}"})
+                
                 except Exception as e:
-                    logger.error(f"Failed to analyze images in batch: {e}")
+                    logger.error(f"Multimodal: Failed to analyze images in batch: {e}")
                     # Fallback: re-adicionar as imagens sem análise se falhar
                     for item in image_items:
                         new_content.append(item)
@@ -436,18 +458,18 @@ class Bridge:
         input_chars = len(payload.get("input", ""))
         self._enrich_headers_and_payload("tts", payload, headers)
         
-        # Inject defaults from config if not strictly provided
-        if not payload.get("voice") or not payload.get("language"):
-            from .persistence import get_backend
+        # # Inject defaults from config if not strictly provided
+        # if not payload.get("voice") or not payload.get("language"):
+        #     from .persistence import get_backend
             
-            db = get_backend()
-            tts_config = db.get_setting("TTS") or {}
+        #     db = get_backend()
+        #     tts_config = db.get_setting("TTS") or {}
             
-            if not payload.get("voice") and tts_config.get("voice"):
-                payload["voice"] = tts_config["voice"]
+        #     if not payload.get("voice") and tts_config.get("voice"):
+        #         payload["voice"] = tts_config["voice"]
             
-            if not payload.get("language") and tts_config.get("language"):
-                payload["language"] = tts_config["language"]
+        #     if not payload.get("language") and tts_config.get("language"):
+        #         payload["language"] = tts_config["language"]
                 
         orch = self.get_orchestrator(headers)
         payload['headers'] = headers
