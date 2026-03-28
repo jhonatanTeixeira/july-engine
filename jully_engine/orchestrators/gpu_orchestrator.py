@@ -8,7 +8,6 @@ import time
 from typing import Any, Dict, Optional, Union, AsyncGenerator
 
 from ..resource_manager import resource_manager
-from ..model_loader import model_loader
 from ..routers.calculator import estimate_vram_ram
 from ..routers.models import load_models_db
 from fastapi import HTTPException

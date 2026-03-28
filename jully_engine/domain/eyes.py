@@ -1,11 +1,11 @@
 import logging
 import base64
 import io
+import json
 from PIL import Image
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..services.vision import FaceDetector, FaceService
-
 from ..engine_models.tagger import ONNXTagger
 from ..engine_models.gguf import GGUF
 from ..engine_models.fastvlm import FastVLM
@@ -19,6 +19,7 @@ class Eyes:
     """
     Handles vision and image analysis.
     Strategies: GGUF (cpu, gpu), FastVLM (cpu, gpu), MoondreamVLM (cpu, gpu), Emotion (cpu), LLMApi (api).
+    Contract: analyze() ALWAYS returns a List[str].
     """
     def __init__(self, backend: str, model_tag: str):
         self.backend = backend
@@ -46,126 +47,116 @@ class Eyes:
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
     
-    def decode_image(self, image_data):
+    def decode_image(self, image_data: str) -> Image.Image:
         if isinstance(image_data, str):
             if image_data.startswith("data:image"):
                 image_data = image_data.split(",")[1]
-            
             img_bytes = base64.b64decode(image_data)
-            
             return Image.open(io.BytesIO(img_bytes)).convert("RGB")
-
         return Image.open(io.BytesIO(image_data)).convert("RGB")
 
-    async def analyze(self, payload: Dict[str, Any]):
+    def _extract_text(self, response: Any) -> str:
+        """Helper to force OpenAI-like responses into pure text."""
+        if isinstance(response, dict):
+            return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
+        return str(response)
+
+    async def analyze(self, payload: Dict[str, Any]) -> List[str]:
         headers = payload.get("headers", {})
         
         from ..persistence import get_backend
         backend_db = get_backend()
         text_presets = backend_db.get_setting("TEXT_PRESETS") or []
         config = next((p for p in text_presets if p.get("alias") == self.model_tag), None)
+        
         if not config and text_presets:
             config = text_presets[0]
             
         if config:
             if "x-base-url" not in headers and "base_url" in config:
                 headers["x-base-url"] = config["base_url"]
-            
             has_auth = "authorization" in headers or "x-api-key" in headers
-            
             if not has_auth and "api_key" in config and config["api_key"]:
                 headers["x-api-key"] = config["api_key"]
                 headers["authorization"] = f"Bearer {config['api_key']}"
 
-        if isinstance(self._strategy, LLMApi):
-            model = payload.pop("model", self.model_tag)
+        # 1. Rotas Nativas OpenAI (LLMApi e GGUF)
+        # Ambas recebem o payload limpo e retornam [String]
+        if isinstance(self._strategy, (LLMApi, GGUF)):
             messages = payload.pop("messages", [])
-            stream = payload.pop("stream", False)
-            headers = payload.pop("headers", {})
-            return await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
-
-        # Generalize extraction for local models
-        images_data = payload.get("images", [])
-        if not images_data and payload.get("image"):
-            images_data = [payload.get("image")]
+            stream = payload.pop("stream", False) # Forçamos False para garantir o contrato List[str]
             
-        prompt = payload.get("prompt", "")
+            if isinstance(self._strategy, LLMApi):
+                model = payload.pop("model", self.model_tag)
+                headers = payload.pop("headers", headers)
+                raw_response = await self._strategy.run_chat(model, messages, stream=stream, headers=headers, **payload)
+            else:
+                raw_response = await self._strategy.run_chat(messages, stream=stream, **payload)
+                
+            return [self._extract_text(raw_response)]
+
+        # =====================================================================
+        # EXTRAÇÃO SEGURA DE DADOS CRUS (Para FastVLM, Moondream, ONNX, Emotion)
+        # =====================================================================
+        extracted_images = []
+        extracted_prompt = ""
         
-        if not images_data:
-            messages = payload.get("messages", [])
-            if messages:
-                last_msg = messages[-1]
-                content = last_msg.get("content", [])
-            
-                if isinstance(content, list):
-                    for part in content:
-                        if part.get("type") == "image_url":
-                            url = part["image_url"]["url"]
-                            if url.startswith("data:"):
-                                images_data.append(url.split(",")[1])
-                            else:
-                                images_data.append(url)
-                        elif part.get("type") == "text":
-                            prompt = part.get("text", prompt)
-            
-            if images_data:
-                payload["images"] = images_data
-            if prompt:
-                payload["prompt"] = prompt
+        messages = payload.get("messages", [])
+        if messages:
+            last_msg = messages[-1]
+            content = last_msg.get("content", [])
+        
+            if isinstance(content, list):
+                for part in content:
+                    if part.get("type") == "image_url":
+                        url = part["image_url"]["url"]
+                        extracted_images.append(url.split(",")[1] if url.startswith("data:") else url)
+                    elif part.get("type") == "text":
+                        extracted_prompt = part.get("text", "")
 
+        if not extracted_images:
+            raise ValueError(f"Eyes: No image data found in payload for strategy {self.model_tag}")
+
+        # 2. Rotas de Modelos Específicos (Garantindo Retorno List[str])
+        
         if isinstance(self._strategy, Emotion):
-            if not images_data:
-                raise ValueError("Eyes: No image data for emotion analysis")
-            
             results = []
-            for img_data in images_data:
+            for img_data in extracted_images:
                 img = self.decode_image(img_data)
-                results.append(self._strategy.run(img))
-            
-            return results if len(images_data) > 1 else results[0]
-
-        elif isinstance(self._strategy, FastVLM):
-            if len(images_data) > 1:
-                return self._strategy.run_batch(images_data, prompt)
-            return self._strategy.run(payload)
-
-        elif isinstance(self._strategy, MoondreamVLM):
-            if len(images_data) > 1:
-                return self._strategy.run_batch(images_data, prompt)
-            return self._strategy.run(payload)
-
-        elif isinstance(self._strategy, GGUF):
-            messages = payload.pop("messages", [])
-            stream = payload.pop("stream", False)
-            # GGUF doesn't support batching natively in this implementation yet, 
-            # so we run it one by one if multiple images provided
-            if len(images_data) > 1:
-                results = []
-                for img_data in images_data:
-                    single_msg = [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_data}" if not img_data.startswith("http") else img_data}},
-                            {"type": "text", "text": prompt}
-                        ]
-                    }]
-                    results.append(await self._strategy.run_chat(single_msg, stream=False))
-                return results
-            
-            return self._strategy.run_chat(messages, stream=stream, **payload)
+                # Garante que o retorno do Emotion vira texto (mesmo que seja dict nativamente)
+                raw_res = self._strategy.run(img)
+                text_res = json.dumps(raw_res) if isinstance(raw_res, dict) else str(raw_res)
+                results.append(text_res)
+            return results
 
         elif isinstance(self._strategy, ONNXTagger):
-            if not images_data:
-                raise ValueError("Eyes: No image data for tagger analysis")
-            
-            results = [self._strategy.tag(self.decode_image(img_data)) for img_data in images_data]
-            return results if len(images_data) > 1 else results[0]
+            results = []
+            for img_data in extracted_images:
+                tags = self._strategy.tag(self.decode_image(img_data))
+                # Tagger retorna lista de tags. Juntamos tudo em uma string separada por vírgula.
+                if isinstance(tags, list):
+                    results.append(", ".join(str(t) for t in tags))
+                else:
+                    results.append(str(tags))
+            return results
 
-    def describe_person_faces(self, image: Image.Image) -> str:
+        elif isinstance(self._strategy, (FastVLM, MoondreamVLM)):
+            if len(extracted_images) > 1:
+                batch_result = self._strategy.run_batch(extracted_images, extracted_prompt)
+                # Se o batch já retornar lista, converte os itens. Se não, envelopa.
+                if isinstance(batch_result, list):
+                    return [str(r) for r in batch_result]
+                return [str(batch_result)]
+            
+            # Execução de imagem única
+            single_payload = {"image": extracted_images[0], "prompt": extracted_prompt}
+            single_result = self._strategy.run(single_payload)
+            return [str(single_result)]
+
+    async def describe_person_faces(self, image: Image.Image) -> str:
         """Decoupled logic to describe faces using VLM without saving temp files."""
         descriptions = []
         
-        # O "Prompt Bisturi" restritivo para forçar descrições curtas
         strict_prompt = (
             "Act as a strict facial feature extractor. Describe the person in the image in a single, short sentence. "
             "Focus ONLY on: gender, hair color/style, eye color, and visible accessories. "
@@ -173,10 +164,8 @@ class Eyes:
             "Example: Man with brown hair and green eyes, wearing round gold glasses."
         )
 
-        # Consumimos o yield duplo (Vetor Matemático, Matriz da Imagem)
         for emb, face_crop in self.face_service.get_faces_embeddings(image):
             try:
-                # 1. Converte a matriz Numpy (RGB) de volta para Base64 em memória
                 pil_crop = Image.fromarray(face_crop)
                 buffered = io.BytesIO()
                 pil_crop.save(buffered, format="JPEG")
@@ -184,13 +173,13 @@ class Eyes:
 
                 description = ""
 
-                # 2. Roteamento Inteligente baseado na Strategy atual
-                if isinstance(self._strategy, FastVLM):
+                # 1. Grupo Síncrono
+                if isinstance(self._strategy, (FastVLM, MoondreamVLM)):
                     payload = {"image": img_b64, "prompt": strict_prompt}
-                    # Executa a inferência síncrona
                     description = self._strategy.run(payload)
 
-                elif isinstance(self._strategy, GGUF):
+                # 2. Grupo Assíncrono (Padrão OpenAI)
+                elif isinstance(self._strategy, (GGUF, LLMApi)):
                     messages = [{
                         "role": "user",
                         "content": [
@@ -198,22 +187,25 @@ class Eyes:
                             {"type": "text", "text": strict_prompt}
                         ]
                     }]
-                    # Executa a inferência síncrona
-                    description = self._strategy.run_chat(messages, stream=False)
+                    
+                    if isinstance(self._strategy, LLMApi):
+                        description = await self._strategy.run_chat(self.model_tag, messages, stream=False)
+                    else:
+                        description = await self._strategy.run_chat(messages, stream=False)
                 
                 else:
-                    logger.warning(f"Strategy {type(self._strategy)} não suportada para describe_person_faces síncrono.")
+                    logger.warning(f"Strategy {type(self._strategy)} não suportada para extração de face.")
+                    continue
 
-                # 3. Limpeza do resultado
+                # 3. Limpeza
                 if description:
-                    # Remove quebras de linha que o LLM possa ter alucinado
+                    description = self._extract_text(description)
                     clean_desc = description.replace('\n', ' ').strip()
                     descriptions.append(clean_desc)
 
             except Exception as e:
                 logger.error(f"Erro ao gerar descrição do rosto com VLM: {e}")
 
-        # Se houver múltiplos rostos na foto, concatenamos com um separador elegante
         return " | ".join(descriptions) if descriptions else ""
 
     def unload(self):

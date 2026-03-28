@@ -44,20 +44,20 @@ async def client():
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
     
     text_presets = [
-        {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
-        {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu"},
-        {"alias": "qwen3-gpu-reasoning", "model": "qwen3-0.6b-reasoning", "backend": "gpu"},
-        {"alias": "qwen3-gpu-mcp", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option": "internal"}
+        {"alias": "qwen3-cpu", "model": "Qwen2.5-coder-1.5b", "backend": "cpu"},
+        {"alias": "qwen3-gpu", "model": "Qwen2.5-coder-1.5b", "backend": "gpu"},
+        {"alias": "qwen3-gpu-reasoning", "model": "Qwen2.5-coder-1.5b", "backend": "gpu"},
+        {"alias": "qwen3-gpu-mcp", "model": "Qwen2.5-coder-1.5b", "backend": "gpu", "mcp_option": "internal"}
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
     
     # --- Inject Models ---
-    backend.set_model("qwen3-0.6b", {
-            "model_alias": "Qwen3-0.6B-FP16",
+    backend.set_model("Qwen2.5-coder-1.5b", {
+            "model_alias": "Qwen2.5-coder-1.5b",
             "model_type": "text",
-            "model_id": "appleyu/Qwen3-0.6B-FP16-gguf",
-            "filename": "Qwen3-0.6B-FP16.gguf",
+            "model_id": "QuantFactory/Qwen2.5-Coder-1.5B-GGUF",
+            "filename": "Qwen2.5-Coder-1.5B.Q4_K_M.gguf",
             "mmproj_id": None,
             "mmproj_filename": None,
             "template": "chatml-function-calling",
@@ -69,24 +69,7 @@ async def client():
             "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
             "mmproj_path": None
     })
-    
-    backend.set_model("qwen3-0.6b-reasoning", {
-            "model_alias": "Qwen3-0.6B-FP16-Reasoning",
-            "model_type": "text",
-            "model_id": "appleyu/Qwen3-0.6B-FP16-gguf",
-            "filename": "Qwen3-0.6B-FP16.gguf",
-            "mmproj_id": None,
-            "mmproj_filename": None,
-            "template": "chatml-function-calling",
-            "context_window": 4096,
-            "num_params": 0.6,
-            "quantization": "F16",
-            "num_layers": -1,
-            "force_reasoning": True,
-            "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
-            "mmproj_path": None
-    })
-        
+            
     await bridge.start()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", timeout=900.0) as ac:
