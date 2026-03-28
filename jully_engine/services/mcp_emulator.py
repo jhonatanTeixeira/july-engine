@@ -238,7 +238,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             # ==============================
             # MODO NÃO-STREAM (SÍNCRONO)
             # ==============================
-            message = response["choices"][0].get("message", {})
+            message = response["choices"][0].setdefault("message", {})
             raw_content = message.get("content") or ""
             
             # Unescape HTML entities (e.g., &lt; -> <)
@@ -259,16 +259,9 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             if not tools_to_execute:
                 return response 
 
-            # 1. Monta o histórico do Turno 1 (O texto limpo + as tags que a IA gerou)
-            reconstructed_assistant = clean_content
-            
-            for t in tools_to_execute:
-                reconstructed_assistant += f"\n<{t.name}>{t.arguments}</{t.name}>"
+            message['content'] = [{"type": "text", "text": clean_content}]
                 
-            original_payload['messages'].append({
-                "role": "assistant", 
-                "content": reconstructed_assistant.strip()
-            })
+            original_payload['messages'].append(message)
             
             multimodal_content = []
             
@@ -291,6 +284,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 llm, user = await self.internal_mcp.execute_tool(item.name, args)
                 
                 is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
+
                 if "__" in item.name and not llm:
                     is_faf = True
                     
@@ -299,7 +293,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 
                 # Guarda o visual (UI) para o final
                 if user:
-                    multimodal_content.append(user.response)
+                    message['content'].append(user.response)
                 
                 # Guarda o texto para o LLM ler no segundo turno
                 if llm:
@@ -313,19 +307,11 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 second_content = second_response.get("choices", [{}])[0].get("message", {}).get("content", "")
                 
                 if isinstance(second_content, list):
-                    multimodal_content.extend(second_content)
+                    message['content'].extend(second_content)
                 else:
-                    multimodal_content.append(second_content)
-                    
-                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
-                
-                second_response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
+                    message['content'].append(second_content)
 
-                return second_response
-            else:
-                content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
-                response.setdefault("choices", [{}])[0].setdefault("message", {})['content'] = content
-                return response
+            return response
             
         else:
             # ==============================

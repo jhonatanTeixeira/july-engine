@@ -353,7 +353,7 @@ class GpuOrchestrator:
         if model_tag in ["fastvlm", "moondream"]:
             required_vram_mb = 2048 # ~2GB fixo para esses modelos
         elif model_tag == 'lcm':
-            required_vram_mb = 3072 # Pico de ativação do SD1.5 (VAE Decode)
+            required_vram_mb = 0.2 # Pico de ativação do SD1.5 (VAE Decode)
         elif meta.get('model_type', 'text') in ['text', 'vision']:
             params_b = meta.get("num_params", 0)
             quant = meta.get("quantization", "Q4_K_M")

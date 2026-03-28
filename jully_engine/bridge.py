@@ -176,10 +176,7 @@ class Bridge:
         # MUDANÇA CIRÚRGICA: PROCESSAMENTO MULTIMODAL VIA HELPER
         # =====================================================================
         try:
-            helper = MultiModalHelper(
-                payload=payload, 
-                orchestrator_container=OrchestratorContainer()
-            )
+            helper = MultiModalHelper(payload=payload)
             await helper.process_transcription()
             await helper.process_vision()
             

@@ -44,32 +44,48 @@ async def client():
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
     
     text_presets = [
-        {"alias": "qwen3-cpu", "model": "Qwen2.5-coder-1.5b", "backend": "cpu"},
-        {"alias": "qwen3-gpu", "model": "Qwen2.5-coder-1.5b", "backend": "gpu"},
-        {"alias": "qwen3-gpu-reasoning", "model": "Qwen2.5-coder-1.5b", "backend": "gpu"},
-        {"alias": "qwen3-gpu-mcp", "model": "Qwen2.5-coder-1.5b", "backend": "gpu", "mcp_option": "internal"}
+        {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
+        {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option":  "emulated",},
+        {"alias": "llama3-gpu", "model": "Llama-3.2-1B-Instruct", "backend": "gpu", "mcp_option": "emulated"}
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
     
     # --- Inject Models ---
-    backend.set_model("Qwen2.5-coder-1.5b", {
-            "model_alias": "Qwen2.5-coder-1.5b",
-            "model_type": "text",
-            "model_id": "QuantFactory/Qwen2.5-Coder-1.5B-GGUF",
-            "filename": "Qwen2.5-Coder-1.5B.Q4_K_M.gguf",
-            "mmproj_id": None,
-            "mmproj_filename": None,
-            "template": "chatml-function-calling",
-            "context_window": 4096,
-            "num_params": 0.6,
-            "quantization": "F16",
-            "num_layers": -1,
-            "force_reasoning": None,
-            "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
-            "mmproj_path": None
+    backend.set_model("Llama-3.2-1B-Instruct", {
+        "model_alias": "Llama-3.2-1B-Instruct",
+        "model_type": "text",
+        "model_id": "bartowski/Llama-3.2-1B-Instruct-GGUF",
+        "filename": "Llama-3.2-1B-Instruct-Q4_K_L.gguf",
+        "mmproj_id": None,
+        "mmproj_filename": None,
+        "template": "chatml-function-calling",
+        "context_window": 4096,
+        "num_params": 0.6,
+        "quantization": "F16",
+        "num_layers": -1,
+        "force_reasoning": None,
+        "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
+        "mmproj_path": None
     })
             
+    backend.set_model("qwen3-0.6b", {
+        "model_alias": "Qwen3-0.6B",
+        "model_type": "text",
+        "model_id": "bartowski/Qwen_Qwen3-0.6B-GGUF",
+        "filename": "Qwen_Qwen3-0.6B-Q4_K_M.gguf",
+        "mmproj_id": None,
+        "mmproj_filename": None,
+        "template": "qwen",
+        "context_window": 2048,
+        "num_params": 0.6,
+        "quantization": "Q4_K_M",
+        "num_layers": -1,
+        "force_reasoning": None,
+        "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
+        "mmproj_path": None
+})
+
     await bridge.start()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test", timeout=900.0) as ac:
@@ -109,7 +125,7 @@ async def test_image_and_vision_integration(client):
     img_b64 = gen_response.json()["data"][0]["b64_json"]
     
     vision_payload = {
-        "model": "qwen3-gpu",
+        "model": "llama3-gpu",
         "messages": [
             {
                 "role": "user",
@@ -141,8 +157,12 @@ async def test_chat_openai_integration(client):
     headers = {"x-backend": "gpu"}
     response = await client.post("/v1/openai/chat/completions", json=payload, headers=headers)
     assert response.status_code == 200
+
     content = response.json()["choices"][0]["message"]["content"].strip()
+    reasoning_content = response.json()["choices"][0]["message"].get("reasoning_content", "").strip()
+
     print(f"Chat Output: {content}")
+    print(f"Reasoning Chat Output: {reasoning_content}")
     assert "batman" in content.lower()
 
 # --- Chat Anthropic ---
@@ -191,7 +211,7 @@ async def test_other_endpoints(client):
 async def test_openai_streaming_reasoning(client):
     print("\n[Test] Running OpenAI Streaming Reasoning Integration...")
     payload = {
-        "model": "qwen3-gpu-reasoning",
+        "model": "qwen3-gpu",
         "messages": [
             {"role": "user", "content": "olá, tudo bem?"}
         ],
@@ -230,7 +250,7 @@ async def test_openai_streaming_reasoning(client):
 async def test_anthropic_streaming_reasoning(client):
     print("\n[Test] Running Anthropic Streaming Reasoning Integration...")
     payload = {
-        "model": "qwen3-gpu-reasoning",
+        "model": "qwen3-gpu",
         "messages": [
             {"role": "user", "content": "olá, tudo bem?"}
         ],
@@ -269,9 +289,9 @@ async def test_internal_mcp_image_generation(client):
     # 1. Non-Stream Mode
     print("Testing Non-Stream MCP...")
     payload_sync = {
-        "model": "qwen3-gpu-mcp",
+        "model": "qwen3-gpu",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
+            # {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
             {"role": "user", "content": "Gere uma imagem de um gato de óculos"}
         ],
         "stream": False
@@ -310,7 +330,7 @@ async def test_internal_mcp_image_generation(client):
     payload_stream = {
         "model": "qwen3-gpu-mcp",
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
+            # {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
             {"role": "user", "content": "Gere uma imagem de um gato de óculos"}
         ],
         "stream": True

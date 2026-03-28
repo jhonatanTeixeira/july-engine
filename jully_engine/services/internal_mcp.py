@@ -157,18 +157,22 @@ class InternalMCP:
         external_tools = external_mcp_manager.get_all_tools(whitelist)
         
         all_tools = internal_tools + external_tools
-        if whitelist is not None:
+        
+        if whitelist is not None and len(whitelist) > 0:
             all_tools = [t for t in all_tools if t["function"]["name"] in whitelist]
             
         return all_tools
 
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
         config = self.backend_db.get_setting(setting_key)
+        
         return config if config else {"backend": "api", "model": ""}
     
     def inject_tools(self, payload: Dict, whitelist: List[str] = None):
-        if 'tools' not in payload:
+        if not payload.get('tools', None):
             payload['tools'] = self.get_tools(whitelist)
+            
+        print(payload)
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
         from ..model_loader import model_loader

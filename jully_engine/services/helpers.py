@@ -60,11 +60,46 @@ class OrchestratorContainer:
             
         return orch
 
+@dataclass
+class InferenceHelper:
+    orchestrator_container: OrchestratorContainer
+    
+    def __post_init__(self):
+        self.task_mapping = {
+            "text_chat": "text_chat",
+            "tts": "TTS",
+            "stt": "STT",
+            "vision_chat": "VISION",
+            "embeddings": "EMBEDDINGS",
+            "pix2pix": "IMAGE_EDIT",
+            "image_generation": "IMAGE_CREATE",
+            "search_web": "WEB_SEARCH",
+            "search_code": "REPOSITORY_SEARCH"
+        }
+    
+    async def _await_orch_task(self, future_or_coro):
+        if asyncio.iscoroutine(future_or_coro):
+            res = await future_or_coro
+        else:
+            res = await asyncio.wrap_future(future_or_coro)
+        
+        if asyncio.iscoroutine(res):
+            return await res
+
+        return res
+
+    async def process(self, task_type: str, payload: Dict):
+        orch = self.orchestrator_container.get_orchestrator(self.task_mapping[task_type], payload)
+        
+        return await self._await_orch_task(orch.submit_task(task_type, payload))
+
+
+inference_helper = InferenceHelper(OrchestratorContainer())
+
 
 @dataclass
 class MultiModalHelper:
     payload: Dict
-    orchestrator_container: OrchestratorContainer
     
     def __post_init__(self):
         self.messages = self.payload.get("messages")
@@ -151,9 +186,7 @@ class MultiModalHelper:
                 "headers": {}
             }
 
-            orch = self.orchestrator_container.get_orchestrator('VISION', vision_payload)
-            
-            response: List[str] = await self._await_orch_task(orch.submit_task('vision_chat', vision_payload))
+            response: List[str] = await inference_helper.process('vision_chat', vision_payload)
             last_content: list = self.messages[-1].setdefault("content", [])
             
             format_content = lambda content: {"type": "text", "text": f"[User sent an image]: {content}"}
@@ -177,11 +210,7 @@ class MultiModalHelper:
                 "headers": {}
             }
 
-            orch = self.orchestrator_container.get_orchestrator('STT', transcription_payload)
-            
-            # CONTRATO EARS: Sempre retorna str pura
-            response: str = await self._await_orch_task(orch.submit_task('stt', transcription_payload))
+            response: str = await inference_helper.process('stt', transcription_payload)
             last_content: list = self.messages[-1].setdefault("content", [])
             
-            # Adiciona direto como texto sem checar tipo!
             last_content.append({"type": "text", "text": f"[User sent audio]: {response}"})
