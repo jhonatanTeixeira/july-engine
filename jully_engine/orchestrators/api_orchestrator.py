@@ -38,7 +38,7 @@ class ApiOrchestrator:
             elif task_type == "embedding":
                 memory = model_loader.get_memory(backend, model_tag)
                 return await memory.embed(payload)
-            elif task_type == "pix2pix":
+            elif task_type == "pix2pix" or task_type == 'image_edit':
                 presence = model_loader.get_presence(backend, model_tag)
                 return await presence.edit(payload)
             elif task_type == "image_generation":

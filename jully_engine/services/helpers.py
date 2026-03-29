@@ -60,6 +60,7 @@ class OrchestratorContainer:
             
         return orch
 
+
 @dataclass
 class InferenceHelper:
     orchestrator_container: OrchestratorContainer
@@ -196,8 +197,8 @@ class MultiModalHelper:
     
     async def process_transcription(self) -> None:
         if (last_audios := self.last_message_audios()):
-            # Precisamos extrair o Base64 e mandar em BYTES pro Orquestrador
             audio_obj = last_audios[0]
+
             if audio_obj.get("type") == "input_audio":
                 b64_str = audio_obj.get("input_audio", {}).get("data", "")
             else:

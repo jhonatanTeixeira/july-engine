@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import base64
 import io
@@ -153,8 +154,12 @@ class Eyes:
             single_result = self._strategy.run(single_payload)
             return [str(single_result)]
 
-    async def describe_person_faces(self, image: Image.Image) -> str:
-        """Decoupled logic to describe faces using VLM without saving temp files."""
+    async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]]) -> str:
+        """Decoupled logic to describe faces using VLM without saving temp files. Supports batches."""
+        # Garante que sempre estamos iterando sobre uma lista
+        if not isinstance(images, list):
+            images = [images]
+
         descriptions = []
         
         strict_prompt = (
@@ -164,49 +169,136 @@ class Eyes:
             "Example: Man with brown hair and green eyes, wearing round gold glasses."
         )
 
-        for emb, face_crop in self.face_service.get_faces_embeddings(image):
-            try:
-                pil_crop = Image.fromarray(face_crop)
-                buffered = io.BytesIO()
-                pil_crop.save(buffered, format="JPEG")
-                img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        # 1. Extração Massiva: Varre todas as imagens e coleta todos os crops de rosto
+        b64_faces = []
+        for img in images:
+            for emb, face_crop in self.face_service.get_faces_embeddings(img):
+                try:
+                    pil_crop = Image.fromarray(face_crop)
+                    buffered = io.BytesIO()
+                    pil_crop.save(buffered, format="JPEG")
+                    img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+                    b64_faces.append(img_b64)
+                except Exception as e:
+                    logger.error(f"Erro ao converter crop de rosto: {e}")
 
-                description = ""
+        if not b64_faces:
+            return ""
 
-                # 1. Grupo Síncrono
-                if isinstance(self._strategy, (FastVLM, MoondreamVLM)):
-                    payload = {"image": img_b64, "prompt": strict_prompt}
-                    description = self._strategy.run(payload)
+        try:
+            # 2. Grupo Síncrono (O Poder do Batching do FastVLM)
+            if isinstance(self._strategy, (FastVLM, MoondreamVLM)):
+                if len(b64_faces) > 1:
+                    # Mastiga todos os rostos em um único passe na GPU
+                    results = self._strategy.run_batch(b64_faces, strict_prompt)
+                    # Garante que o retorno é uma lista iterável
+                    if not isinstance(results, list): 
+                        results = [results]
+                else:
+                    results = [self._strategy.run({"image": b64_faces[0], "prompt": strict_prompt})]
+                
+                descriptions.extend(results)
 
-                # 2. Grupo Assíncrono (Padrão OpenAI)
-                elif isinstance(self._strategy, (GGUF, LLMApi)):
+            # 3. Grupo Assíncrono (Concorrência para APIs e GGUF)
+            elif isinstance(self._strategy, (GGUF, LLMApi)):
+                
+                async def fetch_description(b64_img: str) -> Any:
                     messages = [{
                         "role": "user",
                         "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
                             {"type": "text", "text": strict_prompt}
                         ]
                     }]
-                    
                     if isinstance(self._strategy, LLMApi):
-                        description = await self._strategy.run_chat(self.model_tag, messages, stream=False)
+                        return await self._strategy.run_chat(self.model_tag, messages, stream=False)
                     else:
-                        description = await self._strategy.run_chat(messages, stream=False)
-                
-                else:
-                    logger.warning(f"Strategy {type(self._strategy)} não suportada para extração de face.")
-                    continue
+                        return await self._strategy.run_chat(messages, stream=False)
 
-                # 3. Limpeza
-                if description:
-                    description = self._extract_text(description)
-                    clean_desc = description.replace('\n', ' ').strip()
-                    descriptions.append(clean_desc)
+                # Dispara N requisições simultaneamente!
+                tasks = [fetch_description(b64) for b64 in b64_faces]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            except Exception as e:
-                logger.error(f"Erro ao gerar descrição do rosto com VLM: {e}")
+                for res in results:
+                    if isinstance(res, Exception):
+                        logger.error(f"Erro na extração de face async: {res}")
+                    else:
+                        descriptions.append(res)
 
-        return " | ".join(descriptions) if descriptions else ""
+            else:
+                logger.warning(f"Strategy {type(self._strategy)} não suportada para extração de face.")
+
+        except Exception as e:
+            logger.error(f"Erro ao gerar descrição de rosto em lote com VLM: {e}")
+
+        # 4. Limpeza e Formatação Final
+        clean_descriptions = []
+        for desc in descriptions:
+            if desc:
+                extracted = self._extract_text(desc)
+                clean_desc = extracted.replace('\n', ' ').strip()
+                clean_descriptions.append(clean_desc)
+
+        return " | ".join(clean_descriptions) if clean_descriptions else ""
+
+    async def describe_video(self, payload: Dict) -> str:
+        import os
+        from ..services.video_processing import multimodal_video_analysis
+        from ..services.helpers import inference_helper
+        
+        video_path = payload.get("video_path")
+        interval_sec = float(payload.get("interval_sec", 2.0))
+        frames_per_grid = int(payload.get("frames_per_grid", 4))
+        
+        if not video_path or not os.path.exists(video_path):
+            raise ValueError(f"Eyes: Video path is invalid or missing: {video_path}")
+
+        # 1. Roda a análise multimodal pesada (Grids Visuais + STT em paralelo)
+        aggregate = await multimodal_video_analysis.execute(
+            video_path=video_path,
+            interval_sec=interval_sec,
+            frames_per_grid=frames_per_grid
+        )
+        
+        # 2. Monta o Dossiê (Super-Prompt) combinando Visão e Áudio
+        prompt_parts = [
+            "You are an expert video analyst. I will provide you with a chronological breakdown of a video's visual segments and its full audio transcription.",
+            "Please synthesize this information into a single, cohesive, highly detailed and fluid narrative of what happens in the video.",
+            "Combine the visual actions with the spoken words to give full context.",
+            "\n=== AUDIO TRANSCRIPTION ===",
+            aggregate.full_transcription if aggregate.full_transcription else "[No speech detected]",
+            "\n=== VISUAL TIMELINE ==="
+        ]
+        
+        # Costura a linha do tempo
+        for seg in aggregate.segments:
+            # Garante a extração correta dependendo se é o objeto GridNarrative ou uma string pura
+            desc = seg.narrative.text if hasattr(seg.narrative, 'text') else str(seg.narrative)
+            prompt_parts.append(f"[{seg.start_offset:.1f}s to {seg.end_offset:.1f}s]: {desc}")
+            
+        final_prompt = "\n".join(prompt_parts)
+        
+        # 3. Repassa para a Inteligência de Texto (O Roteador/Brain)
+        # O inference_helper vai cuidar de alocar o Qwen ou o Llama para ler esse textão
+        llm_payload = {
+            "messages": [
+                {"role": "system", "content": "You are a multimodal video synthesis AI."},
+                {"role": "user", "content": final_prompt}
+            ],
+            "headers": payload.get("headers", {}),
+            "stream": False
+        }
+        
+        if (ds_model := payload.get("description_model", None)):
+            llm_payload['model'] = ds_model
+        
+        synthesis_result = await inference_helper.process("text_chat", llm_payload)
+        
+        # 4. Extrai a string pura do retorno padrão da OpenAI
+        if isinstance(synthesis_result, dict) and "choices" in synthesis_result:
+            return synthesis_result["choices"][0]["message"].get("content", "")
+            
+        return str(synthesis_result)
 
     def unload(self):
         """Libera os recursos da estratégia (VLM, GGUF, etc)."""
