@@ -1,4 +1,5 @@
 import os
+import pprint
 
 os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
@@ -10,6 +11,7 @@ from httpx import AsyncClient, ASGITransport
 # Force the environment to test
 os.environ['ENV'] = 'test'
 os.environ['PERSISTENCE_BACKEND'] = 'tinydb'
+os.environ['DB_PATH'] = 'testes.json'
 
 @pytest.fixture(scope="module")
 def anyio_backend():
@@ -23,14 +25,16 @@ async def client():
     from jully_engine.persistence.tinydb_backend import TinyDBBackend
     from jully_engine.persistence import persistence
     
-    # Use a specific test database named 'testes.json'
-    test_db_path = os.path.join("storage", "db", "testes.json")
-    os.makedirs(os.path.dirname(test_db_path), exist_ok=True)
-    if os.path.exists(test_db_path):
-        os.remove(test_db_path)
+    # # Use a specific test database named 'testes.json'
+    # test_db_path = os.path.join("storage", "db", "testes.json")
+    # os.makedirs(os.path.dirname(test_db_path), exist_ok=True)
+    # if os.path.exists(test_db_path):
+    #     os.remove(test_db_path)
     
-    backend = TinyDBBackend(test_db_path)
-    persistence._backend_instance = backend
+    # backend = TinyDBBackend(test_db_path)
+    # persistence._backend_instance = backend
+    
+    backend = persistence.get_backend()
     
     # --- Inject Settings ---
     backend.set_setting("STT", {"model": "faster-whisper", "backend": "gpu"})
@@ -338,28 +342,33 @@ async def test_internal_mcp_image_generation(client):
 async def test_video_description_strategies(client):
     print("\n[Test] Running Video Description Strategy Integration...")
     video_path = os.path.join("tests", "test_video.mp4")
-    
-    if not os.path.exists(os.path.join("july_engine", video_path)):
-        pytest.skip("Test video not found")
 
     strategies = ["default", "interaction", "emotion"]
     
     for strategy in strategies:
         print(f"Testing strategy: {strategy}")
-        with open(os.path.join("july_engine", video_path), "rb") as f:
+        with open(video_path, "rb") as f:
             files = {"file": ("test_video.mp4", f, "video/mp4")}
             data = {
                 "interval_sec": "1.0",
                 "frames_per_grid": "1",
                 "strategy": strategy,
-                "model": "fastvlm"
+                "model": "fastvlm",
+                "description_model": "qwen3-cpu"
             }
             # Headers for the backend
-            headers = {"x-backend": "gpu"}
+            headers = {
+                "x-backend": "gpu",
+                "x-context-window": "32768"
+            }
             
             response = await client.post("/july/v1/vision/video/describe", files=files, data=data, headers=headers)
             
-            assert response.status_code == 200
+            if response.status_code != 200:
+                print(f"error {response.status_code} {response.reason_phrase}")
+                pprint.pprint(response.json())
+                raise AssertionError(response)
+            
             res_json = response.json()
             assert "visual_narrative" in res_json
             narrative = res_json["visual_narrative"]

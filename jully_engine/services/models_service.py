@@ -19,3 +19,8 @@ class ModelsService:
     
     def resolve_by_settings(self, model_alias: str):
         return self.backend.get_model_by_settings(model_alias)
+    
+    def get_default_text_model(self):
+        presets = self.backend.get_setting("TEXT_PRESETS") or []
+        
+        return presets[0] if len(presets) > 0 else {}

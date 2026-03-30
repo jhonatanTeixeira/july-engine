@@ -57,6 +57,7 @@ from .routers.calculator import router as calculator_router
 from .routers.monitoring import router as monitoring_router
 from .routers.voice import router as voice_router
 from .routers.search import router as search_router
+from .routers.july import router as july_router
 
 from .routers.settings_router import router as settings_router
 from .routers.mcps_router import router as mcps_router
@@ -124,6 +125,7 @@ app.include_router(search_router)
 app.include_router(settings_router)
 app.include_router(mcps_router)
 app.include_router(webhooks_router)
+app.include_router(july_router)
 
 
 @app.get("/health", tags=["July"])

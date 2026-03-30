@@ -226,12 +226,13 @@ class Eyes:
         import os
         from ..services.video_processing import multimodal_video_analysis
         from ..services.helpers import inference_helper
+        from ..services.models_service import ModelsService
         
         video_path = payload.get("video_path")
         interval_sec = float(payload.get("interval_sec", 2.0))
         frames_per_grid = int(payload.get("frames_per_grid", 4))
         strategy = payload.get("strategy", "default")
-        
+                
         if not video_path or not os.path.exists(video_path):
             raise ValueError(f"Eyes: Video path is invalid or missing: {video_path}")
 
@@ -268,12 +269,14 @@ class Eyes:
                 {"role": "system", "content": "You are a multimodal video synthesis AI."},
                 {"role": "user", "content": final_prompt}
             ],
-            "headers": payload.get("headers", {}),
+            "headers": {"x-context-window": payload.get("headers", {}).get("x-context-window", None)},
             "stream": False
         }
         
         if (ds_model := payload.get("description_model", None)):
             llm_payload['model'] = ds_model
+        else:
+            llm_payload["model"] = ModelsService().get_default_text_model().get("alias", None)
         
         synthesis_result = await inference_helper.process("text_chat", llm_payload)
         

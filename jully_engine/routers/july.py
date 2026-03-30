@@ -41,7 +41,8 @@ async def describe_video(
     interval_sec: Optional[float] = Form(2.0), # Deixa o cliente escolher a densidade!
     frames_per_grid: Optional[int] = Form(4),  # Quantos frames por lote
     model: Optional[str] = Form(None),
-    strategy: Optional[str] = Form("default") # Pode ser "default", "interaction" ou "emotion"
+    strategy: Optional[str] = Form("default"), # Pode ser "default", "interaction" ou "emotion"
+    description_model: Optional[str] = Form(None),
 ):
     """
     Analisa os frames visuais de um vídeo e retorna uma descrição detalhada 
@@ -57,7 +58,8 @@ async def describe_video(
         "interval_sec": interval_sec,
         "frames_per_grid": frames_per_grid,
         "model": model,
-        "strategy": strategy
+        "strategy": strategy,
+        "description_model": description_model,
     }
     
     try:

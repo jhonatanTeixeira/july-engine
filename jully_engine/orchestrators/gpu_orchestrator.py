@@ -20,7 +20,7 @@ logger = logging.getLogger("JulyEngine.Orchestrators.GpuOrchestrator")
 
 def guess_num_layers(combined_name: str, params: float) -> int:
     """Adivinha o número de layers baseado no tamanho do modelo."""
-    if not params:
+    if not params or params == -1:
         return -1 # -1 significa "auto" para o llama.cpp
         
     combined_name = combined_name.lower()
@@ -353,7 +353,7 @@ class GpuOrchestrator:
         if model_tag in ["fastvlm", "moondream"]:
             required_vram_mb = 2048 # ~2GB fixo para esses modelos
         elif model_tag == 'lcm':
-            required_vram_mb = 0.2 # Pico de ativação do SD1.5 (VAE Decode)
+            required_vram_mb = 200 # Pico de ativação do SD1.5 (VAE Decode)
         elif meta.get('model_type', 'text') in ['text', 'vision']:
             params_b = meta.get("num_params", 0)
             quant = meta.get("quantization", "Q4_K_M")

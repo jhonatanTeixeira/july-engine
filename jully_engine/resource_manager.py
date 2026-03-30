@@ -68,10 +68,11 @@ class ResourceManager:
             return 0.0
             
         system_free, allocated, reserved = self.get_vram_usage()
+        safety = 200
         
         # A Mágica do PyTorch: A memória "real free" é o que o SO tem livre,
         # MAIS o espaço que o PyTorch já reservou mas que está vazio por dentro.
-        real_free_mb = system_free + (reserved - allocated)
+        real_free_mb = system_free + (reserved - allocated) - safety
         return real_free_mb
 
     def clear_memory(self):

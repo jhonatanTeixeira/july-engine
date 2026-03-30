@@ -19,7 +19,6 @@ from mediapipe.tasks.python import vision
 from PIL import Image
 
 from ..persistence.vector_store import vector_store
-from .helpers import inference_helper
 
 logger = logging.getLogger("JulyEngine.Services.Vision")
 
@@ -156,6 +155,7 @@ class BatchProcessingService:
         self.db = get_backend()
 
     async def process_batch(self, filenames: List[str]):
+        from .helpers import inference_helper
         valid_images, valid_paths, valid_filenames, skipped = [], [], [], []
 
         for filename in filenames:
@@ -182,19 +182,17 @@ class BatchProcessingService:
             img.save(buffered, format="JPEG")
             b64_images.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
 
-        # Send ENTIRE batch of valid images to the VLM (inference_helper supports vision_chat with multiline/multiple messages or multiple image URLs if fastvlm handles it, here we assume it can map or inference_helper process batched)
+        # Send ENTIRE batch of valid images to the VLM
         try:
             messages = [{"role": "user", "content": []}]
             for b64 in b64_images:
                 messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
             
-            # Adiciona o prompt no final do array de imagens
             messages[0]["content"].append({
                 "type": "text", 
                 "text": f"{prompt}\nPlease provide a description for each image in order, separated by a newline."
             })
 
-            # UMA ÚNICA chamada pro Orquestrador com N imagens!
             raw_descriptions = await inference_helper.process('vision_chat', {
                 "messages": messages, 
                 "model": "fastvlm"
@@ -206,12 +204,15 @@ class BatchProcessingService:
                 return str(response)
 
             descriptions = []
-            for d in raw_descriptions:
-                if isinstance(d, Exception):
-                    logger.error(f"Erro no Lote VLM: {d}")
-                    descriptions.append("")
-                else:
-                    descriptions.append(_extract_text(d))
+            if isinstance(raw_descriptions, list):
+                descriptions = [_extract_text(d) for d in raw_descriptions]
+            else:
+                text_res = _extract_text(raw_descriptions)
+                descriptions = [d.strip() for d in text_res.split('\n') if d.strip()]
+                
+            while len(descriptions) < len(valid_images):
+                descriptions.append("No description.")
+                
         except Exception as e:
             logger.error(f"Erro fatal no Lote VLM: {e}")
             return skipped, []
@@ -256,3 +257,148 @@ class BatchProcessingService:
             processed.append(doc["file"])
 
         return skipped, processed
+
+
+class VideoSegment:
+    def __init__(self, time_range: tuple, description: str):
+        self.time_range = time_range
+        self.description = description
+
+class IVideoAnalysisStrategy(abc.ABC):
+    @abc.abstractmethod
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        pass
+
+class ObjectInteractionStrategy(IVideoAnalysisStrategy):
+    def __init__(self, yolo_model_path='yolov8n.pt'):
+        from ultralytics import YOLO
+        self.yolo = YOLO(yolo_model_path)
+
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        from .helpers import inference_helper
+        segments = []
+        
+        batch_face_bboxes = []
+        for grid in grids:
+            faces = []
+            for emb, face_crop, bbox in face_service.get_faces_embeddings(grid):
+                faces.append(bbox)
+            batch_face_bboxes.append(faces)
+
+        results = self.yolo.predict(grids, verbose=False)
+        batch_object_bboxes = []
+        for r in results:
+            objs = []
+            for box, cls in zip(r.boxes.xyxy, r.boxes.cls):
+                objs.append({"bbox": box.tolist(), "class_name": self.yolo.names[int(cls)]})
+            batch_object_bboxes.append(objs)
+
+        b64_grids = []
+        for grid in grids:
+            buffered = io.BytesIO()
+            grid.save(buffered, format="JPEG")
+            b64_grids.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
+
+        messages = [{"role": "user", "content": []}]
+        for b64 in b64_grids:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+        spatial_metadata = ""
+        for i, (f_boxes, o_boxes) in enumerate(zip(batch_face_bboxes, batch_object_bboxes)):
+            spatial_metadata += f"\nImage {i+1}:\n"
+            for fb in f_boxes:
+                spatial_metadata += f"  Person face at {fb}\n"
+            for ob in o_boxes:
+                spatial_metadata += f"  Object '{ob['class_name']}' at {ob['bbox']}\n"
+
+        prompt = (
+            f"Here are {len(grids)} images and their spatial bounding boxes for faces and objects.\n"
+            f"{spatial_metadata}\n"
+            "Analyze the spatial proximity between the people's faces and objects (e.g. objects near their hands/bottom of face). "
+            "For each image, provide a description in the format: 'Person [person_id] with [face_description] is holding [Object]'. "
+            "Separate each image description by a newline."
+        )
+        
+        messages[0]["content"].append({"type": "text", "text": prompt})
+        
+        try:
+            res = await inference_helper.process('vision_chat', {"messages": messages, "model": "fastvlm"})
+            
+            def _extract_text(response: Any) -> str:
+                if isinstance(response, dict):
+                    return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
+                return str(response)
+
+            text_response = _extract_text(res)
+            descriptions = [d.strip() for d in text_response.split('\n') if d.strip()]
+            
+            while len(descriptions) < len(grids):
+                descriptions.append("No clear interaction.")
+
+            for tr, desc in zip(time_ranges, descriptions):
+                segments.append(VideoSegment(tr, desc))
+
+        except Exception as e:
+            logger.error(f"Error in ObjectInteractionStrategy: {e}")
+            for tr in time_ranges:
+                segments.append(VideoSegment(tr, "Error processing interaction."))
+
+        return segments
+
+class EmotionAndAttentionStrategy(IVideoAnalysisStrategy):
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        from .helpers import inference_helper
+        segments = []
+        from ..engine_models.emotion import Emotion
+        emotion_model = Emotion(face_service.detector, backend="cpu")
+
+        batch_emotions = []
+        for grid in grids:
+            emotions = []
+            for emb, face_crop, bbox in face_service.get_faces_embeddings(grid):
+                pil_crop = Image.fromarray(face_crop)
+                emotion_res = emotion_model.run({"image": pil_crop, "prompt": "detect emotion"})
+                emotions.append(str(emotion_res))
+            batch_emotions.append(emotions)
+
+        b64_grids = []
+        for grid in grids:
+            buffered = io.BytesIO()
+            grid.save(buffered, format="JPEG")
+            b64_grids.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
+
+        messages = [{"role": "user", "content": []}]
+        for b64 in b64_grids:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+        
+        prompt = (
+            "Analyze these images. For each image, deduce the body posture and gaze direction of the people visible. "
+            "Return exactly one sentence per image describing the posture and attention/gaze, separated by a newline."
+        )
+        messages[0]["content"].append({"type": "text", "text": prompt})
+        
+        try:
+            res = await inference_helper.process('vision_chat', {"messages": messages, "model": "fastvlm"})
+            
+            def _extract_text(response: Any) -> str:
+                if isinstance(response, dict):
+                    return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
+                return str(response)
+
+            text_response = _extract_text(res)
+            postures = [d.strip() for d in text_response.split('\n') if d.strip()]
+            
+            while len(postures) < len(grids):
+                postures.append("Posture unknown.")
+
+            for i, tr in enumerate(time_ranges):
+                emos = ", ".join(batch_emotions[i]) if batch_emotions[i] else "neutral"
+                desc = f"Emotions: {emos}. Posture & Gaze: {postures[i]}"
+                segments.append(VideoSegment(tr, desc))
+
+        except Exception as e:
+            logger.error(f"Error in EmotionAndAttentionStrategy: {e}")
+            for tr in time_ranges:
+                segments.append(VideoSegment(tr, "Error processing emotion/attention."))
+
+        return segments

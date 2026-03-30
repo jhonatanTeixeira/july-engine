@@ -1,7 +1,7 @@
 import abc
 import asyncio
 import base64
-import datetime
+from datetime import datetime
 import io
 import logging
 import os
@@ -103,6 +103,7 @@ class OpenCVBifurcator:
         os.makedirs(temp_dir, exist_ok=True)
 
     def sample_frames(self, video_path: str, interval_sec: float) -> Generator[tuple, None, None]:
+        logger.info('sampling frames')
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
         if fps == 0: return
@@ -137,6 +138,7 @@ class OpenCVBifurcator:
 
 class NumPyGridPacker:
     def pack(self, frames: List[np.ndarray], layout: tuple = (2, 2)) -> Image.Image:
+        logger.info("Packing Frames")
         if not frames: return None
         
         grid_rows, grid_cols = layout
@@ -431,8 +433,10 @@ class MultimodalVideoAnalysisUseCase:
         return video_aggregate
 
     async def _process_batch(self, aggregate: VideoAggregate, grids: List, time_ranges: List[tuple], strategy: Optional[Any] = None):
+        logger.info("Analyzing Batch")
         if strategy:
             segments = await strategy.analyze_batch(grids, time_ranges, self.face_service, self.vlm)
+            
             for seg in segments:
                 # Map VideoSegment from vision.py to VideoSegment from entities.py
                 new_seg = VideoSegment(

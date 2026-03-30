@@ -32,7 +32,11 @@ class GGUF:
         meta = self.meta
         
         effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 2048))
-        n_gpu_layers = num_layers if num_layers else (meta.get("num_layers", -1) if self.backend == "gpu" else 0)
+        
+        if self.backend == 'cpu':
+            n_gpu_layers = 0
+        else:
+            n_gpu_layers = num_layers if num_layers else meta.get("num_layers", -1)
             
         if self.is_loaded():
             if self.model.n_ctx() == effective_n_ctx:

@@ -17,8 +17,7 @@ def get_backend() -> PersistenceBackend:
     else:
         from .tinydb_backend import TinyDBBackend
         # By default, save tiny db in the storage directory
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        db_path = os.path.join(base_dir, "storage", "db", "tinydb.json")
+        db_path = os.path.join("storage", "db", os.environ.get("DB_PATH", 'tinydb.json'))
         _backend_instance = TinyDBBackend(db_path)
 
     return _backend_instance
