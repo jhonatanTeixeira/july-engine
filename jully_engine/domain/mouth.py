@@ -1,6 +1,7 @@
 import logging
 import os
 import json
+import inspect
 from typing import Any, Dict, Optional
 
 from ..engine_models.replicate_api import Replicate
@@ -63,6 +64,8 @@ class Mouth:
             headers = payload.pop("headers", headers)
 
             audio_content = self._strategy.run_tts(model, text, voice_id, headers=headers, **payload)
+            if inspect.iscoroutine(audio_content):
+                audio_content = await audio_content
             return audio_content
 
         if isinstance(self._strategy, XTTS2):

@@ -74,4 +74,4 @@ class PersistenceBackend(ABC):
         if not preset:
             preset = text_presets[0]
             
-        return self.get_model(preset.get("model")) | preset
+        return (self.get_model(preset.get("model")) or {}) | preset

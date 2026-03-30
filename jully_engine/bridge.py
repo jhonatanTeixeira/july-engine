@@ -295,6 +295,7 @@ class Bridge:
 
     async def process_search_web(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
         start_time = time.time()
+        headers['x-backend'] = 'api'
         payload['headers'] = headers
         
         res = await inference_helper.process("search_web", payload)
@@ -305,6 +306,7 @@ class Bridge:
 
     async def process_search_code(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
         start_time = time.time()
+        headers['x-backend'] = 'api'
         payload['headers'] = headers
         
         res = await inference_helper.process("search_code", payload)

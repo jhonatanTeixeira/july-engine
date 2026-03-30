@@ -1,4 +1,5 @@
 import logging
+import inspect
 from typing import Any, Dict, List, Optional
 from ..engine_models.bge_micro import BgeMicro
 from ..engine_models.multilingual_e5 import MultilingualE5
@@ -31,7 +32,10 @@ class Memory:
             model = payload.pop("model", self.model_tag)
             input_text = payload.pop("input", "")
             headers = payload.pop("headers", {})
-            return self._strategy.run_embeddings(model, input_text, headers=headers, **payload)
+            res = self._strategy.run_embeddings(model, input_text, headers=headers, **payload)
+            if inspect.iscoroutine(res):
+                res = await res
+            return res
             
         elif isinstance(self._strategy, (BgeMicro, MultilingualE5)):
             input_text = payload.get("input", "")

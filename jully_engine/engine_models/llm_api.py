@@ -2,7 +2,7 @@ import os
 import logging
 from typing import Any, Dict, List, Optional, Union
 import litellm
-from litellm import completion, embedding, image_generation, transcription, speech
+from litellm import completion, embedding, image_generation, transcription, speech, acompletion, aembedding, aimage_generation, atranscription, aspeech
 
 litellm.drop_params = True
 
@@ -55,7 +55,6 @@ class LLMApi:
             params["api_key"] = api_key
         
         try:
-            from litellm import acompletion
             res = await acompletion(**params)
             logger.info(f"Engine LLMApi (Chat) executed successfully on {self.backend} with {model}")
             return res
@@ -63,7 +62,7 @@ class LLMApi:
             logger.error(f"LLMApi: Chat failed: {e}")
             raise e
 
-    def run_embeddings(self, model: str, input_text: Union[str, List[str]], headers: Optional[Dict[str, str]] = None, **kwargs):
+    async def run_embeddings(self, model: str, input_text: Union[str, List[str]], headers: Optional[Dict[str, str]] = None, **kwargs):
         """Runs embeddings via litellm."""
         params = {
             "model": model,
@@ -80,14 +79,14 @@ class LLMApi:
             params["api_key"] = api_key
             
         try:
-            response = embedding(**params)
+            response = await aembedding(**params)
             logger.info(f"Engine LLMApi (Embeddings) executed successfully on {self.backend} with {model}")
             return [item['embedding'] for item in response['data']]
         except Exception as e:
             logger.error(f"LLMApi: Embeddings failed: {e}")
             raise e
 
-    def run_tts(self, model: str, text: str, voice: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> bytes:
+    async def run_tts(self, model: str, text: str, voice: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> bytes:
         """Runs text-to-speech via litellm (OpenAI compatible)."""
         params = {
             "model": model,
@@ -105,14 +104,14 @@ class LLMApi:
             params["api_key"] = api_key
             
         try:
-            response = speech(**params)
+            response = await aspeech(**params)
             logger.info(f"Engine LLMApi (TTS) executed successfully on {self.backend} with {model}")
             return response.content
         except Exception as e:
             logger.error(f"LLMApi: TTS failed: {e}")
             raise e
 
-    def run_stt(self, model: str, audio_file: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
+    async def run_stt(self, model: str, audio_file: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
         """Runs speech-to-text via litellm."""
         params = {
             "model": model,
@@ -129,7 +128,7 @@ class LLMApi:
             params["api_key"] = api_key
             
         try:
-            response = transcription(**params)
+            response = await atranscription(**params)
             logger.info(f"Engine LLMApi (STT) executed successfully on {self.backend} with {model}")
             return response.text
         except Exception as e:
@@ -153,7 +152,7 @@ class LLMApi:
                 raise e
         return data
 
-    def run_image_gen(self, model: str, prompt: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
+    async def run_image_gen(self, model: str, prompt: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
         """Runs image generation via litellm. Returns base64 string."""
         params = {
             "model": model,
@@ -170,7 +169,7 @@ class LLMApi:
             params["api_key"] = api_key
             
         try:
-            response = image_generation(**params)
+            response = await aimage_generation(**params)
             raw_data = response.data[0].get("b64_json") or response.data[0].get("url")
             logger.info(f"Engine LLMApi (ImageGen) executed successfully on {self.backend} with {model}")
             return self._ensure_base64(raw_data)
@@ -178,8 +177,8 @@ class LLMApi:
             logger.error(f"LLMApi: Image generation failed: {e}")
             raise e
 
-    def run_image_edit(self, model: str, prompt: str, image: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
-        """Runs image editing directly via requests since litellm lacks image_editing."""
+    async def run_image_edit(self, model: str, prompt: str, image: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
+        """Runs image editing directly via httpx since litellm lacks image_editing."""
         api_base = self._extract_base_url(headers) or "https://api.openai.com/v1"
         api_key = self._extract_api_key(headers)
         
@@ -200,13 +199,15 @@ class LLMApi:
         }
         
         try:
-            import requests
-            response = requests.post(url, headers=req_headers, data=data, files=files)
-            response.raise_for_status()
-            res_json = response.json()
-            raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
-            logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
-            return self._ensure_base64(raw_data)
+            import httpx
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=req_headers, data=data, files=files)
+                response.raise_for_status()
+                res_json = response.json()
+                raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
+                logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
+                return self._ensure_base64(raw_data)
         except Exception as e:
             logger.error(f"LLMApi: Image edit failed: {e}")
             raise e
+
