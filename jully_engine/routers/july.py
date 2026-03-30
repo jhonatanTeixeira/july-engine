@@ -40,7 +40,8 @@ async def describe_video(
     file: UploadFile = File(...),
     interval_sec: Optional[float] = Form(2.0), # Deixa o cliente escolher a densidade!
     frames_per_grid: Optional[int] = Form(4),  # Quantos frames por lote
-    model: Optional[str] = Form(None)
+    model: Optional[str] = Form(None),
+    strategy: Optional[str] = Form("default") # Pode ser "default", "interaction" ou "emotion"
 ):
     """
     Analisa os frames visuais de um vídeo e retorna uma descrição detalhada 
@@ -55,7 +56,8 @@ async def describe_video(
         "video_path": saved_video_path,
         "interval_sec": interval_sec,
         "frames_per_grid": frames_per_grid,
-        "model": model
+        "model": model,
+        "strategy": strategy
     }
     
     try:
@@ -76,8 +78,6 @@ async def extract_faces(
 ):
     headers = dict(http_request.headers)
     
-    # Como as imagens do payload VLM precisam ir em Base64 internamente,
-    # nós fazemos a conversão aqui na borda, mas o tráfego HTTP foi binário!
     images_b64 = []
     for file in files:
         bytes_data = await file.read()
@@ -89,7 +89,6 @@ async def extract_faces(
         "model": model
     }
     
-    # Chama o Bridge (que chamará o Eyes.describe_person_faces)
     description = await bridge.process_face_extraction(payload, headers)
     
     return JSONResponse(content={"faces_description": description})

@@ -58,6 +58,14 @@ class PersistenceBackend(ABC):
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         pass
 
+    @abstractmethod
+    def find_one(self, table_name: str, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def insert_many(self, table_name: str, documents: List[Dict[str, Any]]) -> None:
+        pass
+
     def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:        
         text_presets = self.get_setting("TEXT_PRESETS") or []
         

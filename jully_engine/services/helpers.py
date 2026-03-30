@@ -29,8 +29,8 @@ class OrchestratorContainer:
             self.orchestrators["cpu"] = cpu_orchestrator
         else:
             self.orchestrators["cpu"] = None
-
-    def get_orchestrator(self, task_type: str, payload: Dict[str, str]):
+            
+    def resolve_backend(self, task_type: str, payload: Dict):
         if task_type == 'text_chat':
             config = self.model_service.resolve_by_settings(payload.get("model"))
             
@@ -44,11 +44,15 @@ class OrchestratorContainer:
         
         if not backend:
             raise HTTPException(status_code=400, detail="Missing x-backend header or model not configured")
-            
-        backend = backend.lower()
-        
+
         if not payload.get("model", None):
             payload["model"] = config.get("model")
+            
+        return backend.lower(), payload["model"]
+
+    def get_orchestrator(self, task_type: str, payload: Dict[str, str]):
+        backend, _ = self.resolve_backend(task_type, payload)
+        
         
         if backend not in self.orchestrators:
             raise HTTPException(status_code=400, detail=f"Unknown backend {backend}")

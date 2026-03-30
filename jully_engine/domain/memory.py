@@ -41,7 +41,7 @@ class Memory:
 
     async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None):
         """Generates an embedding and adds it to the RAG database."""
-        from .vector_store import vector_store
+        from ..persistence.vector_store import vector_store
         
         # Get embedding
         payload = {"input": text}
@@ -60,7 +60,7 @@ class Memory:
 
     async def search(self, query: str, top_k: int = 3) -> str:
         """Searches the RAG database using the query embedding."""
-        from .vector_store import vector_store
+        from ..persistence.vector_store import vector_store
         
         payload = {"input": query}
         embedding_result = await self.embed(payload)

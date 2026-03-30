@@ -73,3 +73,16 @@ class TinyDBBackend(PersistenceBackend):
 
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         self.history_table.insert(event_data)
+
+    def find_one(self, table_name: str, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        table = self.db.table(table_name)
+        Q = Query()
+        # Simplistic query matcher for dict keys
+        def match_query(doc):
+            return all(doc.get(k) == v for k, v in query.items())
+        
+        return table.get(match_query)
+
+    def insert_many(self, table_name: str, documents: List[Dict[str, Any]]) -> None:
+        table = self.db.table(table_name)
+        table.insert_multiple(documents)

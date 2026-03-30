@@ -1,3 +1,4 @@
+import abc
 import asyncio
 import base64
 import datetime
@@ -5,7 +6,7 @@ import io
 import logging
 import os
 import subprocess
-from typing import Generator, List, Optional
+from typing import Any, Generator, List, Optional
 import uuid
 from PIL import Image
 import cv2
@@ -13,6 +14,7 @@ import numpy as np
 
 from ..domain.entities import VideoAggregate, VideoSegment, GridNarrative
 from .helpers import inference_helper
+from ..services.vision import FaceService
 
 
 logger = logging.getLogger("JulyEngine.Services.VideoProcessig")
@@ -211,16 +213,143 @@ class VLMAdapter:
         return narratives
 
 
-import asyncio
-import os
-import uuid
-import logging
-from datetime import datetime
-from typing import List
-from ..domain.entities import VideoAggregate, VideoSegment
-from .helpers import inference_helper
+class IVideoAnalysisStrategy(abc.ABC):
+    @abc.abstractmethod
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        pass
 
-logger = logging.getLogger("JulyEngine.Services.VideoProcessing")
+
+class ObjectInteractionStrategy(IVideoAnalysisStrategy):
+    def __init__(self, yolo_model_path='yolov8n.pt'):
+        from ultralytics import YOLO
+        self.yolo = YOLO(yolo_model_path)
+
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        segments = []
+        
+        batch_face_bboxes = []
+        for grid in grids:
+            faces = []
+            for emb, face_crop, bbox in face_service.get_faces_embeddings(grid):
+                faces.append(bbox)
+            batch_face_bboxes.append(faces)
+
+        results = self.yolo.predict(grids, verbose=False)
+        batch_object_bboxes = []
+        for r in results:
+            objs = []
+            for box, cls in zip(r.boxes.xyxy, r.boxes.cls):
+                objs.append({"bbox": box.tolist(), "class_name": self.yolo.names[int(cls)]})
+            batch_object_bboxes.append(objs)
+
+        b64_grids = []
+        for grid in grids:
+            buffered = io.BytesIO()
+            grid.save(buffered, format="JPEG")
+            b64_grids.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
+
+        messages = [{"role": "user", "content": []}]
+        for b64 in b64_grids:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+        spatial_metadata = ""
+        for i, (f_boxes, o_boxes) in enumerate(zip(batch_face_bboxes, batch_object_bboxes)):
+            spatial_metadata += f"\nImage {i+1}:\n"
+            for fb in f_boxes:
+                spatial_metadata += f"  Person face at {fb}\n"
+            for ob in o_boxes:
+                spatial_metadata += f"  Object '{ob['class_name']}' at {ob['bbox']}\n"
+
+        prompt = (
+            f"Here are {len(grids)} images and their spatial bounding boxes for faces and objects.\n"
+            f"{spatial_metadata}\n"
+            "Analyze the spatial proximity between the people's faces and objects (e.g. objects near their hands/bottom of face). "
+            "For each image, provide a description in the format: 'Person [person_id] with [face_description] is holding [Object]'. "
+            "Separate each image description by a newline."
+        )
+        
+        messages[0]["content"].append({"type": "text", "text": prompt})
+        
+        try:
+            res = await inference_helper.process('vision_chat', {"messages": messages, "model": "fastvlm"})
+            
+            def _extract_text(response: Any) -> str:
+                if isinstance(response, dict):
+                    return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
+                return str(response)
+
+            text_response = _extract_text(res)
+            descriptions = [d.strip() for d in text_response.split('\n') if d.strip()]
+            
+            while len(descriptions) < len(grids):
+                descriptions.append("No clear interaction.")
+
+            for tr, desc in zip(time_ranges, descriptions):
+                segments.append(VideoSegment(tr, desc))
+
+        except Exception as e:
+            logger.error(f"Error in ObjectInteractionStrategy: {e}")
+            for tr in time_ranges:
+                segments.append(VideoSegment(tr, "Error processing interaction."))
+
+        return segments
+
+class EmotionAndAttentionStrategy(IVideoAnalysisStrategy):
+    async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
+        segments = []
+        from ..engine_models.emotion import Emotion
+        emotion_model = Emotion(face_service.detector, backend="cpu")
+
+        batch_emotions = []
+        for grid in grids:
+            emotions = []
+            for emb, face_crop, bbox in face_service.get_faces_embeddings(grid):
+                pil_crop = Image.fromarray(face_crop)
+                emotion_res = emotion_model.run({"image": pil_crop, "prompt": "detect emotion"})
+                emotions.append(str(emotion_res))
+            batch_emotions.append(emotions)
+
+        b64_grids = []
+        for grid in grids:
+            buffered = io.BytesIO()
+            grid.save(buffered, format="JPEG")
+            b64_grids.append(base64.b64encode(buffered.getvalue()).decode("utf-8"))
+
+        messages = [{"role": "user", "content": []}]
+        for b64 in b64_grids:
+            messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+        
+        prompt = (
+            "Analyze these images. For each image, deduce the body posture and gaze direction of the people visible. "
+            "Return exactly one sentence per image describing the posture and attention/gaze, separated by a newline."
+        )
+        messages[0]["content"].append({"type": "text", "text": prompt})
+        
+        try:
+            res = await inference_helper.process('vision_chat', {"messages": messages, "model": "fastvlm"})
+            
+            def _extract_text(response: Any) -> str:
+                if isinstance(response, dict):
+                    return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
+                return str(response)
+
+            text_response = _extract_text(res)
+            postures = [d.strip() for d in text_response.split('\n') if d.strip()]
+            
+            while len(postures) < len(grids):
+                postures.append("Posture unknown.")
+
+            for i, tr in enumerate(time_ranges):
+                emos = ", ".join(batch_emotions[i]) if batch_emotions[i] else "neutral"
+                desc = f"Emotions: {emos}. Posture & Gaze: {postures[i]}"
+                segments.append(VideoSegment(tr, desc))
+
+        except Exception as e:
+            logger.error(f"Error in EmotionAndAttentionStrategy: {e}")
+            for tr in time_ranges:
+                segments.append(VideoSegment(tr, "Error processing emotion/attention."))
+
+        return segments
 
 class MultimodalVideoAnalysisUseCase:
     def __init__(
@@ -232,14 +361,15 @@ class MultimodalVideoAnalysisUseCase:
         self.bifurcator = bifurcator
         self.packer = packer
         self.vlm = vlm
+        self.face_service = FaceService()
 
-    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10):
-        logger.info(f"Starting multimodal native batch analysis for: {video_path}")
+    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10, strategy: str = "default"):
+        logger.info(f"Starting multimodal native batch analysis for: {video_path} with strategy: {strategy}")
         
         video_aggregate = VideoAggregate(
             video_id=str(uuid.uuid4()),
             file_path=video_path,
-            metadata={"interval_sec": interval_sec},
+            metadata={"interval_sec": interval_sec, "strategy": strategy},
             processed_at=datetime.now()
         )
 
@@ -256,6 +386,12 @@ class MultimodalVideoAnalysisUseCase:
         grid_batch = []
         timestamp_batch = [] 
         
+        analysis_strategy = None
+        if strategy == "interaction":
+            analysis_strategy = ObjectInteractionStrategy()
+        elif strategy == "emotion":
+            analysis_strategy = EmotionAndAttentionStrategy()
+
         # Passando o video_path para o gerador
         for ts, frame in self.bifurcator.sample_frames(video_path, interval_sec):
             frame_buffer.append(frame)
@@ -271,7 +407,7 @@ class MultimodalVideoAnalysisUseCase:
                 timestamps = []
                 
                 if len(grid_batch) >= batch_size:
-                    await self._process_batch(video_aggregate, grid_batch, timestamp_batch)
+                    await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy)
                     grid_batch = []
                     timestamp_batch = []
 
@@ -281,7 +417,7 @@ class MultimodalVideoAnalysisUseCase:
             timestamp_batch.append((timestamps[0], timestamps[-1]))
             
         if grid_batch:
-            await self._process_batch(video_aggregate, grid_batch, timestamp_batch)
+            await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy)
 
         # =====================================================================
         # SINCRONIZAÇÃO FINAL
@@ -294,22 +430,33 @@ class MultimodalVideoAnalysisUseCase:
 
         return video_aggregate
 
-    async def _process_batch(self, aggregate: VideoAggregate, grids: List, time_ranges: List[tuple]):
-        prompt = "Describe the sequence of actions, environment and people in this video narrative block."
-        
-        narratives = await self.vlm.describe_grids_batch(grids, prompt)
-        
-        for i, narrative in enumerate(narratives):
-            start_ts, end_ts = time_ranges[i]
+    async def _process_batch(self, aggregate: VideoAggregate, grids: List, time_ranges: List[tuple], strategy: Optional[Any] = None):
+        if strategy:
+            segments = await strategy.analyze_batch(grids, time_ranges, self.face_service, self.vlm)
+            for seg in segments:
+                # Map VideoSegment from vision.py to VideoSegment from entities.py
+                new_seg = VideoSegment(
+                    segment_id=str(uuid.uuid4()),
+                    start_offset=seg.time_range[0],
+                    end_offset=seg.time_range[1],
+                    narrative=GridNarrative(text=seg.description)
+                )
+                aggregate.segments.append(new_seg)
+        else:
+            prompt = "Describe the sequence of actions, environment and people in this video narrative block."
+            narratives = await self.vlm.describe_grids_batch(grids, prompt)
             
-            segment = VideoSegment(
-                segment_id=str(uuid.uuid4()),
-                start_offset=start_ts,
-                end_offset=end_ts,
-                narrative=narrative
-            )
-            
-            aggregate.segments.append(segment)
+            for i, narrative in enumerate(narratives):
+                start_ts, end_ts = time_ranges[i]
+                
+                segment = VideoSegment(
+                    segment_id=str(uuid.uuid4()),
+                    start_offset=start_ts,
+                    end_offset=end_ts,
+                    narrative=narrative
+                )
+                
+                aggregate.segments.append(segment)
 
     async def _process_full_audio(self, video_path: str) -> str:
         """Extrai o .wav do vídeo e manda para o STT local."""

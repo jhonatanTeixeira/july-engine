@@ -7,6 +7,7 @@ from .domain.mouth import Mouth
 from .domain.ears import Ears
 from .domain.presence import Presence
 from .domain.memory import Memory
+from .domain.world import World
 
 logger = logging.getLogger("JulyEngine.ModelLoader")
 
@@ -60,7 +61,7 @@ class ModelLoader:
                 self.instances[key] = Memory(backend, model_tag)
             return self.instances[key]
 
-    def get_world(self, backend: str, model_tag: str):
+    def get_world(self, backend: str, model_tag: str) -> World:
         from .domain.world import World
         key = f"world_{backend}_{model_tag}"
         with self.lock:

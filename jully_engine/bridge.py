@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import io
 import logging
 import uuid
 import time
@@ -310,5 +312,62 @@ class Bridge:
         gen_time = time.time() - start_time
         event_manager.emit("search_code", generation_time=gen_time)
         return res
+
+    async def process_video_description(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        from .model_loader import model_loader
+
+        payload['headers'] = headers
+        
+        backend, model = inference_helper.orchestrator_container.resolve_backend('VISION', payload)
+        
+        return await model_loader.get_eyes(backend, model).describe_video(payload)
+
+    async def process_face_extraction(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        from PIL import Image
+        from .model_loader import model_loader
+        
+        backend, model = inference_helper.orchestrator_container.resolve_backend('VISION', payload)
+        eyes = model_loader.get_eyes(backend, model)
+        
+        # 2. Decodifica as imagens puras
+        images_b64 = payload.get("images", [])
+        images = []
+  
+        for img_b64 in images_b64:
+            # Remove o prefixo data URI caso o cliente tenha mandado
+            clean_b64 = img_b64.split(",")[1] if img_b64.startswith("data:") else img_b64
+            img_data = base64.b64decode(clean_b64)
+            img = Image.open(io.BytesIO(img_data)).convert("RGB")
+            images.append(img)
+            
+        return await eyes.describe_person_faces(images)
+
+    async def process_image_description(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[str]:
+        # 1. O Bridge é burro. Ele não instancia classes, ele só formata o pacote.
+        images = payload.get("images", [])
+        prompt = payload.get("prompt", "Describe these images in detail.")
+        model = payload.get("model", None)
+        
+        vision_payload = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        # Adiciona todas as imagens formatadas no padrão OpenAI
+                        *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img}"}} for img in images],
+                        {"type": "text", "text": prompt}
+                    ]
+                }
+            ],
+            "headers": headers
+        }
+        
+        results = await inference_helper.process('vision_chat', vision_payload)
+        
+        if isinstance(results, list):
+            return results
+
+        return [str(results)]
 
 bridge = Bridge()

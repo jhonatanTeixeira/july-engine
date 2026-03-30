@@ -332,3 +332,38 @@ async def test_internal_mcp_image_generation(client):
     
     assert stream_image_found, "Image was not generated in stream MCP mode"
     print("Stream MCP Image Generation: OK")
+
+# --- Video Description Integration ---
+@pytest.mark.anyio
+async def test_video_description_strategies(client):
+    print("\n[Test] Running Video Description Strategy Integration...")
+    video_path = os.path.join("tests", "test_video.mp4")
+    
+    if not os.path.exists(os.path.join("july_engine", video_path)):
+        pytest.skip("Test video not found")
+
+    strategies = ["default", "interaction", "emotion"]
+    
+    for strategy in strategies:
+        print(f"Testing strategy: {strategy}")
+        with open(os.path.join("july_engine", video_path), "rb") as f:
+            files = {"file": ("test_video.mp4", f, "video/mp4")}
+            data = {
+                "interval_sec": "1.0",
+                "frames_per_grid": "1",
+                "strategy": strategy,
+                "model": "fastvlm"
+            }
+            # Headers for the backend
+            headers = {"x-backend": "gpu"}
+            
+            response = await client.post("/july/v1/vision/video/describe", files=files, data=data, headers=headers)
+            
+            assert response.status_code == 200
+            res_json = response.json()
+            assert "visual_narrative" in res_json
+            narrative = res_json["visual_narrative"]
+            print(f"Strategy {strategy} narrative snippet: {narrative[:100]}...")
+            assert len(narrative) > 0
+    
+    print("Video Description Strategies: OK")

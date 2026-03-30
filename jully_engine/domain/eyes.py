@@ -154,92 +154,73 @@ class Eyes:
             single_result = self._strategy.run(single_payload)
             return [str(single_result)]
 
-    async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]]) -> str:
-        """Decoupled logic to describe faces using VLM without saving temp files. Supports batches."""
-        # Garante que sempre estamos iterando sobre uma lista
+    async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]]) -> List[Dict[str, Any]]:
+        """High-Performance batched face orchestrator."""
         if not isinstance(images, list):
             images = [images]
 
-        descriptions = []
-        
         strict_prompt = (
             "Act as a strict facial feature extractor. Describe the person in the image in a single, short sentence. "
             "Focus ONLY on: gender, hair color/style, eye color, and visible accessories. "
             "CRITICAL: Do NOT guess emotions. Do NOT describe the background. "
             "Example: Man with brown hair and green eyes, wearing round gold glasses."
+            "\nPlease provide a description for each face in order, separated by a newline."
         )
 
-        # 1. Extração Massiva: Varre todas as imagens e coleta todos os crops de rosto
-        b64_faces = []
+        batch_crops = []
+        batch_embeddings = []
+
+        import uuid
+
         for img in images:
-            for emb, face_crop in self.face_service.get_faces_embeddings(img):
+            for emb, face_crop, bbox in self.face_service.get_faces_embeddings(img):
                 try:
                     pil_crop = Image.fromarray(face_crop)
                     buffered = io.BytesIO()
                     pil_crop.save(buffered, format="JPEG")
                     img_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-                    b64_faces.append(img_b64)
+                    batch_crops.append(img_b64)
+                    batch_embeddings.append(emb)
                 except Exception as e:
                     logger.error(f"Erro ao converter crop de rosto: {e}")
 
-        if not b64_faces:
-            return ""
+        if not batch_crops:
+            return []
 
+        descriptions = []
+        from ..services.helpers import inference_helper
+        
         try:
-            # 2. Grupo Síncrono (O Poder do Batching do FastVLM)
-            if isinstance(self._strategy, (FastVLM, MoondreamVLM)):
-                if len(b64_faces) > 1:
-                    # Mastiga todos os rostos em um único passe na GPU
-                    results = self._strategy.run_batch(b64_faces, strict_prompt)
-                    # Garante que o retorno é uma lista iterável
-                    if not isinstance(results, list): 
-                        results = [results]
-                else:
-                    results = [self._strategy.run({"image": b64_faces[0], "prompt": strict_prompt})]
+            messages = [{"role": "user", "content": []}]
+            for b64 in batch_crops:
+                messages[0]["content"].append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+            messages[0]["content"].append({"type": "text", "text": strict_prompt})
+            
+            res = await inference_helper.process('vision_chat', {"messages": messages, "model": self.model_tag})
+            text_response = self._extract_text(res)
+            descriptions = [d.strip() for d in text_response.split('\n') if d.strip()]
+            
+            while len(descriptions) < len(batch_embeddings):
+                descriptions.append("Unknown description")
                 
-                descriptions.extend(results)
-
-            # 3. Grupo Assíncrono (Concorrência para APIs e GGUF)
-            elif isinstance(self._strategy, (GGUF, LLMApi)):
-                
-                async def fetch_description(b64_img: str) -> Any:
-                    messages = [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}},
-                            {"type": "text", "text": strict_prompt}
-                        ]
-                    }]
-                    if isinstance(self._strategy, LLMApi):
-                        return await self._strategy.run_chat(self.model_tag, messages, stream=False)
-                    else:
-                        return await self._strategy.run_chat(messages, stream=False)
-
-                # Dispara N requisições simultaneamente!
-                tasks = [fetch_description(b64) for b64 in b64_faces]
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for res in results:
-                    if isinstance(res, Exception):
-                        logger.error(f"Erro na extração de face async: {res}")
-                    else:
-                        descriptions.append(res)
-
-            else:
-                logger.warning(f"Strategy {type(self._strategy)} não suportada para extração de face.")
-
         except Exception as e:
             logger.error(f"Erro ao gerar descrição de rosto em lote com VLM: {e}")
+            descriptions = ["Unknown"] * len(batch_embeddings)
 
-        # 4. Limpeza e Formatação Final
-        clean_descriptions = []
-        for desc in descriptions:
-            if desc:
-                extracted = self._extract_text(desc)
-                clean_desc = extracted.replace('\n', ' ').strip()
-                clean_descriptions.append(clean_desc)
+        results = []
+        for emb, desc in zip(batch_embeddings, descriptions):
+            person_id = str(uuid.uuid4())
+            matches = self.face_service.vector_store.search_with_details(query_embedding=emb, top_k=1)
+            if matches and matches[0]['distance'] < 0.60:
+                person_id = matches[0].get('metadata', {}).get('person_id', person_id)
 
-        return " | ".join(clean_descriptions) if clean_descriptions else ""
+            results.append({
+                "person_id": person_id,
+                "embedding": emb,
+                "description": desc
+            })
+            
+        return results
 
     async def describe_video(self, payload: Dict) -> str:
         import os
@@ -249,6 +230,7 @@ class Eyes:
         video_path = payload.get("video_path")
         interval_sec = float(payload.get("interval_sec", 2.0))
         frames_per_grid = int(payload.get("frames_per_grid", 4))
+        strategy = payload.get("strategy", "default")
         
         if not video_path or not os.path.exists(video_path):
             raise ValueError(f"Eyes: Video path is invalid or missing: {video_path}")
@@ -257,7 +239,8 @@ class Eyes:
         aggregate = await multimodal_video_analysis.execute(
             video_path=video_path,
             interval_sec=interval_sec,
-            frames_per_grid=frames_per_grid
+            frames_per_grid=frames_per_grid,
+            strategy=strategy
         )
         
         # 2. Monta o Dossiê (Super-Prompt) combinando Visão e Áudio
