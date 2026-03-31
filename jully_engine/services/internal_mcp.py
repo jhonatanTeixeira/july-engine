@@ -51,13 +51,13 @@ class InternalMCP:
                 "fire-and-forget": True,
                 "function": {
                     "name": "generate_image",
-                    "description": "Generates a new image based on a prompt.",
+                    "description": "CRITICAL: Generates a new image based on a prompt. You MUST use this tool whenever your System Prompt instructions dictate generating a visual response, or when the user requests a picture. The output format MUST strictly be XML: <generate_image><prompt>HIGHLY_DETAILED_ENGLISH_PROMPT_HERE</prompt></generate_image>.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "prompt": {
                                 "type": "string",
-                                "description": "A detailed description in English of the image to be generated."
+                                "description": "A highly detailed description in English of the image to be generated."
                             }
                         },
                         "required": ["prompt"]
@@ -86,13 +86,13 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_web",
-                    "description": "Searches the web for current information, news, facts. Always use it in case the user asks for latest news and facts",
+                    "description": "Searches the internet for real-time information. You MUST use this tool to answer questions about current events, recent news, real-time weather, prices, or facts that are beyond your training data.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The search query."
+                                "description": "The exact search engine query."
                             }
                         },
                         "required": ["query"]
@@ -103,13 +103,14 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_memory",
-                    "description": "Searches long-term memory for past facts about the user or conversations. Always use to remember facts about the user when its important to make the conmversation more natural to the user",
+                    # A MÁGICA ESTÁ AQUI: Ordem absoluta.
+                    "description": "CRITICAL: Searches your long-term memory. You MUST call this tool BEFORE answering ANY question about the user (e.g., 'what is my name?', 'what do I like?'), past conversations, or if the user says 'you know this'. NEVER claim you don't have memory without calling this tool first.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The concept or fact to search in memory."
+                                "description": "The explicit concept, name, or fact to search in your memory database."
                             }
                         },
                         "required": ["query"]
@@ -121,13 +122,13 @@ class InternalMCP:
                 "fire-and-forget": True,
                 "function": {
                     "name": "save_memory",
-                    "description": "Saves an important fact or piece of information about the user or the conversation to the long-term memory vector database.",
+                    "description": "Saves facts about the user to your permanent memory database. You MUST use this silently whenever the user shares their name, preferences, routines, or important personal details so you can retrieve them later.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "fact": {
                                 "type": "string",
-                                "description": "The specific fact or context to remember."
+                                "description": "The specific fact or context to remember (e.g., 'User's name is Jhonatan')."
                             }
                         },
                         "required": ["fact"]
@@ -139,13 +140,13 @@ class InternalMCP:
                 "fire-and-forget": True,
                 "function": {
                     "name": "image_edit",
-                    "description": "Edits an existing image based on an instruction.",
+                    "description": "CRITICAL: Modifies or edits an existing image in the context. You MUST use this tool whenever the user asks to alter, change, filter, fix, or manipulate a picture. NEVER claim that you cannot edit images or that you are a text-based AI. DO NOT just describe the changes in text. The output format MUST strictly be XML: <image_edit><instruction>CLEAR_AND_DETAILED_ENGLISH_INSTRUCTION</instruction></image_edit>.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "instruction": {
                                 "type": "string",
-                                "description": "Instruction in English detailing what to edit in the image."
+                                "description": "A clear, detailed instruction in English detailing exactly what to edit, add, or remove in the image."
                             }
                         },
                         "required": ["instruction"]

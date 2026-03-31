@@ -1,6 +1,7 @@
 import os
 import logging
 from typing import Any, Dict, List, Optional, Union
+from httpx import HTTPStatusError
 import litellm
 from litellm import completion, embedding, image_generation, transcription, speech, acompletion, aembedding, aimage_generation, atranscription, aspeech
 
@@ -177,37 +178,53 @@ class LLMApi:
             logger.error(f"LLMApi: Image generation failed: {e}")
             raise e
 
-    async def run_image_edit(self, model: str, prompt: str, image: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
+    async def run_image_edit(self, model: str, prompt: str, image: Any, mask: Optional[Any] = None, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
         """Runs image editing directly via httpx since litellm lacks image_editing."""
         api_base = self._extract_base_url(headers) or "https://api.openai.com/v1"
         api_key = self._extract_api_key(headers)
         
         req_headers = {}
+        
         if api_key:
             req_headers["Authorization"] = f"Bearer {api_key}"
             
         url = f"{api_base.rstrip('/')}/images/edits"
         
+        # 1. Arquivos Binários (Obrigatório para o endpoint)
         files = {
             "image": ("image.png", image, "image/png")
         }
         
+        # Acopla a máscara como arquivo se ela existir
+        if mask:
+            files["mask"] = ("mask.png", mask, "image/png")
+        
+        # 2. Dados de Texto (httpx exige que todos os valores sejam strings)
         data = {
             "prompt": prompt,
-            "model": model,
-            **kwargs
+            "model": model
         }
+        
+        # Sanitiza os kwargs (ex: n=1 vira n="1")
+        for k, v in kwargs.items():
+            if v is not None:
+                data[k] = str(v)
         
         try:
             import httpx
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=None) as client:
                 response = await client.post(url, headers=req_headers, data=data, files=files)
                 response.raise_for_status()
                 res_json = response.json()
                 raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
                 logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
                 return self._ensure_base64(raw_data)
-        except Exception as e:
-            logger.error(f"LLMApi: Image edit failed: {e}")
+                
+        except HTTPStatusError as e:
+            logger.error(f"LLMApi: Image edit failed: {e.response.status_code} - {e.response.content.decode('utf-8')}")
             raise e
-
+        except Exception as e:
+            import traceback
+            error_trace = traceback.format_exc()
+            logger.error(f"LLMApi: FATAL error in image edit:\n{error_trace}")
+            raise e

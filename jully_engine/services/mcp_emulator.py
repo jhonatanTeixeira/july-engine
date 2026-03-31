@@ -331,7 +331,6 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         
                     elif isinstance(item, Tool):
                         tools_executed = True
-                        first_response += f"<{item.name}>{item.arguments}</{item.name}>"
                         
                         original_payload['messages'].append({
                             'role': 'assistant',
@@ -356,6 +355,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
                         is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
+                        
                         if "__" in item.name and not llm:
                             is_faf = True
                             

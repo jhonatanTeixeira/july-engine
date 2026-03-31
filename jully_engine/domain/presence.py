@@ -47,41 +47,45 @@ class Presence:
         return None
 
     async def edit(self, payload: Dict[str, Any]):
-        headers = payload.get("headers", {})
-        
         from ..persistence import get_backend
-        config = get_backend().get_setting("IMAGE_EDIT")
-        if config:
-            if "x-base-url" not in headers and "base_url" in config:
-                headers["x-base-url"] = config["base_url"]
-            has_auth = "authorization" in headers or "x-api-key" in headers
-            if not has_auth and "api_key" in config and config["api_key"]:
-                headers["x-api-key"] = config["api_key"]
-                headers["authorization"] = f"Bearer {config['api_key']}"
-                
-        image_data = payload.get("image")
-        messages = payload.get("messages", [])
-        
-        # Se não tem imagem no payload, tenta buscar no conteúdo multimodal ou no histórico
-        if not image_data and messages:
-            image_data = self._find_last_image(messages)
-            if image_data:
-                payload["image"] = image_data
 
+        headers: dict = payload.setdefault("headers", {})
+        config: dict = get_backend().get_setting("IMAGE_EDIT")
+
+        if config:
+            headers.setdefault("x-base-url", config.get("base_url"))
+            headers.setdefault("x-api-key", config.get("api_key"))
+                
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             image_data = payload.pop("image", "")
+            mask_data = payload.pop("mask", None)
             prompt = payload.pop("prompt", "")
             headers = payload.pop("headers", headers)
             
-            if isinstance(image_data, str) and image_data.startswith("data:image"):
-                image_data = image_data.split(",")[1]
+            # Helper interno limpo para não duplicar código
+            def decode_b64_to_file(b64_str: str, filename="image.png"):
+                if isinstance(b64_str, str) and b64_str.startswith("data:image"):
+                    b64_str = b64_str.split(",")[1]
+                
+                img_bytes = base64.b64decode(b64_str)
+                img_file = io.BytesIO(img_bytes)
+                img_file.name = filename
+                
+                return img_file
+
+            img_file = decode_b64_to_file(image_data, "image.png")
+            mask_file = decode_b64_to_file(mask_data, "mask.png") if mask_data else None
             
-            img_bytes = base64.b64decode(image_data)
-            img_file = io.BytesIO(img_bytes)
-            img_file.name = "image.png"
-            return await self._strategy.run_image_edit(model, prompt, img_file, headers=headers, **payload)
-            
+            return await self._strategy.run_image_edit(
+                model=model, 
+                prompt=prompt, 
+                image=img_file, 
+                mask=mask_file,
+                headers=headers, 
+                **payload
+            )
+        
         elif isinstance(self._strategy, Pix2Pix):
             image_data = payload.get("image")
             prompt = payload.get("prompt")
