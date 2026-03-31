@@ -338,7 +338,26 @@ class InternalMCP:
             
             if is_calling:
                 for name, tool in tools.items():
+                    # Status messages mapping
+                    status_map = {
+                        "search_web": "searching the web",
+                        "search_memory": "searching memory",
+                        "generate_image": "generating image",
+                        "generate_audio": "generating audio",
+                        "save_memory": "saving memory",
+                        "image_edit": "editing image"
+                    }
+                    display_name = status_map.get(name, f"calling {name}")
+                    
+                    # Yield start status
+                    yield {"status_update": display_name}
+                    await asyncio.sleep(0)
+                    
                     tool["response"] = await self.execute_tool(name, json.loads(tool['arguments']))
+                    
+                    # Yield end status
+                    yield {"status_update": ""} # Empty string to clear/finish status
+                    await asyncio.sleep(0)
                 
                 is_calling = False
             

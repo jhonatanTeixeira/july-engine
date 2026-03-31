@@ -1,17 +1,24 @@
 import os
 from typing import Dict, Any, List, Optional
 from tinydb import TinyDB, Query
+from tinydb.middlewares import CachingMiddleware
+from tinydb.storages import JSONStorage
 from .base import PersistenceBackend
 
 class TinyDBBackend(PersistenceBackend):
     def __init__(self, db_path: str):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
-        self.db = TinyDB(db_path)
+        # Use CachingMiddleware to improve performance and reduce direct I/O corruption risk
+        self.db = TinyDB(db_path, storage=CachingMiddleware(JSONStorage))
         self.settings_table = self.db.table("settings")
         self.models_table = self.db.table("models")
         self.voices_table = self.db.table("uploaded_voices")
         self.mcps_table = self.db.table("mcp_servers")
         self.history_table = self.db.table("history")
+
+    def _flush(self):
+        """Force write to disk if using CachingMiddleware"""
+        self.db.storage.flush()
 
     def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
         Q = Query()
@@ -21,6 +28,7 @@ class TinyDBBackend(PersistenceBackend):
     def set_setting(self, key: str, value: Dict[str, Any]) -> None:
         Q = Query()
         self.settings_table.upsert({"key": key, "value": value}, Q.key == key)
+        self._flush()
 
     def get_all_settings(self) -> List[Dict[str, Any]]:
         return self.settings_table.all()
@@ -36,10 +44,12 @@ class TinyDBBackend(PersistenceBackend):
         Q = Query()
         data["model_alias"] = model_alias
         self.models_table.upsert(data, Q.model_alias == model_alias)
+        self._flush()
 
     def delete_model(self, model_alias: str) -> bool:
         Q = Query()
         removed = self.models_table.remove(Q.model_alias == model_alias)
+        self._flush()
         return len(removed) > 0
 
     def get_uploaded_voices(self) -> List[Dict[str, Any]]:
@@ -53,6 +63,7 @@ class TinyDBBackend(PersistenceBackend):
             self.voices_table.upsert(voice_data, Q.id == voice_id)
         else:
             self.voices_table.insert(voice_data)
+        self._flush()
 
     def get_all_mcps(self) -> List[Dict[str, Any]]:
         return self.mcps_table.all()
@@ -65,14 +76,17 @@ class TinyDBBackend(PersistenceBackend):
         Q = Query()
         data["id"] = mcp_id
         self.mcps_table.upsert(data, Q.id == mcp_id)
+        self._flush()
 
     def delete_mcp(self, mcp_id: str) -> bool:
         Q = Query()
         removed = self.mcps_table.remove(Q.id == mcp_id)
+        self._flush()
         return len(removed) > 0
 
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         self.history_table.insert(event_data)
+        self._flush()
 
     def find_one(self, table_name: str, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         table = self.db.table(table_name)
@@ -86,3 +100,4 @@ class TinyDBBackend(PersistenceBackend):
     def insert_many(self, table_name: str, documents: List[Dict[str, Any]]) -> None:
         table = self.db.table(table_name)
         table.insert_multiple(documents)
+        self._flush()

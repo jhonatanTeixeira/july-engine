@@ -352,7 +352,26 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                 if args.get("image"):
                                     break
                                     
+                        # Status messages mapping
+                        status_map = {
+                            "search_web": "searching the web",
+                            "search_memory": "searching memory",
+                            "generate_image": "generating image",
+                            "generate_audio": "generating audio",
+                            "save_memory": "saving memory",
+                            "image_edit": "editing image"
+                        }
+                        display_name = status_map.get(item.name, f"calling {item.name}")
+                        
+                        # Yield start status
+                        yield {"status_update": display_name}
+                        await asyncio.sleep(0)
+                        
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
+                        
+                        # Yield end status
+                        yield {"status_update": ""} # Empty string to clear status
+                        await asyncio.sleep(0)
                         
                         is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
                         
