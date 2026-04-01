@@ -43,7 +43,7 @@ class Memory:
             
         return None
 
-    async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None):
+    async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None, collection: str = "july_memory"):
         """Generates an embedding and adds it to the RAG database."""
         from ..persistence.vector_store import vector_store
         
@@ -58,11 +58,11 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            vector_store.add(text, embedding, metadata)
+            vector_store.add(text, embedding, metadata, collection=collection)
             return True
         return False
 
-    async def search(self, query: str, top_k: int = 3) -> str:
+    async def search(self, query: str, top_k: int = 3, collection: str = "july_memory") -> str:
         """Searches the RAG database using the query embedding."""
         from ..persistence.vector_store import vector_store
         
@@ -76,7 +76,23 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            results = vector_store.search(embedding, top_k=top_k)
+            results = vector_store.search(embedding, top_k=top_k, collection=collection)
             return "\n---\n".join(results)
             
         return "Nenhuma memória encontrada."
+
+    async def add_vector_to_rag(self, embedding: List[float], text: str = "", metadata: Dict[str, Any] = None, collection: str = "july_memory") -> bool:
+        """Adiciona um embedding pré-calculado diretamente no banco (ex: Face Embeddings)."""
+        from ..persistence.vector_store import vector_store
+        vector_store.add(text, embedding, metadata, collection=collection)
+        return True
+
+    async def search_with_details_vector(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory") -> List[Dict[str, Any]]:
+        """Busca RAG pulando o Text-Embedder e pedindo Metadados (PGVector)."""
+        from ..persistence.vector_store import vector_store
+        return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection)
+
+    async def update_embedding(self, doc_id: str, new_embedding: List[float]):
+        """Atualiza a coordenada geométrica de um vetor existente pelo ID."""
+        from ..persistence.vector_store import vector_store
+        vector_store.update_embedding(doc_id, new_embedding)
