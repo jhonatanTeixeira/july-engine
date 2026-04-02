@@ -324,6 +324,31 @@ class Bridge:
         
         return await model_loader.get_eyes(backend, model).describe_video(payload)
 
+    async def process_face_sync_batch(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[List[Dict[str, Any]]]:
+        """Sincroniza rostos de múltiplas imagens de uma única vez."""
+        from PIL import Image
+        from .model_loader import model_loader
+        
+        backend, model = inference_helper.orchestrator_container.resolve_backend('VISION', payload)
+        eyes = model_loader.get_eyes(backend, model)
+        
+        collection = payload.get("collection", "faces_embeddings")
+        images_b64 = payload.get("images", [])
+        pic_ids = payload.get("pic_ids", [])
+        
+        images = []
+        for img_b64 in images_b64:
+            clean_b64 = img_b64.split(",")[1] if img_b64.startswith("data:") else img_b64
+            img_data = base64.b64decode(clean_b64)
+            img = Image.open(io.BytesIO(img_data)).convert("RGB")
+            images.append(img)
+            
+        # Garante que pic_ids tenha o mesmo tamanho que images
+        if len(pic_ids) < len(images):
+            pic_ids += ["unknown"] * (len(images) - len(pic_ids))
+            
+        return await eyes.sync_faces_batch(images, pic_ids, collection)
+
     async def process_face_extraction(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[Dict[str, Any]]:
         from PIL import Image
         from .model_loader import model_loader
@@ -331,6 +356,9 @@ class Bridge:
         backend, model = inference_helper.orchestrator_container.resolve_backend('VISION', payload)
         eyes = model_loader.get_eyes(backend, model)
         
+        # 1. Extrai a coleção (default faces_embeddings)
+        collection = payload.get("collection", "faces_embeddings")
+
         # 2. Decodifica as imagens puras
         images_b64 = payload.get("images", [])
         images = []
@@ -342,7 +370,7 @@ class Bridge:
             img = Image.open(io.BytesIO(img_data)).convert("RGB")
             images.append(img)
             
-        return await eyes.describe_person_faces(images)
+        return await eyes.describe_person_faces(images, collection=collection)
 
     async def process_image_description(self, payload: Dict[str, Any], headers: Dict[str, str]) -> List[str]:
         # 1. O Bridge é burro. Ele não instancia classes, ele só formata o pacote.
@@ -371,5 +399,125 @@ class Bridge:
             return results
 
         return [str(results)]
+
+    async def process_rag_add(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Adiciona um texto ao banco vetorial via Memory domain.
+        router → bridge → resolve_backend → Memory → strategy (BgeMicro/LLMApi)
+        """
+        from .domain.memory import Memory
+
+        payload['headers'] = headers
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        text = payload.get("text", "")
+        metadata = payload.get("metadata", {})
+        collection = payload.get("collection", "july_memory")
+
+        success = await memory.add_to_rag(text=text, metadata=metadata, collection=collection)
+        return {"success": success, "collection": collection}
+
+    async def process_rag_batch_add(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Insere múltiplos documentos no RAG usando o mesmo domain Memory.
+        Resolve backend/modelo uma vez e reutiliza para todos os documentos.
+        """
+        from .domain.memory import Memory
+
+        payload['headers'] = headers
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        collection = payload.get("collection", "july_memory")
+        documents = payload.get("documents", [])
+
+        inserted = 0
+        failed = 0
+
+        for doc in documents:
+            text = doc.get("text", "")
+            metadata = doc.get("metadata", {})
+            if not text or not text.strip():
+                failed += 1
+                continue
+            try:
+                success = await memory.add_to_rag(text=text, metadata=metadata, collection=collection)
+                if success:
+                    inserted += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.warning(f"[Bridge] RAG batch - falha ao inserir documento: {e}")
+                failed += 1
+
+        return {"inserted": inserted, "failed": failed, "collection": collection}
+
+    async def process_rag_search(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Busca contexto no RAG (Query -> Embedding -> Vector Search)."""
+        from .domain.memory import Memory
+        payload['headers'] = headers
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        query = payload.get("query", "")
+        collection = payload.get("collection", "july_memory")
+        top_k = int(payload.get("top_k", 3))
+
+        result = await memory.search(query=query, top_k=top_k, collection=collection)
+        return {"results": result, "collection": collection}
+
+    async def process_rag_vector_add(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Adiciona um vetor bruto diretamente ao banco."""
+        from .domain.memory import Memory
+        payload['headers'] = headers
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        vector = payload.get("vector")
+        metadata = payload.get("metadata", {})
+        collection = payload.get("collection", "july_memory")
+        text = payload.get("text", "")
+
+        success = await memory.add_vector_to_rag(embedding=vector, text=text, metadata=metadata, collection=collection)
+        return {"success": success, "collection": collection}
+
+    async def process_rag_search_details(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Busca avançada que aceita Texto ou Vetor e retorna metadados/distâncias."""
+        from .domain.memory import Memory
+        payload['headers'] = headers
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        query_text = payload.get("query")
+        vector = payload.get("vector")
+        collection = payload.get("collection", "july_memory")
+        top_k = int(payload.get("top_k", 3))
+
+        if vector:
+            result = await memory.search_with_details_vector(query_embedding=vector, top_k=top_k, collection=collection)
+        else:
+            # Se for texto, precisamos gerar o embedding primeiro (usando o strategy resolvido)
+            emb_payload = {"input": query_text}
+            embedding_result = await memory.embed(emb_payload)
+            if embedding_result and len(embedding_result) > 0:
+                emb = embedding_result[0] if isinstance(embedding_result[0], list) else embedding_result
+                result = await memory.search_with_details_vector(query_embedding=emb, top_k=top_k, collection=collection)
+            else:
+                result = []
+
+        return {"results": result, "collection": collection}
+
+    async def process_rag_update(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Atualiza a coordenada geométrica de um vetor pelo ID."""
+        from .domain.memory import Memory
+        payload['headers'] = headers
+        # Mesmo para update, resolvemos o backend para garantir consistência
+        backend, model = inference_helper.orchestrator_container.resolve_backend('EMBEDDINGS', payload)
+        memory = Memory(backend=backend, model_tag=model)
+
+        doc_id = payload.get("id")
+        vector = payload.get("vector")
+
+        await memory.update_embedding(doc_id=str(doc_id), new_embedding=vector)
+        return {"success": True}
 
 bridge = Bridge()

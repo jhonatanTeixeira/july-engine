@@ -187,14 +187,43 @@ class VectorStore:
                 logger.error(f"Error searching details pgvector: {e}")
                 return []
         else:
-            # Implementação in-memory...
-            pass
-        return []
+            # Implementação in-memory com similaridade de cosseno
+            matches = []
+            if not self.memory_data:
+                return matches
+                
+            import math
+            def cosine_similarity(v1, v2):
+                dot = sum(a*b for a, b in zip(v1, v2))
+                norm1 = math.sqrt(sum(a*a for a in v1))
+                norm2 = math.sqrt(sum(b*b for b in v2))
+                if norm1 == 0 or norm2 == 0: return 0
+                return dot / (norm1 * norm2)
 
-    def update_embedding(self, doc_id: str, new_embedding: List[float]):
+            for item in self.memory_data:
+                # Se houver metadados de coleção, filtra.
+                item_coll = item.get("metadata", {}).get("collection", collection)
+                if item_coll != collection:
+                    continue
+
+                score = cosine_similarity(query_embedding, item["embedding"])
+                matches.append({
+                    "id": item["id"],
+                    "distance": 1.0 - score, # Distância = 1 - similaridade
+                    "metadata": item.get("metadata", {}),
+                    "embedding": item["embedding"]
+                })
+            
+            # Ordena por menor distância (maior similaridade)
+            matches.sort(key=lambda x: x["distance"])
+            return matches[:top_k]
+
+    def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory"):
         """Atualiza um vetor existente direto no VectorStore."""
         if self.db_type == "chroma":
-            self.collection.update(
+            # No Chroma, se a coleção for diferente da atual, pegamos a instância correta
+            coll = self.client.get_or_create_collection(name=collection) if collection != self.collection_name else self.collection
+            coll.update(
                 ids=[doc_id],
                 embeddings=[new_embedding]
             )
@@ -203,15 +232,17 @@ class VectorStore:
                 from sqlalchemy import text
                 with self.engine.begin() as conn:
                     emb_str = f"[{','.join(map(str, new_embedding))}]"
-                    if str(doc_id).isdigit():
-                        conn.execute(
-                            text("UPDATE july_rag_memory SET embedding = :emb WHERE id = :id"),
-                            {"emb": emb_str, "id": int(doc_id)}
-                        )
+                    # No PGVector, filtramos pela coleção também para segurança
+                    conn.execute(
+                        text("UPDATE july_rag_memory SET embedding = :emb WHERE id_str = :id AND collection = :coll"),
+                        {"emb": emb_str, "id": str(doc_id), "coll": collection}
+                    )
             except Exception as e:
                 logger.error(f"Error updating pgvector: {e}")
         else:
+            # In-memory
             for item in self.memory_data:
+                # Na memória, o ID é único, mas validamos a coleção nos metadados se existir
                 if item["id"] == doc_id:
                     item["embedding"] = new_embedding
                     break

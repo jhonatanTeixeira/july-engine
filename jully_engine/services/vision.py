@@ -103,49 +103,78 @@ class FaceService:
             except Exception as e:
                 logger.error(f"Error in deepface representation: {e}")
 
-    def extract_and_match_faces(self, image, pic_id):
-        # Keep backward compatibility
-        res = self.extract_and_match_faces_batch([image], [pic_id])
+    def extract_and_match_faces(self, image: Image.Image, pic_id: str, collection: str = "faces_embeddings") -> List[str]:
+        """Detect faces in a single image and match them."""
+        res = self.sync_faces_batch([image], [pic_id], collection=collection)
         return res[0] if res else []
 
-    def extract_and_match_faces_batch(self, images: List[Image.Image], pic_ids: List[str]) -> List[List[List[float]]]:
-        """Batched orchestrator: extract faces from multiple images and match them."""
+    def match_or_add_face(self, emb: List[float], pic_id: str, collection: str = "faces_embeddings") -> Tuple[str, List[float]]:
+        """
+        Lógica central de reconhecimento facial:
+        1. Busca matching no RAG da coleção informada.
+        2. Se houver match (< 0.60), atualiza o vetor existente via EMA (0.85*old + 0.15*new).
+        3. Se não houver, gera um novo UUID e insere no RAG.
+        Retorna (person_id, embedding_atualizado).
+        """
+        try:
+            matches = self.vector_store.search_with_details(query_embedding=emb, top_k=1, collection=collection)
+            if matches:
+                match = matches[0]
+                if match['distance'] < 0.60:
+                    doc_id = match['id'] 
+                    person_id = match.get('metadata', {}).get('person_id') or str(uuid.uuid4())
+                    
+                    # Lógica EMA solicitada
+                    novo_vetor = (np.array(match['embedding']) * 0.85) + (np.array(emb) * 0.15)
+                    novo_emb_list = novo_vetor.tolist()
+                    
+                    self.vector_store.update_embedding(doc_id=doc_id, new_embedding=novo_emb_list, collection=collection)
+                    return person_id, novo_emb_list
+            
+            # Novo rosto detectado
+            person_id = str(uuid.uuid4())
+            self.vector_store.add(
+                text="", 
+                embedding=emb, 
+                metadata={"person_id": person_id, "pic_id": str(pic_id), "collection": collection},
+                collection=collection 
+            )
+            return person_id, emb
+        except Exception as e:
+            logger.error(f"Erro no match_or_add_face: {e}")
+            return str(uuid.uuid4()), emb
+
+    def sync_faces_batch(self, images: List[Image.Image], pic_ids: List[str], collection: str = "faces_embeddings") -> List[List[Dict[str, Any]]]:
+        """
+        Orquestrador em lote para processar imagens e persistir no RAG.
+        Retorna: List[List[dict]] - Cada item contém: person_id, embedding e face_b64.
+        """
         results = []
         for img, pic_id in zip(images, pic_ids):
-            face_embs_list = []
-            if img is not None:
+            faces_found = []
+            if img:
                 for emb, face_crop, _ in self.get_faces_embeddings(img):
+                    # O match_or_add_face já cuida da persistência/atribuição de ID na Engine
+                    p_id, final_emb = self.match_or_add_face(emb, pic_id, collection=collection)
+                    
+                    # Converte o recorte para Base64 para o Photos salvar a imagem
                     try:
-                        matches = self.vector_store.search_with_details(query_embedding=emb, top_k=1)
-                        is_new_face = True
-                        
-                        if matches:
-                            match = matches[0]
-                            if match['distance'] < 0.60:
-                                is_new_face = False
-                                doc_id = match['id'] 
-                                novo_vetor = (np.array(match['embedding']) * 0.85) + (np.array(emb) * 0.15)
-                                novo_emb_list = novo_vetor.tolist()
-                                self.vector_store.update_embedding(doc_id=doc_id, new_embedding=novo_emb_list)
-                                face_embs_list.append(novo_emb_list)
-                        
-                        if is_new_face:
-                            person_id = str(uuid.uuid4())
-                            os.makedirs(AppConfig.FACES_PATH, exist_ok=True)
-                            cv2.imwrite(
-                                os.path.join(AppConfig.FACES_PATH, f"{person_id}.jpg"), 
-                                cv2.cvtColor(face_crop, cv2.COLOR_RGB2BGR)
-                            )
-                            self.vector_store.add(
-                                text="", 
-                                embedding=emb, 
-                                metadata={"person_id": person_id, "pic_id": str(pic_id)} 
-                            )
-                            face_embs_list.append(emb)
+                        pil_crop = Image.fromarray(face_crop)
+                        buffered = io.BytesIO()
+                        pil_crop.save(buffered, format="JPEG")
+                        face_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
                     except Exception as e:
-                        logger.error(f"Erro ao processar matemática do rosto: {e}")
-            results.append(face_embs_list)
+                        logger.error(f"Erro ao encodar crop de rosto em sync_batch: {e}")
+                        face_b64 = ""
+
+                    faces_found.append({
+                        "person_id": str(p_id),
+                        "embedding": list(final_emb) if hasattr(final_emb, "tolist") else final_emb,
+                        "face_b64": face_b64
+                    })
+            results.append(faces_found)
         return results
+
 
 class BatchProcessingService:
     def __init__(self, face_service, rag_strategy):
@@ -237,7 +266,7 @@ class BatchProcessingService:
 
         # Extrato batched faces
         pic_ids = [doc["id"] for doc in docs_to_insert]
-        batch_face_embs = self.face_service.extract_and_match_faces_batch(valid_images, pic_ids)
+        batch_face_embs = self.face_service.sync_faces_batch(valid_images, pic_ids)
 
         processed = []
         for i, doc in enumerate(docs_to_insert):

@@ -2,7 +2,7 @@ import os
 import time
 import uuid
 import base64
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 
@@ -70,6 +70,14 @@ async def describe_video(
     finally:
         if os.path.exists(saved_video_path):
             os.remove(saved_video_path)
+
+
+@router.post("/vision/face/sync")
+async def sync_faces_batch(http_request: Request, payload: Dict[str, Any]):
+    """Sincroniza rostos de múltiplas imagens em lote (Detection + Embedding + RAG Matching)."""
+    headers = dict(http_request.headers)
+    results = await bridge.process_face_sync_batch(payload, headers)
+    return JSONResponse(content={"results": results})
 
 
 @router.post("/vision/faces/extract")
@@ -165,23 +173,33 @@ async def add_rag(
     http_request: Request,
     payload: dict
 ):
-    """Adiciona um texto/descrição ao banco vetorial PGVector da Engine"""
+    """Adiciona um texto/descrição ao banco vetorial da Engine."""
     headers = dict(http_request.headers)
-    backend = headers.get("x-backend", "api")
-    
-    model = payload.get("model", "bge-micro")
-    text = payload.get("text")
-    metadata = payload.get("metadata", {})
-    collection = payload.get("collection", "july_memory")
-    
-    if not text:
+
+    if not payload.get("text"):
         return JSONResponse(status_code=400, content={"error": "O campo 'text' é obrigatório no payload."})
-        
+
     try:
-        from ..domain.memory import Memory
-        memory = Memory(backend=backend, model_tag=model)
-        success = await memory.add_to_rag(text=text, metadata=metadata, collection=collection)
-        return JSONResponse(content={"success": success, "collection": collection})
+        result = await bridge.process_rag_add(payload, headers)
+        return JSONResponse(content=result)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.post("/rag/batch")
+async def add_rag_batch(
+    http_request: Request,
+    payload: dict
+):
+    """Insere múltiplos documentos no RAG em uma única chamada."""
+    headers = dict(http_request.headers)
+
+    if not payload.get("documents"):
+        return JSONResponse(status_code=400, content={"error": "O campo 'documents' é obrigatório e não pode estar vazio."})
+
+    try:
+        result = await bridge.process_rag_batch_add(payload, headers)
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -192,20 +210,17 @@ async def search_rag(
     query: str,
     collection: str = "july_memory",
     top_k: int = 3,
-    model: str = "bge-micro"
 ):
     """Busca o contexto associado ao input num database MultiTenant/Segmentado"""
     headers = dict(http_request.headers)
-    backend = headers.get("x-backend", "api")
     
     if not query:
         return JSONResponse(status_code=400, content={"error": "A querystring 'query' é obrigatória."})
         
     try:
-        from ..domain.memory import Memory
-        memory = Memory(backend=backend, model_tag=model)
-        result = await memory.search(query=query, top_k=top_k, collection=collection)
-        return JSONResponse(content={"results": result, "collection": collection})
+        payload = {"query": query, "collection": collection, "top_k": top_k}
+        result = await bridge.process_rag_search(payload, headers)
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -216,21 +231,13 @@ async def add_rag_vector(
 ):
     """Adiciona um vetor matemático bruto (ex: Tracking de Rostos) com metadados."""
     headers = dict(http_request.headers)
-    backend = headers.get("x-backend", "api")
     
-    vector = payload.get("vector")
-    metadata = payload.get("metadata", {})
-    collection = payload.get("collection", "july_memory")
-    text = payload.get("text", "")
-    
-    if not vector:
+    if not payload.get("vector"):
          return JSONResponse(status_code=400, content={"error": "O campo 'vector' é obrigatório."})
          
     try:
-        from ..domain.memory import Memory
-        memory = Memory(backend=backend, model_tag="bge-micro")
-        success = await memory.add_vector_to_rag(embedding=vector, text=text, metadata=metadata, collection=collection)
-        return JSONResponse(content={"success": success, "collection": collection})
+        result = await bridge.process_rag_vector_add(payload, headers)
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -242,33 +249,13 @@ async def search_rag_details(
 ):
     """Busca avançada MultiModal que retorna IDs, Distâncias e Metadados."""
     headers = dict(http_request.headers)
-    backend = headers.get("x-backend", "api")
     
-    query_text = payload.get("query", None)
-    vector = payload.get("vector", None)
-    collection = payload.get("collection", "july_memory")
-    top_k = int(payload.get("top_k", 3))
-    model = payload.get("model", "bge-micro")
-    
-    if not query_text and not vector:
+    if not payload.get("query") and not payload.get("vector"):
          return JSONResponse(status_code=400, content={"error": "Envie 'query' (Texto) ou 'vector' (Matriz Float)."})
          
     try:
-        from ..domain.memory import Memory
-        memory = Memory(backend=backend, model_tag=model)
-        
-        if vector:
-            result = await memory.search_with_details_vector(query_embedding=vector, top_k=top_k, collection=collection)
-        else:
-            emb_payload = {"input": query_text}
-            embedding_result = await memory.embed(emb_payload)
-            if embedding_result and len(embedding_result) > 0:
-                emb = embedding_result[0] if isinstance(embedding_result[0], list) else embedding_result
-                result = await memory.search_with_details_vector(query_embedding=emb, top_k=top_k, collection=collection)
-            else:
-                result = []
-                
-        return JSONResponse(content={"results": result, "collection": collection})
+        result = await bridge.process_rag_search_details(payload, headers)
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -279,16 +266,13 @@ async def update_rag_embedding(
     payload: dict
 ):
     """Substitui um Vetor Específico (usado para Tracking de Rosto)"""
-    doc_id = payload.get("id")
-    vector = payload.get("vector")
+    headers = dict(http_request.headers)
     
-    if not doc_id or not vector:
+    if not payload.get("id") or not payload.get("vector"):
          return JSONResponse(status_code=400, content={"error": "Forneça 'id' e 'vector'."})
          
     try:
-        from ..domain.memory import Memory
-        memory = Memory(backend="api", model_tag="bge-micro")
-        await memory.update_embedding(doc_id=str(doc_id), new_embedding=vector)
-        return JSONResponse(content={"success": True})
+        result = await bridge.process_rag_update(payload, headers)
+        return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

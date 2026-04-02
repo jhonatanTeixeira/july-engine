@@ -154,7 +154,7 @@ class Eyes:
             single_result = self._strategy.run(single_payload)
             return [str(single_result)]
 
-    async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]]) -> List[Dict[str, Any]]:
+    async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]], collection: str = "faces_embeddings") -> List[Dict[str, Any]]:
         """High-Performance batched face orchestrator."""
         if not isinstance(images, list):
             images = [images]
@@ -169,8 +169,6 @@ class Eyes:
 
         batch_crops = []
         batch_embeddings = []
-
-        import uuid
 
         for img in images:
             for emb, face_crop, bbox in self.face_service.get_faces_embeddings(img):
@@ -209,10 +207,8 @@ class Eyes:
 
         results = []
         for emb, desc in zip(batch_embeddings, descriptions):
-            person_id = str(uuid.uuid4())
-            matches = self.face_service.vector_store.search_with_details(query_embedding=emb, top_k=1)
-            if matches and matches[0]['distance'] < 0.60:
-                person_id = matches[0].get('metadata', {}).get('person_id', person_id)
+            # Delega para o FaceService a lógica de match, EMA e inserção
+            person_id, emb = self.face_service.match_or_add_face(emb, pic_id="api_request", collection=collection)
 
             results.append({
                 "person_id": person_id,
@@ -221,6 +217,9 @@ class Eyes:
             })
             
         return results
+
+    async def sync_faces_batch(self, images: List[Image.Image], pic_ids: List[str], collection: str = "faces_embeddings") -> List[List[Dict[str, Any]]]:
+        return self.face_service.sync_faces_batch(images, pic_ids, collection)
 
     async def describe_video(self, payload: Dict) -> str:
         import os

@@ -27,19 +27,27 @@ class Memory:
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    async def embed(self, payload: Dict[str, Any]):
+    async def embed(self, payload: Dict[str, Any], emb_type: str = "passage"):
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             input_text = payload.pop("input", "")
             headers = payload.pop("headers", {})
             res = self._strategy.run_embeddings(model, input_text, headers=headers, **payload)
+            
             if inspect.iscoroutine(res):
                 res = await res
+            
             return res
             
         elif isinstance(self._strategy, (BgeMicro, MultilingualE5)):
             input_text = payload.get("input", "")
-            return self._strategy.run(input_text)
+            
+            if emb_type == 'passage':
+                return self._strategy.run_passage(input_text)
+            elif emb_type == 'query':
+                return self._strategy.run_query(input_text)
+            else:
+                raise ValueError(f"Memory: Unsupported embedding type: {emb_type}")
             
         return None
 
@@ -49,7 +57,7 @@ class Memory:
         
         # Get embedding
         payload = {"input": text}
-        embedding_result = await self.embed(payload)
+        embedding_result = await self.embed(payload, emb_type='passage')
         
         if embedding_result and len(embedding_result) > 0:
             # 🛡️ BLINDAGEM DE DIMENSÃO (Extrai o vetor corretamente)
@@ -59,6 +67,7 @@ class Memory:
                 embedding = embedding_result    # Array 1D (Local)
                 
             vector_store.add(text, embedding, metadata, collection=collection)
+
             return True
         return False
 
@@ -67,7 +76,7 @@ class Memory:
         from ..persistence.vector_store import vector_store
         
         payload = {"input": query}
-        embedding_result = await self.embed(payload)
+        embedding_result = await self.embed(payload, emb_type='query')
         
         if embedding_result and len(embedding_result) > 0:
             # 🛡️ BLINDAGEM DE DIMENSÃO (Extrai o vetor corretamente)
@@ -85,6 +94,7 @@ class Memory:
         """Adiciona um embedding pré-calculado diretamente no banco (ex: Face Embeddings)."""
         from ..persistence.vector_store import vector_store
         vector_store.add(text, embedding, metadata, collection=collection)
+        
         return True
 
     async def search_with_details_vector(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory") -> List[Dict[str, Any]]:

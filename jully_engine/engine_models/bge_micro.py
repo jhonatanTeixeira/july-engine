@@ -50,3 +50,9 @@ class BgeMicro:
         except Exception as e:
             logger.error(f"BgeMicro: Execution failed: {e}")
             raise e
+
+    def run_passage(self, input_text: str) -> List[float]:
+        return self.run(input_text)
+
+    def run_query(self, input_text: str) -> List[float]:
+        return self.run(input_text)
