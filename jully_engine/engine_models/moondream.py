@@ -1,9 +1,12 @@
+from __future__ import annotations
 import logging
 from PIL import Image
 import gc
-from typing import Any, Dict, List, Optional
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 logger = logging.getLogger("JulyEngine.Models.MoondreamVLM")
 
@@ -12,9 +15,11 @@ class MoondreamVLM:
         self.backend = backend.lower()
         self.vlm = None
         self.tokenizer = None
-        self.load_transformers()
 
     def load_transformers(self):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        
         MID = "vikhyatk/moondream2"
         # O Moondream exige que o código remoto seja confiável para carregar a arquitetura customizada
         self.tokenizer = AutoTokenizer.from_pretrained(MID, revision="2024-08-26") # A revisão crava uma versão estável
@@ -57,6 +62,9 @@ class MoondreamVLM:
             raise
 
     def run(self, payload: Dict[str, Any]):
+        if self.vlm is None:
+            self.load_transformers()
+            
         image_data = payload.get("image")
         prompt = payload.get("prompt", "Describe this image.")
         
@@ -71,6 +79,9 @@ class MoondreamVLM:
         return results[0] if results else ""
 
     def run_batch(self, images: List[Any], prompt: str):
+        if self.vlm is None:
+            self.load_transformers()
+            
         if not images: return []
 
         # 1. Carregamos as imagens do disco
@@ -84,6 +95,7 @@ class MoondreamVLM:
         # 2. Criamos uma lista com o MESMO prompt repetido para cada imagem
         prompts = [prompt] * len(pil_images)
 
+        import torch
         results = []
         with torch.no_grad():
             # 3. O Moondream2 faz toda a mágica do batching de tensores por debaixo dos panos!

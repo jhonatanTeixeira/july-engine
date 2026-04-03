@@ -1,15 +1,19 @@
+from __future__ import annotations
 import os
 import logging
-import torch
-from typing import Any, Dict
+from typing import Any, Dict, TYPE_CHECKING
 from PIL import Image
 import io
 import base64
+
+if TYPE_CHECKING:
+    import torch
 
 logger = logging.getLogger("JulyEngine.Models.Pix2Pix")
 
 class Pix2Pix:
     def __init__(self, backend="gpu"):
+        import torch
         self.backend = backend
         self.device = "cuda" if backend == "gpu" and torch.cuda.is_available() else "cpu"
         self.pipeline = None
@@ -17,6 +21,7 @@ class Pix2Pix:
 
     def load(self):
         if self.pipeline is None:
+            import torch
             try:
                 from diffusers import StableDiffusionInstructPix2PixPipeline, EulerAncestralDiscreteScheduler
                 logger.info(f"Pix2Pix: Loading model {self.model_id} on {self.device}")

@@ -1,9 +1,12 @@
+from __future__ import annotations
 import logging
 import inspect
-from typing import Any, Dict, List, Optional
-from ..engine_models.bge_micro import BgeMicro
-from ..engine_models.multilingual_e5 import MultilingualE5
-from ..engine_models.llm_api import LLMApi
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..engine_models.bge_micro import BgeMicro
+    from ..engine_models.multilingual_e5 import MultilingualE5
+    from ..engine_models.llm_api import LLMApi
 
 logger = logging.getLogger("JulyEngine.Domain.Memory")
 
@@ -19,15 +22,22 @@ class Memory:
 
     def _get_strategy(self):
         if self.backend == "api":
+            from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
         elif self.model_tag == "bge-micro":
+            from ..engine_models.bge_micro import BgeMicro
             return BgeMicro(backend=self.backend)
         elif self.model_tag == "multilingual-e5":
+            from ..engine_models.multilingual_e5 import MultilingualE5
             return MultilingualE5(backend=self.backend)
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def embed(self, payload: Dict[str, Any], emb_type: str = "passage"):
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.bge_micro import BgeMicro
+        from ..engine_models.multilingual_e5 import MultilingualE5
+
         if isinstance(self._strategy, LLMApi):
             model = payload.pop("model", self.model_tag)
             input_text = payload.pop("input", "")
@@ -126,7 +136,7 @@ class Memory:
         from ..persistence.vector_store import vector_store
         return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection)
 
-    async def update_embedding(self, doc_id: str, new_embedding: List[float]):
+    async def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory"):
         """Atualiza a coordenada geométrica de um vetor existente pelo ID."""
         from ..persistence.vector_store import vector_store
-        vector_store.update_embedding(doc_id, new_embedding)
+        vector_store.update_embedding(doc_id, new_embedding, collection=collection)

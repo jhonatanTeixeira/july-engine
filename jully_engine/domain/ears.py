@@ -1,10 +1,12 @@
+from __future__ import annotations
 import logging
 import io
 import inspect
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from ..engine_models.faster_whisper import FasterWhisper
-from ..engine_models.llm_api import LLMApi
+if TYPE_CHECKING:
+    from ..engine_models.faster_whisper import FasterWhisper
+    from ..engine_models.llm_api import LLMApi
 
 logger = logging.getLogger("JulyEngine.Domain.Ears")
 
@@ -14,15 +16,12 @@ class Ears:
     Strategies: FasterWhisper (cpu, gpu), LLMApi (api).
     Contract: listen() ALWAYS returns a pure string (str).
     """
-    def __init__(self, backend: str, model_tag: str):
-        self.backend = backend
-        self.model_tag = model_tag
-        self._strategy = self._get_strategy()
-
     def _get_strategy(self):
         if self.backend == "api":
+            from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
         elif self.backend in ["gpu", "cpu"]:
+            from ..engine_models.faster_whisper import FasterWhisper
             return FasterWhisper(backend=self.backend)
         else:
             raise ValueError(f"Ears: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
@@ -44,6 +43,9 @@ class Ears:
         return str(response)
 
     async def listen(self, audio_data: bytes, language: Optional[str] = None, payload: Optional[Dict[str, Any]] = None) -> str:
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.faster_whisper import FasterWhisper
+
         if payload is None:
             payload = {}
             

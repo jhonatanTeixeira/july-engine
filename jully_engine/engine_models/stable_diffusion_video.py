@@ -1,10 +1,14 @@
+from __future__ import annotations
 import gc
 import os
-import torch
 import warnings
 from pathlib import Path
-from diffusers import MotionAdapter, AnimateDiffPipeline, LCMScheduler
-from diffusers.utils import export_to_gif
+from typing import TYPE_CHECKING, Optional, Union, List, Any
+
+if TYPE_CHECKING:
+    import torch
+    from diffusers import MotionAdapter, AnimateDiffPipeline, LCMScheduler
+    from diffusers.utils import export_to_gif
 
 warnings.filterwarnings("ignore")
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
@@ -13,12 +17,14 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 # Utilitários de memória
 # ---------------------------------------------------------------------------
 def free_vram():
+    import torch
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.ipc_collect()
 
 def print_vram(label: str = ""):
+    import torch
     if torch.cuda.is_available():
         used = torch.cuda.memory_allocated() / 1024**3
         res = torch.cuda.memory_reserved() / 1024**3
@@ -32,8 +38,11 @@ class LCMVideoPipeline:
         self,
         base_model_path: str = "models/coldfleshRealisticLCM_v10.safetensors",
         device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
+        dtype: "torch.dtype" = None, # Will handle inside
     ):
+        import torch
+        if dtype is None:
+            dtype = torch.float16
         self.base_model_path = base_model_path
         self.device = device
         self.dtype = dtype
@@ -44,6 +53,8 @@ class LCMVideoPipeline:
         if self._loaded:
             return
 
+        from diffusers import MotionAdapter, AnimateDiffPipeline, LCMScheduler
+        
         print(">> [1/4] Baixando/Carregando Motion Adapter LCM (Aguarde, tem ~1.5GB)...")
         # Usamos o adaptador específico para LCM para manter a geração em apenas 6 passos!
         adapter = MotionAdapter.from_pretrained(
@@ -80,7 +91,6 @@ class LCMVideoPipeline:
         print_vram("Motor de Vídeo Carregado")
         print(">> Pipeline de Vídeo pronto para o laboratório!")
 
-    @torch.inference_mode()
     def generate_video(
         self,
         prompt: str,
@@ -96,22 +106,24 @@ class LCMVideoPipeline:
         if not self._loaded:
             self.load()
 
-        print_vram("Iniciando inferência 3D")
-        generator = torch.Generator(device=self.device).manual_seed(seed)
+        import torch
+        with torch.inference_mode():
+            print_vram("Iniciando inferência 3D")
+            generator = torch.Generator(device=self.device).manual_seed(seed)
 
-        # A execução vai ser lenta porque o CPU Offload joga tudo pro barramento da placa mãe
-        print(f">> Gerando {num_frames} frames ({width}x{height}) em {steps} passos...")
-        output = self.pipe(
-            prompt=prompt,
-            negative_prompt=negative_prompt,
-            num_frames=num_frames,
-            guidance_scale=guidance_scale,
-            num_inference_steps=steps,
-            generator=generator,
-        )
+            # A execução vai ser lenta porque o CPU Offload joga tudo pro barramento da placa mãe
+            print(f">> Gerando {num_frames} frames ({width}x{height}) em {steps} passos...")
+            output = self.pipe(
+                prompt=prompt,
+                negative_prompt=negative_prompt,
+                num_frames=num_frames,
+                guidance_scale=guidance_scale,
+                num_inference_steps=steps,
+                generator=generator,
+            )
 
-        print_vram("Inferência Finalizada")
-        return output.frames[0]
+            print_vram("Inferência Finalizada")
+            return output.frames[0]
 
     def unload(self):
         self.pipe = None
@@ -123,6 +135,8 @@ class LCMVideoPipeline:
 # Teste de Laboratório (Execute o arquivo diretamente)
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    from diffusers.utils import export_to_gif
+    import torch
     # Garante que o VRAM esteja limpo antes de começar a loucura
     free_vram()
     

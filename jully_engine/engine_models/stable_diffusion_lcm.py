@@ -23,6 +23,7 @@ ARQUIVOS em models/:
         config.json
         model.safetensors
 """
+from __future__ import annotations
 from diffusers.utils import logging as diffusers_logging
 diffusers_logging.disable_progress_bar()
 
@@ -30,12 +31,13 @@ import gc
 import logging
 import os
 import warnings
-
-import numpy as np
-import torch
 from pathlib import Path
 from PIL import Image
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
+    import torch
 
 warnings.filterwarnings("ignore")
 logging.getLogger("xformers").setLevel(logging.ERROR)
@@ -47,6 +49,7 @@ os.environ["XFORMERS_MORE_DETAILS"] = "0"
 # ---------------------------------------------------------------------------
 
 def free_vram():
+    import torch
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -54,6 +57,7 @@ def free_vram():
 
 
 def print_vram(label: str = ""):
+    import torch
     if torch.cuda.is_available():
         used = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
@@ -88,7 +92,7 @@ class LCMFaceIDPipeline:
         ip_adapter_path: Optional[str] = None,
         image_encoder_path: Optional[str] = None,
         device: str = "cuda",
-        dtype: torch.dtype = torch.float16,
+        dtype: "torch.dtype" = None, # Will handle inside
         use_xformers: bool = True,
         use_cpu_offload: bool = False,
         use_sequential_offload: bool = False,
@@ -97,6 +101,9 @@ class LCMFaceIDPipeline:
         use_vae_slicing = False,
         use_vae_tiling = False,
     ):
+        import torch
+        if dtype is None:
+            dtype = torch.float16
         self.use_face_id = use_face_id
         self.use_vae_slicing = use_vae_slicing
         self.use_vae_tiling = use_vae_tiling
@@ -233,8 +240,10 @@ class LCMFaceIDPipeline:
     # Extração de face
     # ------------------------------------------------------------------
 
-    def extract_face_embeds(self, face_image: Union[Image.Image, np.ndarray]) -> torch.Tensor:
+    def extract_face_embeds(self, face_image: Union[Image.Image, "np.ndarray"]) -> "torch.Tensor":
         """Extrai normed_embedding via InsightFace. Retorna Tensor [1, 512]."""
+        import numpy as np
+        import torch
         if isinstance(face_image, Image.Image):
             img_bgr = np.array(face_image.convert("RGB"))[:, :, ::-1]
         else:
@@ -248,9 +257,10 @@ class LCMFaceIDPipeline:
         return torch.from_numpy(face.normed_embedding).unsqueeze(0)
 
     def _preprocess_face_image(
-        self, image: Union[Image.Image, np.ndarray], crop: bool = True
+        self, image: Union[Image.Image, "np.ndarray"], crop: bool = True
     ) -> Image.Image:
         """Crop na face + resize 512x512 (equivale ao Crop and Resize do ControlNet)."""
+        import numpy as np
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image[:, :, ::-1])
         image = image.convert("RGB")
@@ -272,11 +282,10 @@ class LCMFaceIDPipeline:
     # Inferência
     # ------------------------------------------------------------------
 
-    @torch.inference_mode()
     def __call__(
         self,
         prompt: str,
-        face_image: Optional[Union[Image.Image, np.ndarray]] = None,
+        face_image: Optional[Union[Image.Image, "np.ndarray"]] = None,
         negative_prompt: str = "",
         num_inference_steps: int = 10,
         guidance_scale: float = 1.5,
@@ -297,70 +306,72 @@ class LCMFaceIDPipeline:
         if not self._loaded:
             self.load()
 
-        scale = ip_adapter_scale if ip_adapter_scale is not None else self.ip_adapter_scale
-        print_vram("Antes da inferência")
-        
-        if not self.use_face_id:
-            generator = None
+        import torch
+        with torch.inference_mode():
+            scale = ip_adapter_scale if ip_adapter_scale is not None else self.ip_adapter_scale
+            print_vram("Antes da inferência")
+            
+            if not self.use_face_id:
+                generator = None
 
-            if seed is not None:
-                generator = torch.Generator(device=self.device).manual_seed(seed)
+                if seed is not None:
+                    generator = torch.Generator(device=self.device).manual_seed(seed)
 
-            result = self.pipe(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                width=width,
-                height=height,
-                generator=generator,
-                num_images_per_prompt=num_images_per_prompt,
-            )
-            images = result.images
+                result = self.pipe(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    width=width,
+                    height=height,
+                    generator=generator,
+                    num_images_per_prompt=num_images_per_prompt,
+                )
+                images = result.images
 
-        elif face_image is not None:
-            # ---- COM face ----
-            face_pil         = self._preprocess_face_image(face_image, crop=crop_face)
-            faceid_embeds    = self.extract_face_embeds(face_pil)
+            elif face_image is not None:
+                # ---- COM face ----
+                face_pil         = self._preprocess_face_image(face_image, crop=crop_face)
+                faceid_embeds    = self.extract_face_embeds(face_pil)
 
-            images = self.ip_model.generate(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                face_image=face_pil,         # usado pelo CLIP encoder interno
-                faceid_embeds=faceid_embeds, # usado pelo InsightFace proj
-                shortcut=shortcut,
-                s_scale=scale,
-                num_samples=num_images_per_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                seed=seed if seed is not None else -1,
-            )
+                images = self.ip_model.generate(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    face_image=face_pil,         # usado pelo CLIP encoder interno
+                    faceid_embeds=faceid_embeds, # usado pelo InsightFace proj
+                    shortcut=shortcut,
+                    s_scale=scale,
+                    num_samples=num_images_per_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    seed=seed if seed is not None else -1,
+                )
 
-        else:
+            else:
 
-            dummy_pil    = Image.new('RGB', (512, 512))
-            dummy_embeds = torch.zeros((1, 512), dtype=self.dtype, device=self.device)
+                dummy_pil    = Image.new('RGB', (512, 512))
+                dummy_embeds = torch.zeros((1, 512), dtype=self.dtype, device=self.device)
 
-            images = self.ip_model.generate(
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                face_image=dummy_pil,        # CLIP processa o nada
-                faceid_embeds=dummy_embeds,  # Tensor zerado (sem rosto)
-                shortcut=shortcut,
-                s_scale=0.0,                 # A MAGIA: Multiplica o IP-Adapter por ZERO
-                num_samples=num_images_per_prompt,
-                width=width,
-                height=height,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                seed=seed if seed is not None else -1,
-            )
-                            
-        print_vram("Após inferência")
-        free_vram()
-        return images
+                images = self.ip_model.generate(
+                    prompt=prompt,
+                    negative_prompt=negative_prompt,
+                    face_image=dummy_pil,        # CLIP processa o nada
+                    faceid_embeds=dummy_embeds,  # Tensor zerado (sem rosto)
+                    shortcut=shortcut,
+                    s_scale=0.0,                 # A MAGIA: Multiplica o IP-Adapter por ZERO
+                    num_samples=num_images_per_prompt,
+                    width=width,
+                    height=height,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    seed=seed if seed is not None else -1,
+                )
+                                
+            print_vram("Após inferência")
+            free_vram()
+            return images
 
     # ------------------------------------------------------------------
     # Utilitários

@@ -1,11 +1,14 @@
+from __future__ import annotations
 import os
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from httpx import HTTPStatusError
-import litellm
-from litellm import completion, embedding, image_generation, transcription, speech, acompletion, aembedding, aimage_generation, atranscription, aspeech
 
-litellm.drop_params = True
+if TYPE_CHECKING:
+    import litellm
+    from litellm import completion, embedding, image_generation, transcription, speech, acompletion, aembedding, aimage_generation, atranscription, aspeech
+
+# Configuração global agora será feita sob demanda
 
 logger = logging.getLogger("JulyEngine.Models.LLMApi")
 
@@ -29,6 +32,10 @@ class LLMApi:
 
     async def run_chat(self, model: str, messages: List[Dict[str, Any]], stream: bool = False, headers: Optional[Dict[str, str]] = None, **kwargs):
         """Runs chat/vision completions via litellm."""
+        import litellm
+        from litellm import acompletion
+        litellm.drop_params = True
+
         reasoning_enabled = kwargs.pop("reasoning_enabled", None)
         reasoning_effort = kwargs.pop("reasoning_effort", None)
         
@@ -65,6 +72,10 @@ class LLMApi:
 
     async def run_embeddings(self, model: str, input_text: Union[str, List[str]], headers: Optional[Dict[str, str]] = None, **kwargs):
         """Runs embeddings via litellm."""
+        import litellm
+        from litellm import aembedding
+        litellm.drop_params = True
+
         params = {
             "model": model,
             "input": [input_text] if isinstance(input_text, str) else input_text,
@@ -89,6 +100,10 @@ class LLMApi:
 
     async def run_tts(self, model: str, text: str, voice: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> bytes:
         """Runs text-to-speech via litellm (OpenAI compatible)."""
+        import litellm
+        from litellm import aspeech
+        litellm.drop_params = True
+
         params = {
             "model": model,
             "input": text,
@@ -114,6 +129,10 @@ class LLMApi:
 
     async def run_stt(self, model: str, audio_file: Any, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
         """Runs speech-to-text via litellm."""
+        import litellm
+        from litellm import atranscription
+        litellm.drop_params = True
+
         params = {
             "model": model,
             "file": audio_file,
@@ -155,6 +174,10 @@ class LLMApi:
 
     async def run_image_gen(self, model: str, prompt: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
         """Runs image generation via litellm. Returns base64 string."""
+        import litellm
+        from litellm import aimage_generation
+        litellm.drop_params = True
+
         params = {
             "model": model,
             "prompt": prompt,

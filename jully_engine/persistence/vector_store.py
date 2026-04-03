@@ -18,7 +18,10 @@ class VectorStore:
                 db_path = os.path.join(base_dir, "storage", "db", "chroma")
                 os.makedirs(db_path, exist_ok=True)
                 self.client = chromadb.PersistentClient(path=db_path)
-                self.collection = self.client.get_or_create_collection(name=self.collection_name)
+                self.collection = self.client.get_or_create_collection(
+                    name=self.collection_name,
+                    metadata={"hnsw:space": "cosine"}
+                )
             except ImportError:
                 logger.error("ChromaDB not installed. Fallback to in-memory.")
                 self.db_type = "in-memory"

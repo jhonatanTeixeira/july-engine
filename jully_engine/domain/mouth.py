@@ -1,14 +1,17 @@
+from __future__ import annotations
 import logging
 import os
 import json
 import inspect
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
-from ..engine_models.replicate_api import Replicate
-from ..engine_models.xtts2 import XTTS2
-from ..engine_models.piper import Piper
-from ..engine_models.llm_api import LLMApi
-from ..engine_models.kokoro_tts import KokoroTTS
+if TYPE_CHECKING:
+    from ..engine_models.replicate_api import Replicate
+    from ..engine_models.xtts2 import XTTS2
+    from ..engine_models.piper import Piper
+    from ..engine_models.llm_api import LLMApi
+    from ..engine_models.kokoro_tts import KokoroTTS
+
 from ..persistence import get_backend
 
 logger = logging.getLogger("JulyEngine.Domain.Mouth")
@@ -28,22 +31,33 @@ class Mouth:
     def _get_strategy(self):
         if self.backend == "api":
             if self.model_tag.startswith('replicate/'):
+                from ..engine_models.replicate_api import Replicate
                 return Replicate()
             
+            from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
         elif self.model_tag == "xtts":
+            from ..engine_models.xtts2 import XTTS2
             return XTTS2(backend=self.backend)
         elif self.model_tag == "piper":
+            from ..engine_models.piper import Piper
             return Piper(backend=self.backend)
         elif self.model_tag.startswith("kokoro"):
+            from ..engine_models.kokoro_tts import KokoroTTS
             return KokoroTTS(backend=self.backend, model_tag=self.model_tag)
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
+        from ..engine_models.replicate_api import Replicate
+        from ..engine_models.xtts2 import XTTS2
+        from ..engine_models.piper import Piper
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.kokoro_tts import KokoroTTS
+
         # For local strategies, unpack payload
         text = payload.get("input", payload.get("text", ""))
-
+        
         headers: dict = payload.get("headers", {})
         
         from ..persistence import get_backend

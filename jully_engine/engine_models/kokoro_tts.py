@@ -1,11 +1,13 @@
-from ast import Dict
+from __future__ import annotations
 import os
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 from io import BytesIO
-import numpy as np
-import soundfile as sf
-from kokoro import KPipeline
+
+if TYPE_CHECKING:
+    import numpy as np
+    import soundfile as sf
+    from kokoro import KPipeline
 
 logger = logging.getLogger("JulyEngine.Models.KokoroTTS")
 
@@ -18,7 +20,8 @@ class KokoroTTS:
         self.lang_code = None
 
     def load(self, lang_code='a'):
-        if self.pipeline is None and lang_code != self.lang_code:
+        if self.pipeline is None or lang_code != self.lang_code:
+            from kokoro import KPipeline
             try:
                 logger.info(f"KokoroTTS: Loading model on {self.device}")
                 # You typically specify language code 'a' for American English, etc.
@@ -50,8 +53,10 @@ class KokoroTTS:
             if not audio_segments:
                 raise ValueError("No audio generated")
                 
+            import numpy as np
             final_audio = np.concatenate(audio_segments)
             
+            import soundfile as sf
             # Convert to WAV bytes in memory
             buffer = BytesIO()
             # Kokoro sample rate is usually 24000

@@ -1,10 +1,13 @@
+from __future__ import annotations
 import os
 import logging
-import cv2
-import numpy as np
-import onnxruntime as ort
 from PIL import Image
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, Union, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import cv2
+    import numpy as np
+    import onnxruntime as ort
 
 logger = logging.getLogger("JulyEngine.Models.Emotion")
 
@@ -17,6 +20,7 @@ class Emotion:
 
     def load(self):
         if self.session is None:
+            import onnxruntime as ort
             try:
                 logger.info(f"Emotion: Loading model from {self.model_path}")
                 self.session = ort.InferenceSession(self.model_path, providers=['CPUExecutionProvider'])
@@ -35,6 +39,7 @@ class Emotion:
         return self._run_single(image)
 
     def _run_single(self, image: Image.Image) -> str:
+        import numpy as np
         img_rgb = np.array(image.convert('RGB'))
         input_data = self.face_detector.detect_faces(img_rgb)
 

@@ -1,20 +1,21 @@
 import os
 import logging
 from typing import List
-from sentence_transformers import SentenceTransformer
-import torch
 
 logger = logging.getLogger("JulyEngine.Models.MultilingualE5")
 
 class MultilingualE5:
     def __init__(self, backend="gpu"):
         self.backend = backend
-        self.device = "cuda" if backend == "gpu" and torch.cuda.is_available() else "cpu"
+        self.device = "cpu" # Default until load()
         self.model_id = "intfloat/multilingual-e5-small"
         self.model = None
 
     def load(self):
         if self.model is None:
+            import torch
+            self.device = "cuda" if self.backend == "gpu" and torch.cuda.is_available() else "cpu"
+            from sentence_transformers import SentenceTransformer
             try:
                 logger.info(f"MultilingualE5: Loading model {self.model_id} on {self.device}")
                 self.model = SentenceTransformer(self.model_id, device=self.device)

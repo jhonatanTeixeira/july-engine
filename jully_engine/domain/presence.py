@@ -1,14 +1,16 @@
+from __future__ import annotations
 import logging
 import base64
 import io
 import os
 from PIL import Image
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
-from ..engine_models.pix2pix import Pix2Pix
-from ..engine_models.llm_api import LLMApi
-from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
-from ..engine_models.stable_diffusion_video import LCMVideoPipeline
+if TYPE_CHECKING:
+    from ..engine_models.pix2pix import Pix2Pix
+    from ..engine_models.llm_api import LLMApi
+    from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
+    from ..engine_models.stable_diffusion_video import LCMVideoPipeline
 
 logger = logging.getLogger("JulyEngine.Domain.Presence")
 
@@ -24,12 +26,16 @@ class Presence:
 
     def _get_strategy(self):
         if self.backend == "api":
+            from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
         elif self.model_tag == "pix2pix":
+            from ..engine_models.pix2pix import Pix2Pix
             return Pix2Pix(backend=self.backend)
         elif self.model_tag == "lcm":
+            from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
             return LCMFaceIDPipeline(use_face_id=False, use_cpu_offload=True)
         elif self.model_tag == "video":
+            from ..engine_models.stable_diffusion_video import LCMVideoPipeline
             return LCMVideoPipeline()
         else:
             raise ValueError(f"Presence: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
@@ -47,6 +53,9 @@ class Presence:
         return None
 
     async def edit(self, payload: Dict[str, Any]):
+        from ..engine_models.pix2pix import Pix2Pix
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
         from ..persistence import get_backend
 
         headers: dict = payload.setdefault("headers", {})
@@ -120,6 +129,10 @@ class Presence:
         return None
 
     async def generate(self, payload: Dict[str, Any]):
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.pix2pix import Pix2Pix
+        from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
+
         headers = payload.get("headers", {})
         
         from ..persistence import get_backend
@@ -159,6 +172,8 @@ class Presence:
         return None
 
     async def generate_video(self, payload: Dict[str, Any]):
+        from ..engine_models.stable_diffusion_video import LCMVideoPipeline
+        
         if isinstance(self._strategy, LCMVideoPipeline):
             frames = self._strategy.generate_video(
                 prompt=payload.get("prompt", ""),

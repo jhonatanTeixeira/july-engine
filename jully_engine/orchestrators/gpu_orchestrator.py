@@ -456,7 +456,8 @@ class GpuOrchestrator:
                 raise HTTPException(status_code=500, detail=msg.get("data"))
                 
             elif m_type == "DONE":
-                self.mark_idle(model_key) 
+                self.mark_idle(model_key)
+                resource_manager.clear_memory()
                 return msg.get("data")
                 
             elif m_type == "CHUNK":

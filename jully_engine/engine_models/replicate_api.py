@@ -1,10 +1,12 @@
+from __future__ import annotations
 from csv import Error
 import os
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 import logging
 
-import replicate
-import replicate.client
+if TYPE_CHECKING:
+    import replicate
+    import replicate.client
 
 
 logger =  logging.getLogger("JulyEngine.Models.Replicate")
@@ -85,6 +87,8 @@ class Replicate:
                 logger.info(f"Replicate TTS Payload: {log_data}")
 
                 import asyncio
+                import replicate
+                import replicate.client
                 client = replicate.client.Client(api_token=self._extract_api_key(headers))
                 
                 def _do_run():

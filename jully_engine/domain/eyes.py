@@ -1,18 +1,21 @@
+from __future__ import annotations
 import asyncio
 import logging
 import base64
 import io
 import json
 from PIL import Image
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ..engine_models.tagger import ONNXTagger
+    from ..engine_models.gguf import GGUF
+    from ..engine_models.fastvlm import FastVLM
+    from ..engine_models.emotion import Emotion
+    from ..engine_models.llm_api import LLMApi
+    from ..engine_models.moondream import MoondreamVLM
 
 from ..services.vision import FaceDetector, FaceService
-from ..engine_models.tagger import ONNXTagger
-from ..engine_models.gguf import GGUF
-from ..engine_models.fastvlm import FastVLM
-from ..engine_models.emotion import Emotion
-from ..engine_models.llm_api import LLMApi
-from ..engine_models.moondream import MoondreamVLM
 
 logger = logging.getLogger("JulyEngine.Domain.Eyes")
 
@@ -30,20 +33,26 @@ class Eyes:
 
     def _get_strategy(self):
         if self.backend == "api":
+            from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
         elif self.model_tag == "emotion":
+            from ..engine_models.emotion import Emotion
             return Emotion(FaceDetector(), backend="cpu")
         elif self.model_tag == "fastvlm":
+            from ..engine_models.fastvlm import FastVLM
             return FastVLM(backend=self.backend)
         elif self.model_tag == "moondream":
+            from ..engine_models.moondream import MoondreamVLM
             return MoondreamVLM(backend=self.backend)
         elif self.model_tag == "tagger" and self.backend == 'cpu':
+            from ..engine_models.tagger import ONNXTagger
             return ONNXTagger()
         
         from ..persistence.persistence import get_backend
         model = get_backend().get_model(self.model_tag)
 
         if self.backend in ["gpu", "cpu"]:
+            from ..engine_models.gguf import GGUF
             return GGUF(backend=self.backend, model=model)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
@@ -62,7 +71,48 @@ class Eyes:
             return response.get("choices", [{}])[0].get("message", {}).get("content", str(response))
         return str(response)
 
+    def _sanitize_image(self, base64_str: str, max_size: int = 1024) -> str:
+        """
+        Decodifica, redimensiona (downscale) mantendo a proporção, 
+        comprime para JPEG e devolve em Base64.
+        """
+        import base64
+        import io
+        from PIL import Image
+
+        try:
+            # 1. Decodifica o base64
+            img_data = base64.b64decode(base64_str)
+            img = Image.open(io.BytesIO(img_data))
+            
+            # Remove o canal Alpha (Transparência) se for PNG, pois VLMs preferem RGB puro
+            if img.mode in ('RGBA', 'P'):
+                img = img.convert('RGB')
+            elif img.mode != 'RGB':
+                img = img.convert('RGB')
+
+            # 2. Downscale super rápido e seguro
+            # Se a imagem for menor que max_size, o thumbnail não faz nada!
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # 3. Re-encoda para JPEG com compressão leve
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG", quality=85)
+            
+            return base64.b64encode(buffer.getvalue()).decode("utf-8")
+        except Exception as e:
+            # Se falhar (ex: string malformada), devolve o original e reza para a Engine aguentar
+            logger.warning(f"Falha ao sanitizar imagem. Usando original: {e}")
+            return base64_str
+
     async def analyze(self, payload: Dict[str, Any]) -> List[str]:
+        from ..engine_models.llm_api import LLMApi
+        from ..engine_models.gguf import GGUF
+        from ..engine_models.emotion import Emotion
+        from ..engine_models.tagger import ONNXTagger
+        from ..engine_models.fastvlm import FastVLM
+        from ..engine_models.moondream import MoondreamVLM
+
         headers = payload.get("headers", {})
         
         from ..persistence import get_backend
@@ -82,10 +132,20 @@ class Eyes:
                 headers["authorization"] = f"Bearer {config['api_key']}"
 
         # 1. Rotas Nativas OpenAI (LLMApi e GGUF)
-        # Ambas recebem o payload limpo e retornam [String]
         if isinstance(self._strategy, (LLMApi, GGUF)):
             messages = payload.pop("messages", [])
-            stream = payload.pop("stream", False) # Forçamos False para garantir o contrato List[str]
+            stream = payload.pop("stream", False)
+            
+            for msg in messages:
+                content = msg.get("content", [])
+                if isinstance(content, list):
+                    for part in content:
+                        if part.get("type") == "image_url":
+                            url = part["image_url"]["url"]
+                            if url.startswith("data:image"):
+                                header, raw_b64 = url.split(",", 1)
+                                small_b64 = self._sanitize_image(raw_b64, max_size=1024)
+                                part["image_url"]["url"] = f"data:image/jpeg;base64,{small_b64}"
             
             if isinstance(self._strategy, LLMApi):
                 model = payload.pop("model", self.model_tag)
@@ -111,7 +171,11 @@ class Eyes:
                 for part in content:
                     if part.get("type") == "image_url":
                         url = part["image_url"]["url"]
-                        extracted_images.append(url.split(",")[1] if url.startswith("data:") else url)
+                        raw_b64 = url.split(",", 1)[1] if url.startswith("data:") else url
+                        
+                        safe_b64 = self._sanitize_image(raw_b64, max_size=768)
+                        extracted_images.append(safe_b64)
+                        
                     elif part.get("type") == "text":
                         extracted_prompt = part.get("text", "")
 
@@ -124,7 +188,6 @@ class Eyes:
             results = []
             for img_data in extracted_images:
                 img = self.decode_image(img_data)
-                # Garante que o retorno do Emotion vira texto (mesmo que seja dict nativamente)
                 raw_res = self._strategy.run(img)
                 text_res = json.dumps(raw_res) if isinstance(raw_res, dict) else str(raw_res)
                 results.append(text_res)
@@ -134,7 +197,6 @@ class Eyes:
             results = []
             for img_data in extracted_images:
                 tags = self._strategy.tag(self.decode_image(img_data))
-                # Tagger retorna lista de tags. Juntamos tudo em uma string separada por vírgula.
                 if isinstance(tags, list):
                     results.append(", ".join(str(t) for t in tags))
                 else:
@@ -144,12 +206,10 @@ class Eyes:
         elif isinstance(self._strategy, (FastVLM, MoondreamVLM)):
             if len(extracted_images) > 1:
                 batch_result = self._strategy.run_batch(extracted_images, extracted_prompt)
-                # Se o batch já retornar lista, converte os itens. Se não, envelopa.
                 if isinstance(batch_result, list):
                     return [str(r) for r in batch_result]
                 return [str(batch_result)]
             
-            # Execução de imagem única
             single_payload = {"image": extracted_images[0], "prompt": extracted_prompt}
             single_result = self._strategy.run(single_payload)
             return [str(single_result)]

@@ -1,10 +1,12 @@
+from __future__ import annotations
 import logging
 from PIL import Image
 import gc
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+if TYPE_CHECKING:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 logger = logging.getLogger("JulyEngine.Models.FastVLM")
 
@@ -14,9 +16,11 @@ class FastVLM:
         self.vlm = None
         self.tokenizer = None
         self.IMAGE_TOKEN_INDEX = -200
-        self.load_transformers()
 
     def load_transformers(self):
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
+        
         MID = "apple/FastVLM-0.5B"
         
         # O Tokenizer é leve e agnóstico, carrega igual para ambos
@@ -66,6 +70,9 @@ class FastVLM:
             raise
 
     def run(self, payload: Dict[str, Any]):
+        if self.vlm is None:
+            self.load_transformers()
+            
         image_data = payload.get("image")
         prompt = payload.get("prompt", "Describe this image.")
         
@@ -81,6 +88,10 @@ class FastVLM:
         return results[0] if results else ""
 
     def run_batch(self, images: List[Any], prompt: str):
+        if self.vlm is None:
+            self.load_transformers()
+            
+        import torch
         batch_len = len(images)
         if batch_len == 0: return []
 
@@ -102,7 +113,7 @@ class FastVLM:
         b_pre = pre_ids.repeat(batch_len, 1)
         b_img = torch.tensor([[self.IMAGE_TOKEN_INDEX]] * batch_len, dtype=pre_ids.dtype)
         b_post = post_ids.repeat(batch_len, 1)
-
+        
         input_ids = torch.cat([b_pre, b_img, b_post], dim=1).to(self.vlm.device)
         attention_mask = torch.ones_like(input_ids, device=self.vlm.device)
 

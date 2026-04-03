@@ -4,10 +4,8 @@ import re
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
 import uuid
-from llama_cpp import Llama
-from huggingface_hub import hf_hub_download
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("JulyEngine.Models.GGUF")
 
@@ -42,7 +40,8 @@ class GGUF:
             if self.model.n_ctx() == effective_n_ctx:
                 logger.debug(f"GGUF: Modelo {self.meta['model_alias']} já carregado. Reaproveitando!")
                 return
-
+        
+        from huggingface_hub import hf_hub_download
         model_path = hf_hub_download(repo_id=meta["model_id"], filename=meta["filename"])
 
         try:
@@ -77,6 +76,7 @@ class GGUF:
                     from llama_cpp.llama_chat_format import Llava15ChatHandler
                     params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
 
+            from llama_cpp import Llama
             self.model = Llama(**params)
             
         except Exception as e:

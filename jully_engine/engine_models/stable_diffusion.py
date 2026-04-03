@@ -1,41 +1,42 @@
+from __future__ import annotations
 import logging
-import torch
-import cv2
-import numpy as np
 import os
 from PIL import Image
-from typing import Optional
+from typing import Optional, TYPE_CHECKING, List, Dict, Any, Union
 
-# As variáveis antimorte do Hugging Face OBRIGATÓRIAS no topo
-os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "300"
-os.environ["HF_HUB_MAX_RETRIES"] = "10"
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-
-from diffusers import StableDiffusionPipeline, LCMScheduler
-from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
-from insightface.app import FaceAnalysis
+if TYPE_CHECKING:
+    import torch
+    import cv2
+    import numpy as np
+    from diffusers import StableDiffusionPipeline, LCMScheduler
+    from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+    from insightface.app import FaceAnalysis
 
 logger = logging.getLogger("JulyEngine.Models.StableDiffusion")
 
 class StableDiffusion:
     def __init__(self, model_path: str, lora_path: str, backend: str = 'gpu'):
+        import torch
         self.backend = backend.lower()
         self.device = "cuda" if self.backend == 'gpu' and torch.cuda.is_available() else "cpu"
         self.dtype = torch.float16 if self.device == "cuda" else torch.float32
         self.pipe = None
         self.face_app = None
-        
-        self.load_insightface()
-        self.load_pipeline(model_path, lora_path)
+        self.model_path = model_path
+        self.lora_path = lora_path
 
     def load_insightface(self):
         """Inicializa o extrator biométrico 512-d na CPU"""
+        from insightface.app import FaceAnalysis
         logger.info("Carregando motor biométrico InsightFace (CPU)...")
         self.face_app = FaceAnalysis(name="buffalo_l", providers=['CPUExecutionProvider'])
         self.face_app.prepare(ctx_id=0, det_size=(640, 640))
 
 
     def load_pipeline(self, model_path: str, lora_path: str):
+        from diffusers import StableDiffusionPipeline, LCMScheduler
+        from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
+        
         logger.info(f"Carregando motor SD 1.5 LCM na {self.device.upper()}...")
 
         try:
@@ -92,8 +93,9 @@ class StableDiffusion:
             logger.error(f"Falha fatal ao inicializar o motor SD: {e}")
             raise
 
-    def _get_clip_image_embeds(self, pil_image: Image.Image) -> torch.Tensor:
+    def _get_clip_image_embeds(self, pil_image: Image.Image) -> "torch.Tensor":
         """Extrai embedding CLIP para o IP-Adapter Plus."""
+        import torch
         # O pipe tem o image_encoder e o feature_extractor carregados
         clip_input = self.pipe.feature_extractor(
             images=pil_image,
@@ -107,8 +109,11 @@ class StableDiffusion:
         return image_embeds.unsqueeze(1)  # [1, 1, 768]
 
 
-    def _get_faceid_embeds(self, pil_image: Image.Image) -> Optional[torch.Tensor]:
+    def _get_faceid_embeds(self, pil_image: Image.Image) -> Optional["torch.Tensor"]:
         """Extrai embedding biométrico 512-d para o IP-Adapter FaceID."""
+        import cv2
+        import numpy as np
+        import torch
         face_bgr = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         faces = self.face_app.get(face_bgr)
 
@@ -119,7 +124,6 @@ class StableDiffusion:
         emb = torch.tensor(faces[0].normed_embedding, dtype=self.dtype)
         return emb.unsqueeze(0).unsqueeze(0).to(self.device)  # [1, 1, 512]
 
-
     def generate(self,
                 prompt: str,
                 negative_prompt: str = "",
@@ -129,6 +133,12 @@ class StableDiffusion:
                 cfg_scale: float = 1.5,
                 width: int = 512,
                 height: int = 512) -> Image.Image:
+
+        if self.pipe is None:
+            self.load_insightface()
+            self.load_pipeline(self.model_path, self.lora_path)
+
+        import torch
 
         # --- 1. Pré-computar todos os embeddings ---
         plus_embeds = None
@@ -161,6 +171,7 @@ class StableDiffusion:
         # --- 4. Geração ---
         generator = torch.Generator(device=self.device).manual_seed(42)
 
+        import torch
         with torch.inference_mode():
             result = self.pipe(
                 prompt=prompt,
@@ -185,6 +196,7 @@ class StableDiffusion:
             del self.pipe
             self.pipe = None
             
+        import torch
         import gc
         gc.collect()
         if torch.cuda.is_available():

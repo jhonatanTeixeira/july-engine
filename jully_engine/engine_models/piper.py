@@ -1,8 +1,11 @@
+from __future__ import annotations
 import os
 import logging
 import subprocess
-from typing import Any, Dict, Optional
-from huggingface_hub import hf_hub_download
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger("JulyEngine.Models.Piper")
 
@@ -31,6 +34,7 @@ class Piper:
             
             if not os.path.exists(local_onnx_path):
                 logger.info(f"Piper: Downloading {hf_path} from {repo_id}...")
+                from huggingface_hub import hf_hub_download
                 try:
                     # Use absolute path for download
                     dl_path = hf_hub_download(repo_id=repo_id, filename=hf_path, local_dir=self.voices_dir, local_dir_use_symlinks=False)

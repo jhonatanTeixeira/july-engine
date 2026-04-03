@@ -1,11 +1,14 @@
+from __future__ import annotations
 import os
 import csv
 import logging
-import numpy as np
-import onnxruntime as ort
 from PIL import Image
-from typing import Dict, Any, List
-from huggingface_hub import hf_hub_download
+from typing import Dict, Any, List, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
+    import onnxruntime as ort
+    from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger("JulyEngine.Domain.Tagger")
 
@@ -29,6 +32,8 @@ class ONNXTagger:
             
         try:
             logger.info(f"ONNXTagger: Baixando/Verificando cache do modelo {self.repo_id}...")
+            from huggingface_hub import hf_hub_download
+            import onnxruntime as ort
             
             # 1. Download On The Fly (Usa cache se já existir)
             model_path = hf_hub_download(
@@ -78,8 +83,9 @@ class ONNXTagger:
         except Exception as e:
             logger.error(f"ONNXTagger: Failed to read tags CSV: {e}")
 
-    def _preprocess(self, image: Image.Image) -> np.ndarray:
+    def _preprocess(self, image: Image.Image) -> "np.ndarray":
         """Prepara a imagem mantendo a proporção (padding) e convertendo para BGR float32"""
+        import numpy as np
         # Converte para RGB para garantir consistência (remove alpha channel)
         image = image.convert("RGB")
         

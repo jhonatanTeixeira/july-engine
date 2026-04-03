@@ -1,3 +1,4 @@
+from __future__ import annotations
 import abc
 import asyncio
 import base64
@@ -7,16 +8,14 @@ import logging
 import os
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Generator, Optional, Union
-
-import cv2
-import numpy as np
-import mediapipe as mp
-from deepface import DeepFace
-from exif import Image as ExifImage
-from mediapipe.tasks import python
-from mediapipe.tasks.python import vision
+from typing import List, Dict, Any, Tuple, Generator, Optional, Union, TYPE_CHECKING
 from PIL import Image
+
+if TYPE_CHECKING:
+    import cv2
+    import numpy as np
+    import mediapipe as mp
+    from deepface import DeepFace
 
 from ..persistence.vector_store import vector_store
 
@@ -32,6 +31,7 @@ class AppConfig:
 class ExifService:
     @staticmethod
     def extract_metadata(file_path: str):
+        from exif import Image as ExifImage
         date_val, lat, lon = None, 0.0, 0.0
         try:
             with open(file_path, 'rb') as image_file:
@@ -59,12 +59,15 @@ class ExifService:
 
 
 class FaceDetector:
-    def __init__(self, model_path='storage/models/detector.tflite', min_confidence=0.2):
+    def __init__(self, model_path='storage/models/detector.tflite', min_confidence=0.3):
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
         base_options = python.BaseOptions(model_asset_path=model_path)
         options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=min_confidence)
         self.detector = vision.FaceDetector.create_from_options(options)
 
-    def detect_faces(self, img_rgb: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    def detect_faces(self, img_rgb: "np.ndarray") -> List[Tuple[int, int, int, int]]:
+        import mediapipe as mp
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
         detection_result = self.detector.detect(mp_image)
         faces = []
@@ -82,12 +85,15 @@ class FaceService:
         self.detector = FaceDetector(model_path=detector_model_path)
         self.vector_store = vector_store
         
-    def get_faces_embeddings(self, image: Image.Image) -> Generator[Tuple[List[float], np.ndarray, Tuple[int, int, int, int]], None, None]:
+    def get_faces_embeddings(self, image: Image.Image) -> Generator[Tuple[List[float], "np.ndarray", Tuple[int, int, int, int]], None, None]:
+        import numpy as np
+        import cv2 # Necessário para a conversão de cores
+        
+        # Mantém RGB para o MediaPipe
         img_np = np.array(image.convert('RGB'))
         faces_coords = self.detector.detect_faces(img_np)
 
         for (x1, y1, x2, y2) in faces_coords:
-            # 1. Expandir a Bounding Box (MediaPipe corta muito rente. O ArcFace precisa ver o queixo/testa)
             margin_w = int((x2 - x1) * 0.2)
             margin_h = int((y2 - y1) * 0.2)
             
@@ -96,22 +102,31 @@ class FaceService:
             x2_m = min(img_np.shape[1], x2 + margin_w)
             y2_m = min(img_np.shape[0], y2 + margin_h)
             
-            face_crop = img_np[y1_m:y2_m, x1_m:x2_m]
-            if face_crop.size == 0: 
+            face_crop_rgb = img_np[y1_m:y2_m, x1_m:x2_m]
+
+            if face_crop_rgb.size == 0: 
                 continue
 
+            # 2. A CORREÇÃO MÁGICA: Converte de RGB para BGR para o DeepFace ver as cores certas
+            face_crop_bgr = cv2.cvtColor(face_crop_rgb, cv2.COLOR_RGB2BGR)
+
             try:
+                from deepface import DeepFace
                 rep = DeepFace.represent(
-                    img_path=face_crop, 
+                    img_path=face_crop_bgr, # Passando a matriz BGR!
                     model_name="ArcFace",
-                    # 2. Pare de pular o detector! Use opencv (é leve e rápido) para ele poder Alinhar os olhos
                     detector_backend="opencv", 
-                    enforce_detection=False,
-                    align=True
+                    enforce_detection=True, 
+                    align=False # 3. Desligamos o alinhamento para parar de deitar as fotos
                 )
-                yield rep[0]["embedding"], face_crop, (x1, y1, x2, y2)
+                # Devolve o face_crop_rgb para o frontend exibir a foto com as cores normais
+                yield rep[0]["embedding"], face_crop_rgb, (x1, y1, x2, y2)
+                
+            except ValueError:
+                # O OpenCV barrou o falso positivo (ex: flor, gato)
+                pass
             except Exception as e:
-                logger.error(f"Error in deepface representation: {e}")
+                logger.error(f"Erro inesperado no DeepFace: {e}")
 
     def extract_and_match_faces(self, image: Image.Image, pic_id: str, collection: str = "faces_embeddings") -> List[str]:
         """Detect faces in a single image and match them."""
@@ -123,25 +138,23 @@ class FaceService:
             matches = self.vector_store.search_with_details(query_embedding=emb, top_k=1, collection=collection)
             if matches:
                 match = matches[0]
+                import numpy as np
                 
-                # 3. Limite oficial do ArcFace para Cosine Distance é ~0.68
-                if match['distance'] < 0.68:
+                if match['distance'] < 0.72:
                     doc_id = match['id'] 
                     person_id = match.get('metadata', {}).get('person_id') or str(uuid.uuid4())
                     
-                    # 4. Cálculo EMA com L2-Normalization Obrigatória
                     vetor_antigo = np.array(match['embedding'])
                     vetor_novo = np.array(emb)
                     
                     vetor_mesclado = (vetor_antigo * 0.85) + (vetor_novo * 0.15)
-                    vetor_normalizado = vetor_mesclado / np.linalg.norm(vetor_mesclado) # <--- O SEGREDO AQUI
+                    vetor_normalizado = vetor_mesclado / np.linalg.norm(vetor_mesclado)
                     
                     novo_emb_list = vetor_normalizado.tolist()
                     
                     self.vector_store.update_embedding(doc_id=doc_id, new_embedding=novo_emb_list, collection=collection)
                     return person_id, novo_emb_list
             
-            # Novo rosto detectado
             person_id = str(uuid.uuid4())
             self.vector_store.add(
                 text="", 
