@@ -87,7 +87,16 @@ class FaceService:
         faces_coords = self.detector.detect_faces(img_np)
 
         for (x1, y1, x2, y2) in faces_coords:
-            face_crop = img_np[y1:y2, x1:x2]
+            # 1. Expandir a Bounding Box (MediaPipe corta muito rente. O ArcFace precisa ver o queixo/testa)
+            margin_w = int((x2 - x1) * 0.2)
+            margin_h = int((y2 - y1) * 0.2)
+            
+            x1_m = max(0, x1 - margin_w)
+            y1_m = max(0, y1 - margin_h)
+            x2_m = min(img_np.shape[1], x2 + margin_w)
+            y2_m = min(img_np.shape[0], y2 + margin_h)
+            
+            face_crop = img_np[y1_m:y2_m, x1_m:x2_m]
             if face_crop.size == 0: 
                 continue
 
@@ -95,7 +104,8 @@ class FaceService:
                 rep = DeepFace.represent(
                     img_path=face_crop, 
                     model_name="ArcFace",
-                    detector_backend="skip",
+                    # 2. Pare de pular o detector! Use opencv (é leve e rápido) para ele poder Alinhar os olhos
+                    detector_backend="opencv", 
                     enforce_detection=False,
                     align=True
                 )
@@ -109,24 +119,24 @@ class FaceService:
         return res[0] if res else []
 
     def match_or_add_face(self, emb: List[float], pic_id: str, collection: str = "faces_embeddings") -> Tuple[str, List[float]]:
-        """
-        Lógica central de reconhecimento facial:
-        1. Busca matching no RAG da coleção informada.
-        2. Se houver match (< 0.60), atualiza o vetor existente via EMA (0.85*old + 0.15*new).
-        3. Se não houver, gera um novo UUID e insere no RAG.
-        Retorna (person_id, embedding_atualizado).
-        """
         try:
             matches = self.vector_store.search_with_details(query_embedding=emb, top_k=1, collection=collection)
             if matches:
                 match = matches[0]
-                if match['distance'] < 0.60:
+                
+                # 3. Limite oficial do ArcFace para Cosine Distance é ~0.68
+                if match['distance'] < 0.68:
                     doc_id = match['id'] 
                     person_id = match.get('metadata', {}).get('person_id') or str(uuid.uuid4())
                     
-                    # Lógica EMA solicitada
-                    novo_vetor = (np.array(match['embedding']) * 0.85) + (np.array(emb) * 0.15)
-                    novo_emb_list = novo_vetor.tolist()
+                    # 4. Cálculo EMA com L2-Normalization Obrigatória
+                    vetor_antigo = np.array(match['embedding'])
+                    vetor_novo = np.array(emb)
+                    
+                    vetor_mesclado = (vetor_antigo * 0.85) + (vetor_novo * 0.15)
+                    vetor_normalizado = vetor_mesclado / np.linalg.norm(vetor_mesclado) # <--- O SEGREDO AQUI
+                    
+                    novo_emb_list = vetor_normalizado.tolist()
                     
                     self.vector_store.update_embedding(doc_id=doc_id, new_embedding=novo_emb_list, collection=collection)
                     return person_id, novo_emb_list

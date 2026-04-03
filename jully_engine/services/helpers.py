@@ -79,7 +79,14 @@ class InferenceHelper:
             "pix2pix": "IMAGE_EDIT",
             "image_generation": "IMAGE_CREATE",
             "search_web": "WEB_SEARCH",
-            "search_code": "REPOSITORY_SEARCH"
+            "search_code": "REPOSITORY_SEARCH",
+            # RAG / Memory Tasks
+            "rag_add": "EMBEDDINGS",
+            "rag_batch_add": "EMBEDDINGS",
+            "rag_search": "EMBEDDINGS",
+            "rag_vector_add": "EMBEDDINGS",
+            "rag_search_details": "EMBEDDINGS",
+            "rag_update": "EMBEDDINGS"
         }
     
     async def _await_orch_task(self, future_or_coro):

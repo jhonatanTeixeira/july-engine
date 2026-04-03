@@ -110,7 +110,8 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 elif task_type == "vision_chat": domain_instance = model_loader.get_eyes(backend, model_tag)
                 elif task_type == "tts": domain_instance = model_loader.get_mouth(backend, model_tag)
                 elif task_type == "stt": domain_instance = model_loader.get_ears(backend, model_tag)
-                elif task_type == "embedding": domain_instance = model_loader.get_memory(backend, model_tag)
+                elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update"]: 
+                    domain_instance = model_loader.get_memory(backend, model_tag)
                 elif task_type in ["pix2pix", "image_generation"]: domain_instance = model_loader.get_presence(backend, model_tag)
                 
                 out_q.put({"status": "LOAD_OK"})
@@ -148,6 +149,20 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 elif task_type == "tts": result = domain_instance.speak(payload)
                 elif task_type == "stt": result = domain_instance.listen(payload.get('audio'), payload.get('language'), payload)
                 elif task_type == "embedding": result = domain_instance.embed(payload)
+                elif task_type == "rag_add": result = domain_instance.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"))
+                elif task_type == "rag_batch_add": result = domain_instance.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory"))
+                elif task_type == "rag_search": result = domain_instance.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory"))
+                elif task_type == "rag_vector_add": result = domain_instance.add_vector_to_rag(payload.get("vector"), payload.get("text", ""), payload.get("metadata"), payload.get("collection", "july_memory"))
+                elif task_type == "rag_search_details": 
+                    vector = payload.get("vector")
+                    if vector:
+                        result = domain_instance.search_with_details_vector(vector, payload.get("top_k", 3), payload.get("collection", "july_memory"))
+                    else:
+                        # Fallback se for texto (emb -> search)
+                        emb = asyncio.run(domain_instance.embed({"input": payload.get("query")}))
+                        if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list): emb = emb[0]
+                        result = domain_instance.search_with_details_vector(emb, payload.get("top_k", 3), payload.get("collection", "july_memory"))
+                elif task_type == "rag_update": result = domain_instance.update_embedding(str(payload.get("id")), payload.get("vector"))
                 elif task_type in ["pix2pix", "image_generation"]: result = domain_instance.generate(payload)
 
                 if inspect.iscoroutine(result):
@@ -192,8 +207,8 @@ class GpuOrchestrator:
         self.workers = {}
         self.lock = threading.Lock()
         
-        self.priorities = ["pix2pix", 'tts', 'stt', 'vision', 'llm']
-        self.busy_counts = {k: 0 for k in ["llm", "vision", "tts", "pix2pix"]}
+        self.priorities = ["pix2pix", 'tts', 'stt', 'vision', 'memory', 'llm']
+        self.busy_counts = {k: 0 for k in ["llm", "vision", "tts", "stt", "pix2pix", "memory"]}
         self.conditions = {k: threading.Condition(self.lock) for k in self.busy_counts.keys()}
         self.active_gpu_models: Dict[str, str] = {} 
         
@@ -203,6 +218,13 @@ class GpuOrchestrator:
             "vision_chat": "vision",
             "tts": "tts",
             "stt": "stt",
+            "embedding": "memory",
+            "rag_add": "memory",
+            "rag_batch_add": "memory",
+            "rag_search": "memory",
+            "rag_vector_add": "memory",
+            "rag_search_details": "memory",
+            "rag_update": "memory",
             "pix2pix": "pix2pix",
             "image_generation": "pix2pix"
         }
@@ -213,14 +235,19 @@ class GpuOrchestrator:
             "vision": "vision_chat",
             "tts": "tts",
             "stt": "stt",
-            "pix2pix": "pix2pix"
+            "pix2pix": "pix2pix",
+            "memory": "embedding"
         }
         
     async def start(self):
         if not self.running:
             with self.lock:
                 self.running = True
-                task_types = ["text_chat", "vision_chat", "stt", "tts", "embedding", "pix2pix", "image_generation"]
+                task_types = [
+                    "text_chat", "vision_chat", "stt", "tts", "embedding", 
+                    "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update",
+                    "pix2pix", "image_generation"
+                ]
                 for tt in task_types:
                     if tt == "image_generation": 
                         continue 

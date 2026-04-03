@@ -90,6 +90,30 @@ class Memory:
             
         return "Nenhuma memória encontrada."
 
+    async def add_batch_to_rag(self, documents: List[Dict[str, Any]], collection: str = "july_memory") -> Dict[str, int]:
+        """Inserts multiple documents into the RAG database."""
+        inserted = 0
+        failed = 0
+        
+        for doc in documents:
+            text = doc.get("text", "")
+            metadata = doc.get("metadata", {})
+            if not text or not text.strip():
+                failed += 1
+                continue
+            
+            try:
+                success = await self.add_to_rag(text=text, metadata=metadata, collection=collection)
+                if success:
+                    inserted += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                logger.warning(f"Memory: RAG batch - failed to insert: {e}")
+                failed += 1
+                
+        return {"inserted": inserted, "failed": failed, "collection": collection}
+
     async def add_vector_to_rag(self, embedding: List[float], text: str = "", metadata: Dict[str, Any] = None, collection: str = "july_memory") -> bool:
         """Adiciona um embedding pré-calculado diretamente no banco (ex: Face Embeddings)."""
         from ..persistence.vector_store import vector_store
