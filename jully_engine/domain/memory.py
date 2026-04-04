@@ -76,7 +76,7 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            vector_store.add(text, embedding, metadata, collection=collection)
+            vector_store.add(text, embedding, metadata, collection=collection, model_tag=self.model_tag)
 
             return True
         return False
@@ -95,7 +95,7 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            results = vector_store.search(embedding, top_k=top_k, collection=collection)
+            results = vector_store.search(embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
             return "\n---\n".join(results)
             
         return "Nenhuma memória encontrada."
@@ -127,16 +127,16 @@ class Memory:
     async def add_vector_to_rag(self, embedding: List[float], text: str = "", metadata: Dict[str, Any] = None, collection: str = "july_memory") -> bool:
         """Adiciona um embedding pré-calculado diretamente no banco (ex: Face Embeddings)."""
         from ..persistence.vector_store import vector_store
-        vector_store.add(text, embedding, metadata, collection=collection)
+        vector_store.add(text, embedding, metadata, collection=collection, model_tag=self.model_tag)
         
         return True
 
     async def search_with_details_vector(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory") -> List[Dict[str, Any]]:
         """Busca RAG pulando o Text-Embedder e pedindo Metadados (PGVector)."""
         from ..persistence.vector_store import vector_store
-        return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection)
+        return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
 
     async def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory"):
         """Atualiza a coordenada geométrica de um vetor existente pelo ID."""
         from ..persistence.vector_store import vector_store
-        vector_store.update_embedding(doc_id, new_embedding, collection=collection)
+        vector_store.update_embedding(doc_id, new_embedding, collection=collection, model_tag=self.model_tag)

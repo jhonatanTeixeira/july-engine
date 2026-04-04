@@ -8,8 +8,11 @@ logger = logging.getLogger("JulyEngine.VectorStore")
 class VectorStore:
     def __init__(self):
         self.db_type = os.environ.get("RAG_DATABASE", "in-memory").lower()
-        self.collection_name = "july_memory"
+        self.base_collection = "july_memory"
         
+        # Cache de coleções já verificadas/criadas nesta sessão
+        self.initialized_collections = set()
+
         if self.db_type == "chroma":
             try:
                 import chromadb
@@ -18,19 +21,13 @@ class VectorStore:
                 db_path = os.path.join(base_dir, "storage", "db", "chroma")
                 os.makedirs(db_path, exist_ok=True)
                 self.client = chromadb.PersistentClient(path=db_path)
-                self.collection = self.client.get_or_create_collection(
-                    name=self.collection_name,
-                    metadata={"hnsw:space": "cosine"}
-                )
             except ImportError:
                 logger.error("ChromaDB not installed. Fallback to in-memory.")
                 self.db_type = "in-memory"
                 self._init_in_memory()
         elif self.db_type == "pgvector":
-            # Just placeholder for PGVector connection setup
-            # Requires psycopg2, pgvector, sqlalchemy
             self.connection_string = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/july_engine")
-            self._init_pgvector()
+            self._init_pgvector_extension()
         else:
             self._init_in_memory()
 
@@ -50,30 +47,67 @@ class VectorStore:
         with open(self.json_path, 'w') as f:
             json.dump(self.memory_data, f, indent=2)
 
-    def _init_pgvector(self):
+    def _get_full_name(self, collection: str, model_tag: str) -> str:
+        """Sanitiza e concatena o nome da coleção com a tag do modelo."""
+        name = collection or self.base_collection
+        if model_tag:
+            # Substitui hífen e pontos por underscore para compatibilidade com SQL
+            tag = model_tag.lower().replace("-", "_").replace(".", "_")
+            name = f"{name}_{tag}"
+        return name
+
+    def _init_pgvector_extension(self):
         try:
             from sqlalchemy import create_engine, text
             self.engine = create_engine(self.connection_string)
             with self.engine.begin() as conn:
                 conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-                conn.execute(text("""
-                    CREATE TABLE IF NOT EXISTS july_rag_memory (
-                        id SERIAL PRIMARY KEY,
-                        collection VARCHAR(255) NOT NULL DEFAULT 'july_memory',
-                        content TEXT,
-                        embedding vector(1536),
-                        metadata JSONB
-                    )
-                """))
         except Exception as e:
             logger.error(f"Failed to init pgvector: {e}. Fallback to in-memory.")
             self._init_in_memory()
 
-    def add(self, text: str, embedding: List[float], metadata: Dict[str, Any] = None, collection: str = "july_memory"):
+    def _ensure_collection(self, full_name: str, dimension: int):
+        """Lazy creation da tabela ou coleção no banco de dados específico."""
+        if full_name in self.initialized_collections:
+            return
+
+        if self.db_type == "chroma":
+            # O Chroma já lida com o 'get_or_create' de forma eficiente
+            self.client.get_or_create_collection(
+                name=full_name,
+                metadata={"hnsw:space": "cosine"}
+            )
+        elif self.db_type == "pgvector":
+            try:
+                from sqlalchemy import text
+                table_name = f"rag_{full_name}"
+                with self.engine.begin() as conn:
+                    # PGVector requer uma coluna com dimensão FIXA. 
+                    # Por isso criamos uma tabela nova por modelo/coleção.
+                    conn.execute(text(f"""
+                        CREATE TABLE IF NOT EXISTS {table_name} (
+                            id SERIAL PRIMARY KEY,
+                            content TEXT,
+                            embedding vector({dimension}),
+                            metadata JSONB
+                        )
+                    """))
+            except Exception as e:
+                logger.error(f"Failed to ensure pgvector table {full_name}: {e}")
+        
+        self.initialized_collections.add(full_name)
+
+    def add(self, text: str, embedding: List[float], metadata: Dict[str, Any] = None, collection: str = "july_memory", model_tag: str = None):
         import uuid
         doc_id = str(uuid.uuid4())
+        full_name = self._get_full_name(collection, model_tag)
+        dim = len(embedding)
+        
+        self._ensure_collection(full_name, dim)
+
         if self.db_type == "chroma":
-            self.collection.add(
+            coll = self.client.get_collection(name=full_name)
+            coll.add(
                 embeddings=[embedding],
                 documents=[text],
                 metadatas=[metadata or {}],
@@ -81,53 +115,62 @@ class VectorStore:
             )
         elif self.db_type == "pgvector":
             try:
-                from sqlalchemy import text
+                from sqlalchemy import text as sa_text
                 import json
+                table_name = f"rag_{full_name}"
                 with self.engine.begin() as conn:
-                    # PGVector format [0.1, 0.2, ...]
                     emb_str = f"[{','.join(map(str, embedding))}]"
                     meta_str = json.dumps(metadata or {})
-                    conn.execute(text("""
-                        INSERT INTO july_rag_memory (collection, content, embedding, metadata)
-                        VALUES (:collection, :content, :embedding, :metadata)
-                    """), {"collection": collection, "content": text, "embedding": emb_str, "metadata": meta_str})
+                    conn.execute(sa_text(f"""
+                        INSERT INTO {table_name} (content, embedding, metadata)
+                        VALUES (:content, :embedding, :metadata)
+                    """), {"content": text, "embedding": emb_str, "metadata": meta_str})
             except Exception as e:
-                logger.error(f"Error inserting into pgvector: {e}")
+                logger.error(f"Error inserting into pgvector table {table_name}: {e}")
         else:
+            # In-memory
             self.memory_data.append({
                 "id": doc_id,
+                "collection": full_name,
                 "content": text,
                 "embedding": embedding,
                 "metadata": metadata or {}
             })
             self._save_in_memory()
 
-    def search(self, query_embedding: List[float], top_k: int = 3, collection: str = "july_memory") -> List[str]:
+    def search(self, query_embedding: List[float], top_k: int = 3, collection: str = "july_memory", model_tag: str = None) -> List[str]:
+        full_name = self._get_full_name(collection, model_tag)
+        
         if self.db_type == "chroma":
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k
-            )
-            return results["documents"][0] if results["documents"] else []
+            try:
+                coll = self.client.get_collection(name=full_name)
+                results = coll.query(
+                    query_embeddings=[query_embedding],
+                    n_results=top_k
+                )
+                return results["documents"][0] if results["documents"] else []
+            except Exception:
+                return []
             
         elif self.db_type == "pgvector":
             try:
-                from sqlalchemy import text
+                from sqlalchemy import text as sa_text
+                table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
                     emb_str = f"[{','.join(map(str, query_embedding))}]"
-                    # Cosine distance <=>
                     result = conn.execute(
-                        text(f"SELECT content FROM july_rag_memory WHERE collection = :collection ORDER BY embedding <=> '{emb_str}' LIMIT :limit"),
-                        {"collection": collection, "limit": top_k}
+                        sa_text(f"SELECT content FROM {table_name} ORDER BY embedding <=> '{emb_str}' LIMIT :limit"),
+                        {"limit": top_k}
                     )
                     return [row[0] for row in result]
             except Exception as e:
-                logger.error(f"Error searching pgvector: {e}")
+                logger.error(f"Error searching pgvector table {full_name}: {e}")
                 return []
                 
         else:
-            # In-memory cosine similarity
-            if not self.memory_data:
+            # In-memory filtered by full_name
+            subset = [item for item in self.memory_data if item.get("collection") == full_name]
+            if not subset:
                 return []
                 
             import math
@@ -139,42 +182,47 @@ class VectorStore:
                 return dot / (norm1 * norm2)
 
             scored = []
-            for item in self.memory_data:
+            for item in subset:
                 score = cosine_similarity(query_embedding, item["embedding"])
                 scored.append((score, item["content"]))
             
             scored.sort(key=lambda x: x[0], reverse=True)
             return [item[1] for item in scored[:top_k]]
         
-    def search_with_details(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory") -> List[Dict[str, Any]]:
-        """Busca retornando IDs, Distâncias, Metadados e o Vetor Antigo."""
+    def search_with_details(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory", model_tag: str = None) -> List[Dict[str, Any]]:
+        full_name = self._get_full_name(collection, model_tag)
+        
         if self.db_type == "chroma":
-            # Pedimos explicitamente para o Chroma trazer o embedding antigo e a distância
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["embeddings", "metadatas", "distances", "documents"]
-            )
-            
-            matches = []
-            if results["ids"] and len(results["ids"][0]) > 0:
-                for i in range(len(results["ids"][0])):
-                    matches.append({
-                        "id": results["ids"][0][i],
-                        "distance": results["distances"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "embedding": results["embeddings"][0][i]
-                    })
-            return matches
+            try:
+                coll = self.client.get_collection(name=full_name)
+                results = coll.query(
+                    query_embeddings=[query_embedding],
+                    n_results=top_k,
+                    include=["embeddings", "metadatas", "distances", "documents"]
+                )
+                
+                matches = []
+                if results["ids"] and len(results["ids"][0]) > 0:
+                    for i in range(len(results["ids"][0])):
+                        matches.append({
+                            "id": results["ids"][0][i],
+                            "distance": results["distances"][0][i],
+                            "metadata": results["metadatas"][0][i],
+                            "embedding": results["embeddings"][0][i]
+                        })
+                return matches
+            except Exception:
+                return []
             
         elif self.db_type == "pgvector":
             try:
-                from sqlalchemy import text
+                from sqlalchemy import text as sa_text
+                table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
                     emb_str = f"[{','.join(map(str, query_embedding))}]"
                     result = conn.execute(
-                        text(f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content, embedding FROM july_rag_memory WHERE collection = :coll ORDER BY distance LIMIT :limit"),
-                        {"coll": collection, "limit": top_k}
+                        sa_text(f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content, embedding FROM {table_name} ORDER BY distance LIMIT :limit"),
+                        {"limit": top_k}
                     )
                     matches = []
                     for row in result:
@@ -187,12 +235,13 @@ class VectorStore:
                         })
                     return matches
             except Exception as e:
-                logger.error(f"Error searching details pgvector: {e}")
+                logger.error(f"Error searching details pgvector table {full_name}: {e}")
                 return []
         else:
-            # Implementação in-memory com similaridade de cosseno
+            # In-memory
+            subset = [item for item in self.memory_data if item.get("collection") == full_name]
             matches = []
-            if not self.memory_data:
+            if not subset:
                 return matches
                 
             import math
@@ -203,50 +252,47 @@ class VectorStore:
                 if norm1 == 0 or norm2 == 0: return 0
                 return dot / (norm1 * norm2)
 
-            for item in self.memory_data:
-                # Se houver metadados de coleção, filtra.
-                item_coll = item.get("metadata", {}).get("collection", collection)
-                if item_coll != collection:
-                    continue
-
+            for item in subset:
                 score = cosine_similarity(query_embedding, item["embedding"])
                 matches.append({
                     "id": item["id"],
-                    "distance": 1.0 - score, # Distância = 1 - similaridade
+                    "distance": 1.0 - score,
                     "metadata": item.get("metadata", {}),
                     "embedding": item["embedding"]
                 })
             
-            # Ordena por menor distância (maior similaridade)
             matches.sort(key=lambda x: x["distance"])
             return matches[:top_k]
 
-    def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory"):
-        """Atualiza um vetor existente direto no VectorStore."""
+    def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory", model_tag: str = None):
+        full_name = self._get_full_name(collection, model_tag)
+        
         if self.db_type == "chroma":
-            # No Chroma, se a coleção for diferente da atual, pegamos a instância correta
-            coll = self.client.get_or_create_collection(name=collection) if collection != self.collection_name else self.collection
-            coll.update(
-                ids=[doc_id],
-                embeddings=[new_embedding]
-            )
+            try:
+                coll = self.client.get_collection(name=full_name)
+                coll.update(
+                    ids=[doc_id],
+                    embeddings=[new_embedding]
+                )
+            except Exception as e:
+                logger.error(f"Error updating ChromaDB collection {full_name}: {e}")
+
         elif self.db_type == "pgvector":
             try:
-                from sqlalchemy import text
+                from sqlalchemy import text as sa_text
+                table_name = f"rag_{full_name}"
                 with self.engine.begin() as conn:
                     emb_str = f"[{','.join(map(str, new_embedding))}]"
-                    # No PGVector, filtramos pela coleção também para segurança
                     conn.execute(
-                        text("UPDATE july_rag_memory SET embedding = :emb WHERE id_str = :id AND collection = :coll"),
-                        {"emb": emb_str, "id": str(doc_id), "coll": collection}
+                        sa_text(f"UPDATE {table_name} SET embedding = :emb WHERE id = :id"),
+                        {"emb": emb_str, "id": doc_id}
                     )
             except Exception as e:
-                logger.error(f"Error updating pgvector: {e}")
+                logger.error(f"Error updating pgvector table {table_name}: {e}")
         else:
             # In-memory
             for item in self.memory_data:
-                # Na memória, o ID é único, mas validamos a coleção nos metadados se existir
-                if item["id"] == doc_id:
+                if item["id"] == doc_id and item.get("collection") == full_name:
                     item["embedding"] = new_embedding
                     break
             self._save_in_memory()

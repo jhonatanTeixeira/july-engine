@@ -36,9 +36,11 @@ class ExifService:
         try:
             with open(file_path, 'rb') as image_file:
                 my_image = ExifImage(image_file)
+                
                 if my_image.has_exif and hasattr(my_image, 'datetime_original'):
                     date_str = my_image.datetime_original
                     date_val = datetime.strptime(date_str, '%Y:%m:%d %H:%M:%S').isoformat()
+                
                 if my_image.has_exif and hasattr(my_image, 'gps_latitude') and hasattr(my_image, 'gps_longitude'):
                     lat_tuple = my_image.gps_latitude
                     lon_tuple = my_image.gps_longitude
@@ -58,88 +60,71 @@ class ExifService:
         return date_val, lat, lon
 
 
-class FaceDetector:
-    def __init__(self, model_path='storage/models/detector.tflite', min_confidence=0.3):
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python import vision
-        base_options = python.BaseOptions(model_asset_path=model_path)
-        options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=min_confidence)
-        self.detector = vision.FaceDetector.create_from_options(options)
-
-    def detect_faces(self, img_rgb: "np.ndarray") -> List[Tuple[int, int, int, int]]:
-        import mediapipe as mp
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        detection_result = self.detector.detect(mp_image)
-        faces = []
-        for detection in detection_result.detections:
-            bbox = detection.bounding_box
-            x1, y1 = max(0, bbox.origin_x), max(0, bbox.origin_y)
-            x2, y2 = x1 + bbox.width, y1 + bbox.height
-            if (x2 - x1) > 15 and (y2 - y1) > 15:
-                faces.append((x1, y1, x2, y2))
-        return faces
-
-
 class FaceService:
-    def __init__(self, detector_model_path='storage/models/detector.tflite'):
-        self.detector = FaceDetector(model_path=detector_model_path)
+    def __init__(self, vector_store):
+        # Removemos a dependência do FaceDetector manual
         self.vector_store = vector_store
-        
+        self.model_name = "ArcFace"
+        self.detector_backend = "yolov11s"
+
     def get_faces_embeddings(self, image: Image.Image) -> Generator[Tuple[List[float], "np.ndarray", Tuple[int, int, int, int]], None, None]:
-        import numpy as np
-        import cv2 # Necessário para a conversão de cores
-        
-        # Mantém RGB para o MediaPipe
-        img_np = np.array(image.convert('RGB'))
-        faces_coords = self.detector.detect_faces(img_np)
+        """
+        Detecta e vetoriza faces diretamente via DeepFace usando YOLOv11s.
+        """
+        # 1. Preparação: DeepFace trabalha melhor com BGR (OpenCV Style)
+        img_rgb = np.array(image.convert('RGB'))
+        img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
-        for (x1, y1, x2, y2) in faces_coords:
-            margin_w = int((x2 - x1) * 0.2)
-            margin_h = int((y2 - y1) * 0.2)
-            
-            x1_m = max(0, x1 - margin_w)
-            y1_m = max(0, y1 - margin_h)
-            x2_m = min(img_np.shape[1], x2 + margin_w)
-            y2_m = min(img_np.shape[0], y2 + margin_h)
-            
-            face_crop_rgb = img_np[y1_m:y2_m, x1_m:x2_m]
+        try:
+            # 2. Execução Unificada: O YOLOv11s varre a imagem inteira aqui
+            results = DeepFace.represent(
+                img_path=img_bgr,
+                model_name=self.model_name,
+                detector_backend=self.detector_backend,
+                enforce_detection=True,
+                align=False  # Mantido False conforme sua regra para não deitar fotos
+            )
 
-            if face_crop_rgb.size == 0: 
-                continue
-
-            # 2. A CORREÇÃO MÁGICA: Converte de RGB para BGR para o DeepFace ver as cores certas
-            face_crop_bgr = cv2.cvtColor(face_crop_rgb, cv2.COLOR_RGB2BGR)
-
-            try:
-                from deepface import DeepFace
-                rep = DeepFace.represent(
-                    img_path=face_crop_bgr, # Passando a matriz BGR!
-                    model_name="ArcFace",
-                    detector_backend="opencv", 
-                    enforce_detection=True, 
-                    align=False # 3. Desligamos o alinhamento para parar de deitar as fotos
-                )
-                # Devolve o face_crop_rgb para o frontend exibir a foto com as cores normais
-                yield rep[0]["embedding"], face_crop_rgb, (x1, y1, x2, y2)
+            for rep in results:
+                embedding = rep["embedding"]
+                area = rep["facial_area"] # x, y, w, h
                 
-            except ValueError:
-                # O OpenCV barrou o falso positivo (ex: flor, gato)
-                pass
-            except Exception as e:
-                logger.error(f"Erro inesperado no DeepFace: {e}")
+                x, y, w, h = area['x'], area['y'], area['w'], area['h']
+                
+                # 3. Aplicar Margem (20%) para o recorte que vai para o Frontend
+                margin_w = int(w * 0.2)
+                margin_h = int(h * 0.2)
+                
+                y1 = max(0, y - margin_h)
+                y2 = min(img_rgb.shape[0], y + h + margin_h)
+                x1 = max(0, x - margin_w)
+                x2 = min(img_rgb.shape[1], x + w + margin_w)
+                
+                # Recorte em RGB para exibição correta no UI
+                face_crop_rgb = img_rgb[y1:y2, x1:x2]
 
-    def extract_and_match_faces(self, image: Image.Image, pic_id: str, collection: str = "faces_embeddings") -> List[str]:
-        """Detect faces in a single image and match them."""
-        res = self.sync_faces_batch([image], [pic_id], collection=collection)
-        return res[0] if res else []
+                if face_crop_rgb.size > 0:
+                    yield embedding, face_crop_rgb, (x, y, x + w, y + h)
+
+        except ValueError:
+            # DeepFace lança ValueError se enforce_detection=True e não achar nada
+            pass
+        except Exception as e:
+            logger.error(f"Erro inesperado no DeepFace (YOLOv11s): {e}")
 
     def match_or_add_face(self, emb: List[float], pic_id: str, collection: str = "faces_embeddings") -> Tuple[str, List[float]]:
+        """Busca no RAG, aplica EMA no vetor ou cria nova identidade."""
         try:
-            matches = self.vector_store.search_with_details(query_embedding=emb, top_k=1, collection=collection)
+            matches = self.vector_store.search_with_details(
+                query_embedding=emb, 
+                top_k=1, 
+                collection=collection, 
+                model_tag="arcface"
+            )
+            
             if matches:
                 match = matches[0]
-                import numpy as np
-                
+                # Threshold de 0.72 conforme sua implementação
                 if match['distance'] < 0.72:
                     doc_id = match['id'] 
                     person_id = match.get('metadata', {}).get('person_id') or str(uuid.uuid4())
@@ -147,20 +132,29 @@ class FaceService:
                     vetor_antigo = np.array(match['embedding'])
                     vetor_novo = np.array(emb)
                     
+                    # 4. EMA (Exponential Moving Average): 85% antigo / 15% novo
+                    # Isso evita o "apodrecimento" do vetor por variações bruscas
                     vetor_mesclado = (vetor_antigo * 0.85) + (vetor_novo * 0.15)
                     vetor_normalizado = vetor_mesclado / np.linalg.norm(vetor_mesclado)
                     
                     novo_emb_list = vetor_normalizado.tolist()
                     
-                    self.vector_store.update_embedding(doc_id=doc_id, new_embedding=novo_emb_list, collection=collection)
+                    self.vector_store.update_embedding(
+                        doc_id=doc_id, 
+                        new_embedding=novo_emb_list, 
+                        collection=collection, 
+                        model_tag="arcface"
+                    )
                     return person_id, novo_emb_list
             
+            # Nova Identidade
             person_id = str(uuid.uuid4())
             self.vector_store.add(
                 text="", 
                 embedding=emb, 
                 metadata={"person_id": person_id, "pic_id": str(pic_id), "collection": collection},
-                collection=collection 
+                collection=collection,
+                model_tag="arcface"
             )
             return person_id, emb
         except Exception as e:
@@ -168,26 +162,22 @@ class FaceService:
             return str(uuid.uuid4()), emb
 
     def sync_faces_batch(self, images: List[Image.Image], pic_ids: List[str], collection: str = "faces_embeddings") -> List[List[Dict[str, Any]]]:
-        """
-        Orquestrador em lote para processar imagens e persistir no RAG.
-        Retorna: List[List[dict]] - Cada item contém: person_id, embedding e face_b64.
-        """
+        """Processa lote de imagens e retorna metadados para persistência no banco relacional."""
         results = []
         for img, pic_id in zip(images, pic_ids):
             faces_found = []
             if img:
+                # get_faces_embeddings agora usa o YOLOv11s interno do DeepFace
                 for emb, face_crop, _ in self.get_faces_embeddings(img):
-                    # O match_or_add_face já cuida da persistência/atribuição de ID na Engine
                     p_id, final_emb = self.match_or_add_face(emb, pic_id, collection=collection)
                     
-                    # Converte o recorte para Base64 para o Photos salvar a imagem
                     try:
                         pil_crop = Image.fromarray(face_crop)
                         buffered = io.BytesIO()
                         pil_crop.save(buffered, format="JPEG")
                         face_b64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
                     except Exception as e:
-                        logger.error(f"Erro ao encodar crop de rosto em sync_batch: {e}")
+                        logger.error(f"Erro ao encodar crop: {e}")
                         face_b64 = ""
 
                     faces_found.append({
@@ -197,7 +187,6 @@ class FaceService:
                     })
             results.append(faces_found)
         return results
-
 
 class BatchProcessingService:
     def __init__(self, face_service, rag_strategy):
