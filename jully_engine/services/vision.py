@@ -59,10 +59,37 @@ class ExifService:
             logger.error(f"Erro ao ler EXIF de {file_path}: {e}")
         return date_val, lat, lon
 
+class FaceDetector:
+
+    def __init__(self, model_path='storage/models/detector.tflite', min_confidence=0.3):
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
+
+        base_options = python.BaseOptions(model_asset_path=model_path)
+        options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=min_confidence)
+        self.detector = vision.FaceDetector.create_from_options(options)
+
+    def detect_faces(self, img_rgb: "np.ndarray") -> List[Tuple[int, int, int, int]]:
+        import mediapipe as mp
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
+        detection_result = self.detector.detect(mp_image)
+        faces = []
+
+        for detection in detection_result.detections:
+            bbox = detection.bounding_box
+            x1, y1 = max(0, bbox.origin_x), max(0, bbox.origin_y)
+            x2, y2 = x1 + bbox.width, y1 + bbox.height
+
+            if (x2 - x1) > 15 and (y2 - y1) > 15:
+                faces.append((x1, y1, x2, y2))
+
+        return faces
 
 class FaceService:
-    def __init__(self, vector_store):
-        # Removemos a dependência do FaceDetector manual
+    def __init__(self):
+        from ..persistence.vector_store import vector_store
+
         self.vector_store = vector_store
         self.model_name = "ArcFace"
         self.detector_backend = "yolov11s"

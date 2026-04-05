@@ -7,7 +7,6 @@ import inspect
 import time
 from typing import Any, Dict, Optional, Union, AsyncGenerator
 
-from ..resource_manager import resource_manager
 from ..routers.calculator import estimate_vram_ram
 from ..routers.models import load_models_db
 from fastapi import HTTPException
@@ -321,6 +320,8 @@ class GpuOrchestrator:
         Unloads models based on priority to free up VRAM.
         Returns the final available VRAM.
         """
+        from ..resource_manager import resource_manager
+
         available = resource_manager.get_available_vram_mb()
         if available >= required_vram: 
             return available
@@ -364,6 +365,8 @@ class GpuOrchestrator:
 
     # --- O PONTO DE ENTRADA DO BRIDGE ---
     async def submit_task(self, task_type: str, payload: Any) -> Union[Any, AsyncGenerator[Any, None]]:
+        from ..resource_manager import resource_manager
+        
         if not self.running: raise RuntimeError("GpuOrchestrator not running")
         if task_type not in self.workers: raise ValueError(f"Unknown GPU task type: {task_type}")
         

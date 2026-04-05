@@ -3,7 +3,6 @@ import logging
 import os
 import time
 from typing import Any, Dict
-from ..resource_manager import resource_manager
 from ..model_loader import model_loader
 
 logger = logging.getLogger("JulyEngine.Orchestrators.CpuOrchestrator")
@@ -47,6 +46,8 @@ class CpuOrchestrator:
         """
         Throttles execution if CPU or RAM usage is too high, making requests wait.
         """
+        from ..resource_manager import resource_manager
+        
         while resource_manager.get_cpu_usage() > 90 or resource_manager.get_ram_usage() > 95:
             logger.warning("CpuOrchestrator: System overloaded (CPU/RAM > 90/95%), throttling request...")
             time.sleep(1)

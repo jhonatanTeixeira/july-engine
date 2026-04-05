@@ -9,7 +9,6 @@ try:
 except ImportError:
     HAS_TORCH = False
 
-# logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("JulyEngine.ResourceManager")
 
 

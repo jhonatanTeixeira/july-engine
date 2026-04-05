@@ -49,7 +49,6 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from .bridge import bridge
-from .resource_manager import resource_manager
 from .routers.openai import router as openai_router
 from .routers.anthropic import router as anthropic_router
 from .routers.models import router as models_router
