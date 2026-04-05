@@ -42,6 +42,18 @@ class OrchestratorContainer:
         headers = payload.setdefault("headers", {})
         backend = headers.get("x-backend", config.get("backend"))
         
+        if backend == "image_edit_model":
+            payload["is_image_edit_route"] = True
+            edit_config = self.model_service.backend.get_setting("IMAGE_EDIT")
+
+            if edit_config:
+                backend = edit_config.get("backend", "api")
+                if not payload.get("model"):
+                    payload["model"] = edit_config.get("model")
+
+            else:
+                backend = "api"
+        
         if not backend:
             raise HTTPException(status_code=400, detail="Missing x-backend header or model not configured")
 
@@ -77,6 +89,7 @@ class InferenceHelper:
             "vision_chat": "VISION",
             "embeddings": "EMBEDDINGS",
             "pix2pix": "IMAGE_EDIT",
+            "image_resize": "RESIZE",
             "image_generation": "IMAGE_CREATE",
             "search_web": "WEB_SEARCH",
             "search_code": "REPOSITORY_SEARCH",

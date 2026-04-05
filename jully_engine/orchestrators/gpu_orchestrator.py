@@ -112,7 +112,7 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 elif task_type == "stt": domain_instance = model_loader.get_ears(backend, model_tag)
                 elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update"]: 
                     domain_instance = model_loader.get_memory(backend, model_tag)
-                elif task_type in ["pix2pix", "image_generation"]: domain_instance = model_loader.get_presence(backend, model_tag)
+                elif task_type in ["pix2pix", "image_generation", "image_resize"]: domain_instance = model_loader.get_presence(backend, model_tag)
                 
                 out_q.put({"status": "LOAD_OK"})
 
@@ -164,6 +164,7 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                         result = domain_instance.search_with_details_vector(emb, payload.get("top_k", 3), payload.get("collection", "july_memory"))
                 elif task_type == "rag_update": result = domain_instance.update_embedding(str(payload.get("id")), payload.get("vector"))
                 elif task_type in ["pix2pix", "image_generation"]: result = domain_instance.generate(payload)
+                elif task_type == "image_resize": result = domain_instance.resize(payload)
 
                 if inspect.iscoroutine(result):
                     result = asyncio.run(result)
@@ -226,6 +227,7 @@ class GpuOrchestrator:
             "rag_search_details": "memory",
             "rag_update": "memory",
             "pix2pix": "pix2pix",
+            "image_resize": "pix2pix",
             "image_generation": "pix2pix"
         }
         
@@ -246,10 +248,10 @@ class GpuOrchestrator:
                 task_types = [
                     "text_chat", "vision_chat", "stt", "tts", "embedding", 
                     "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update",
-                    "pix2pix", "image_generation"
+                    "pix2pix", "image_generation", "image_resize"
                 ]
                 for tt in task_types:
-                    if tt == "image_generation": 
+                    if tt in ["image_generation", "image_resize"]: 
                         continue 
                         
                     in_q = queue.Queue()
@@ -267,8 +269,9 @@ class GpuOrchestrator:
                     
                     self.workers[tt] = {"thread": t, "in": in_q, "out": out_q}
                     
-                # Compartilha a thread do pix2pix com image_generation
+                # Compartilha a thread do pix2pix com image_generation e image_resize
                 self.workers["image_generation"] = self.workers["pix2pix"]
+                self.workers["image_resize"] = self.workers["pix2pix"]
                 
             logger.info("GpuOrchestrator: Long-running Threads Iniciadas (RAM Windows Protegida).")
 

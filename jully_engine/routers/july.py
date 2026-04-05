@@ -276,3 +276,37 @@ async def update_rag_embedding(
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.post("/vision/image/resize")
+async def resize_image(
+    http_request: Request,
+    image: Optional[UploadFile] = File(None),
+    image_b64: Optional[str] = Form(None),
+    scale: Optional[float] = Form(1.0),
+    width: Optional[int] = Form(None),
+    height: Optional[int] = Form(None),
+    model: Optional[str] = Form(None)
+):
+    """Redimensiona ou faz upscale de uma imagem."""
+    headers = dict(http_request.headers)
+    
+    if image:
+        bytes_data = await image.read()
+        img_input = base64.b64encode(bytes_data).decode('utf-8')
+    elif image_b64:
+        img_input = image_b64
+    else:
+        return JSONResponse(status_code=400, content={"error": "Envie 'image' ou 'image_b64'."})
+        
+    payload = {
+        "image": img_input,
+        "scale": scale,
+        "width": width,
+        "height": height,
+        "model": model
+    }
+    
+    result = await bridge.process_image_resize(payload, headers)
+    return JSONResponse(content={"image": result})
+

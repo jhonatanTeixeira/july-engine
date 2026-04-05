@@ -25,20 +25,39 @@ class Presence:
         self._strategy = self._get_strategy()
 
     def _get_strategy(self):
+        tag = self.model_tag.lower() if self.model_tag else ""
+        
         if self.backend == "api":
             from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
-        elif self.model_tag == "pix2pix":
+        elif tag == "pix2pix":
             from ..engine_models.pix2pix import Pix2Pix
             return Pix2Pix(backend=self.backend)
-        elif self.model_tag == "lcm":
+        elif tag == "lcm":
             from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
             return LCMFaceIDPipeline(use_face_id=False, use_cpu_offload=True)
-        elif self.model_tag == "video":
+        elif tag == "video":
             from ..engine_models.stable_diffusion_video import LCMVideoPipeline
             return LCMVideoPipeline()
+        elif tag == "pillow":
+            from ..engine_models.resize import PillowResizer
+            return PillowResizer()
+        elif tag == "opencv":
+            from ..engine_models.resize import OpencvResizer
+            return OpencvResizer()
+        elif tag in ["gfpgan", "face_restoration"]:
+            from ..engine_models.resize import GFPGANResizer
+            return GFPGANResizer()
+        elif tag == "codeformer":
+            from ..engine_models.resize import CodeFormerResizer
+            return CodeFormerResizer()
+        elif tag in ["realesrgan", "upscale"]:
+            from ..engine_models.resize import RealESRGANResizer
+            return RealESRGANResizer()
         else:
-            raise ValueError(f"Presence: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
+            # Qualquer outra coisa é considerada LLM/API
+            from ..engine_models.llm_api import LLMApi
+            return LLMApi(backend=self.backend)
 
     def _find_last_image(self, messages: List[Dict[str, Any]]) -> Optional[str]:
         """Busca a última imagem enviada nas mensagens, do fim para o começo."""
@@ -127,6 +146,33 @@ class Presence:
                 return base64.b64encode(buffered.getvalue()).decode()
             
         return None
+
+    async def resize(self, payload: Dict[str, Any]):
+        """
+        Redimensiona ou faz upscale de uma imagem.
+        Pode usar redimensionamento clássico (Pillow/OpenCV) ou modelos de IA.
+        Se o backend for 'image_edit_model', roteia para o método edit (Pix2Pix/API).
+        """
+        try:
+            if self.backend == "image_edit_model" or payload.get("is_image_edit_route"):
+                payload["prompt"] = payload.get("prompt", "upscale this image to high quality, clear details, 4k")
+                return await self.edit(payload)
+            
+            # Se a estratégia tiver o método resize (nossos resizers manuais)
+            if hasattr(self._strategy, "resize"):
+                result = self._strategy.resize(payload)
+                # Modelos de IA pesados devem liberar VRAM após um resize (one-shot task)
+                if self.model_tag.lower() in ["gfpgan", "codeformer", "realesrgan"]:
+                    self.unload()
+                return result
+                
+            # Se for qualquer outro modelo (LLM/API), usamos o edit como fallback de IA
+            payload["prompt"] = payload.get("prompt", "upscale this image to high quality, clear details, 4k")
+            return await self.edit(payload)
+        except Exception as e:
+            logger.error(f"Presence: Resize failed: {e}")
+            self.unload()
+            raise e
 
     async def generate(self, payload: Dict[str, Any]):
         from ..engine_models.llm_api import LLMApi

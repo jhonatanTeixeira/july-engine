@@ -108,6 +108,12 @@ class CpuOrchestrator:
             elif task_type == "rag_update":
                 memory = model_loader.get_memory(backend, model_tag)
                 return asyncio.run(memory.update_embedding(str(payload.get("id")), payload.get("vector")))
+            elif task_type in ["pix2pix", "image_generation"]:
+                presence = model_loader.get_presence(backend, model_tag)
+                return asyncio.run(presence.generate(payload))
+            elif task_type == "image_resize":
+                presence = model_loader.get_presence(backend, model_tag)
+                return asyncio.run(presence.resize(payload))
             else:
                 raise ValueError(f"Unknown CPU task type: {task_type}")
         except Exception as e:

@@ -16,3 +16,7 @@ safetensors
 insightface
 xformers
 git+https://github.com/tencent-ailab/IP-Adapter.git
+basicsr
+realesrgan
+gfpgan
+facexlib

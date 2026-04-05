@@ -283,6 +283,16 @@ class Bridge:
         event_manager.emit("image", generation_time=gen_time)
         return result
 
+    async def process_image_resize(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        start_time = time.time()
+        payload['headers'] = headers
+        
+        result = await inference_helper.process("image_resize", payload)
+        
+        gen_time = time.time() - start_time
+        event_manager.emit("image", generation_time=gen_time)
+        return result
+
     async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         start_time = time.time()
         payload['headers'] = headers
