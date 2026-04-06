@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ..engine_models.llm_api import LLMApi
     from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
     from ..engine_models.stable_diffusion_video import LCMVideoPipeline
+    from ..engine_models.flux_klein import FluxKleinNode
 
 logger = logging.getLogger("JulyEngine.Domain.Presence")
 
@@ -39,6 +40,9 @@ class Presence:
         elif tag == "video":
             from ..engine_models.stable_diffusion_video import LCMVideoPipeline
             return LCMVideoPipeline()
+        elif tag == "flux-klein":
+            from ..engine_models.flux_klein import FluxKleinNode
+            return FluxKleinNode(backend=self.backend)
         elif tag == "pillow":
             from ..engine_models.resize import PillowResizer
             return PillowResizer()
@@ -75,6 +79,7 @@ class Presence:
         from ..engine_models.pix2pix import Pix2Pix
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
+        from ..engine_models.flux_klein import FluxKleinNode
         from ..persistence import get_backend
 
         headers: dict = payload.setdefault("headers", {})
@@ -145,6 +150,9 @@ class Presence:
                 images[0].save(buffered, format="PNG")
                 return base64.b64encode(buffered.getvalue()).decode()
             
+        elif isinstance(self._strategy, FluxKleinNode):
+            return self._strategy.run(payload)
+            
         return None
 
     async def resize(self, payload: Dict[str, Any]):
@@ -178,6 +186,7 @@ class Presence:
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.pix2pix import Pix2Pix
         from ..engine_models.stable_diffusion_lcm import LCMFaceIDPipeline
+        from ..engine_models.flux_klein import FluxKleinNode
 
         headers = payload.get("headers", {})
         
@@ -215,6 +224,9 @@ class Presence:
                 images[0].save(buffered, format="PNG")
                 return base64.b64encode(buffered.getvalue()).decode()
 
+        elif isinstance(self._strategy, FluxKleinNode):
+            return self._strategy.run(payload)
+            
         return None
 
     async def generate_video(self, payload: Dict[str, Any]):

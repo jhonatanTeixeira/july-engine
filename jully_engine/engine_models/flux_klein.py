@@ -72,14 +72,11 @@ class FluxKleinNode:
         import torch
 
         prompt = payload.get("prompt", "")
-        width = int(payload.get("width", 1024))
-        height = int(payload.get("height", 1024))
+        width = int(payload.get("width", 512))
+        height = int(payload.get("height", 512))
         guidance_scale = float(payload.get("guidance_scale", 1.0)) 
         num_inference_steps = int(payload.get("num_inference_steps", 4))
         seed = int(payload.get("seed", 42)) 
-        
-        # REMOVEMOS O STRENGTH POR ENQUANTO. O Pipeline customizado não aceita ele.
-        # strength = float(payload.get("strength", 0.7)) 
         
         input_image_data = payload.get("image")
 
@@ -108,7 +105,6 @@ class FluxKleinNode:
                 init_image = init_image.resize((width, height), Image.LANCZOS)
                 
                 kwargs_infer["image"] = init_image
-                # kwargs_infer["strength"] = strength # <--- COMENTADO: O culpado do erro
                 
                 # Executa o pipeline Img2Img Clonado
                 result_image = self.model_i2i(**kwargs_infer).images[0]
