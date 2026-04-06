@@ -65,6 +65,7 @@ class Mouth:
         text = payload.get("input", payload.get("text", ""))
         
         headers: dict = payload.get("headers", {})
+        stream: bool = payload.get("stream", False)
         
         from ..persistence import get_backend
         config = get_backend().get_setting("TTS") or {}
@@ -95,7 +96,7 @@ class Mouth:
             return self._strategy.run(text, voice_id)
 
         elif isinstance(self._strategy, KokoroTTS):
-            return await self._strategy.run(text, voice_id, language)
+            return await self._strategy.run(text, voice_id, language, stream=stream)
 
         return None
 

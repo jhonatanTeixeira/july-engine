@@ -61,6 +61,7 @@ class SpeechRequest(BaseModel):
     model: Optional[str] = None
     input: str
     voice: Optional[str] = None
+    stream: Optional[bool] = False
 
 class ImageGenerationRequest(BaseModel):
     prompt: str
@@ -138,10 +139,24 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 async def create_speech(request: SpeechRequest, http_request: Request):
     headers = dict(http_request.headers)
     payload = request.model_dump()
-    audio_bytes = await bridge.process_tts(payload, headers)
+    stream = payload.get('stream', False)
     
-    if audio_bytes:
-        return Response(content=audio_bytes, media_type="audio/wav")
+    result = await bridge.process_tts(payload, headers)
+    
+    if stream and hasattr(result, '__aiter__'):
+        async def sse_formatter(generator):
+            try:
+                async for chunk_bytes in generator:
+                    chunk_base64 = base64.b64encode(chunk_bytes).decode('utf-8')
+                    json_data = json.dumps({"audio": chunk_base64})
+                    yield f"data: {json_data}\n\n"
+            finally:
+                yield "data: [DONE]\n\n"
+                
+        return StreamingResponse(sse_formatter(result), media_type="text/event-stream")
+    
+    if result:
+        return Response(content=result, media_type="audio/wav")
     
     return Response(status_code=500, content="TTS failed to generate audio")
 

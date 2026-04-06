@@ -29,3 +29,4 @@ deepface
 retina-face
 tensorflow
 tf-keras
+pedalboard

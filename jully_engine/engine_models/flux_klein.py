@@ -84,7 +84,7 @@ class FluxKleinNode:
         height = int(payload.get("height", 512))
         guidance_scale = float(payload.get("guidance_scale", 1.0)) 
         num_inference_steps = int(payload.get("num_inference_steps", 4))
-        seed = int(payload.get("seed", 42)) 
+        seed = int(payload.get("seed", -1)) 
         
         input_image_data = payload.get("image")
 

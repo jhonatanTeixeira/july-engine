@@ -249,17 +249,22 @@ class Bridge:
             return [response]
         return response
 
-    async def process_tts(self, payload: Dict[str, Any], headers: Dict[str, str]) -> bytes:
+    async def process_tts(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[bytes, AsyncGenerator[bytes, None]]:
         start_time = time.time()
         input_chars = len(payload.get("input", ""))
         payload['headers'] = headers
+        stream = payload.get("stream", False)
         
-        audio_bytes = await inference_helper.process("tts", payload)
-        
+        audio_result = await inference_helper.process("tts", payload)
         gen_time = time.time() - start_time
-        audio_duration = get_audio_duration(audio_bytes) if audio_bytes else 0.0
+        
+        if stream and hasattr(audio_result, '__aiter__'):
+            event_manager.emit("voice", generation_time=gen_time, input_chars=input_chars, audio_duration=0.0)
+            return audio_result
+        
+        audio_duration = get_audio_duration(audio_result) if audio_result else 0.0
         event_manager.emit("voice", generation_time=gen_time, input_chars=input_chars, audio_duration=audio_duration)
-        return audio_bytes
+        return audio_result
 
     async def process_stt(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         start_time = time.time()
