@@ -36,7 +36,7 @@ class Pix2Pix:
                 logger.error(f"Pix2Pix: Failed to load: {e}")
                 raise e
 
-    def run(self, image_data: str, prompt: str) -> str:
+    def run(self, image_data: str, prompt: str, **kwargs) -> str:
         if self.pipeline is None:
             self.load()
             
@@ -47,8 +47,19 @@ class Pix2Pix:
             img_bytes = base64.b64decode(image_data)
             image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
 
+            # Resize if width/height are provided
+            width = kwargs.get("width")
+            height = kwargs.get("height")
+            if width and height:
+                image = image.resize((width, height), Image.LANCZOS)
+
             # Run inference
-            edited_image = self.pipeline(prompt, image=image, num_inference_steps=20, image_guidance_scale=1.5).images[0]
+            edited_image = self.pipeline(
+                prompt, 
+                image=image, 
+                num_inference_steps=20, 
+                image_guidance_scale=1.5
+            ).images[0]
 
             # Encode back to base64
             buffered = io.BytesIO()

@@ -177,18 +177,10 @@ async def create_image_edit(
         "prompt": prompt,
         "model": model
     }
-    edited_image_base64 = await bridge.process_image_edit(payload, headers)
-    return {
-        "created": int(time.time()),
-        "data": [{"b64_json": edited_image_base64}]
-    }
+    return await bridge.process_image_edit(payload, headers)
 
 @router.post("/images/generations", response_model=ImageResponse)
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):
     headers = dict(http_request.headers)
     payload = request.model_dump()
-    image_base64 = await bridge.process_image_generation(payload, headers)
-    return {
-        "created": int(time.time()),
-        "data": [{"b64_json": image_base64}]
-    }
+    return await bridge.process_image_generation(payload, headers)

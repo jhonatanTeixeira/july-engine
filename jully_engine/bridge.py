@@ -273,15 +273,43 @@ class Bridge:
         event_manager.emit("stt", generation_time=gen_time, audio_duration=audio_duration)
         return result
 
-    async def process_image_edit(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+    async def process_image_edit(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         start_time = time.time()
         payload['headers'] = headers
         
-        result = await inference_helper.process("pix2pix", payload)
+        # OpenAI Compatibility: Parse size (WxH)
+        if "size" in payload and payload["size"]:
+            try:
+                w, h = payload["size"].lower().split("x")
+                payload["width"] = int(w)
+                payload["height"] = int(h)
+            except Exception:
+                logger.warning(f"Bridge: Failed to parse size '{payload['size']}'")
+        
+        n = max(1, int(payload.get("n", 1)))
+        response_format = payload.get("response_format", "b64_json")
+        
+        results = []
+        for i in range(n):
+            if n > 1:
+                logger.info(f"Bridge: Generating image {i+1}/{n} (Edit)")
+            res = await inference_helper.process("pix2pix", payload)
+            results.append(res)
         
         gen_time = time.time() - start_time
         event_manager.emit("image", generation_time=gen_time)
-        return result
+        
+        data = []
+        for res in results:
+            if response_format == "b64_json":
+                data.append({"b64_json": res})
+            else:
+                data.append({"url": f"data:image/png;base64,{res}"})
+                
+        return {
+            "created": int(time.time()),
+            "data": data
+        }
 
     async def process_image_resize(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         start_time = time.time()
@@ -293,15 +321,43 @@ class Bridge:
         event_manager.emit("image", generation_time=gen_time)
         return result
 
-    async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+    async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         start_time = time.time()
         payload['headers'] = headers
         
-        result = await inference_helper.process("image_generation", payload)
+        # OpenAI Compatibility: Parse size (WxH)
+        if "size" in payload and payload["size"]:
+            try:
+                w, h = payload["size"].lower().split("x")
+                payload["width"] = int(w)
+                payload["height"] = int(h)
+            except Exception:
+                logger.warning(f"Bridge: Failed to parse size '{payload['size']}'")
+
+        n = max(1, int(payload.get("n", 1)))
+        response_format = payload.get("response_format", "b64_json")
+        
+        results = []
+        for i in range(n):
+            if n > 1:
+                logger.info(f"Bridge: Generating image {i+1}/{n} (Generation)")
+            res = await inference_helper.process("image_generation", payload)
+            results.append(res)
         
         gen_time = time.time() - start_time
         event_manager.emit("image", generation_time=gen_time)
-        return result
+        
+        data = []
+        for res in results:
+            if response_format == "b64_json":
+                data.append({"b64_json": res})
+            else:
+                data.append({"url": f"data:image/png;base64,{res}"})
+                
+        return {
+            "created": int(time.time()),
+            "data": data
+        }
 
     async def process_search_web(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
         start_time = time.time()

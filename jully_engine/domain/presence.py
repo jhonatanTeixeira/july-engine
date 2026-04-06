@@ -142,7 +142,9 @@ class Presence:
                 prompt=prompt,
                 face_image=face_img,
                 num_inference_steps=payload.get("steps", 10),
-                guidance_scale=payload.get("guidance_scale", 1.5)
+                guidance_scale=payload.get("guidance_scale", 1.5),
+                width=payload.get("width", 512),
+                height=payload.get("height", 512)
             )
             
             if images:
@@ -207,17 +209,24 @@ class Presence:
             return await self._strategy.run_image_gen(model, prompt, headers=headers, **payload)
             
         elif isinstance(self._strategy, Pix2Pix):
-            img = Image.new('RGB', (512, 512), color = 'white')
+            img = Image.new('RGB', (payload.get("width", 512), payload.get("height", 512)), color = 'white')
             buffered = io.BytesIO()
             img.save(buffered, format="PNG")
             image_data = base64.b64encode(buffered.getvalue()).decode()
-            return self._strategy.run(image_data, payload.get("prompt"))
+            return self._strategy.run(
+                image_data, 
+                payload.get("prompt"), 
+                width=payload.get("width"), 
+                height=payload.get("height")
+            )
             
         elif isinstance(self._strategy, LCMFaceIDPipeline):
             images = self._strategy(
                 prompt=payload.get("prompt", ""),
                 num_inference_steps=payload.get("steps", 6),
-                guidance_scale=payload.get("guidance_scale", 1.5)
+                guidance_scale=payload.get("guidance_scale", 1.5),
+                width=payload.get("width", 512),
+                height=payload.get("height", 512)
             )
             if images:
                 buffered = io.BytesIO()
