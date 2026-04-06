@@ -16,13 +16,36 @@ logger = logging.getLogger("JulyEngine.Orchestrators.GpuOrchestrator")
 # ---------------------------------------------------------------------------
 # 1. HEURÍSTICA DE LAYERS
 # ---------------------------------------------------------------------------
-
 def guess_num_layers(combined_name: str, params: float) -> int:
     """Adivinha o número de layers baseado no tamanho do modelo."""
     if not params or params == -1:
         return -1 # -1 significa "auto" para o llama.cpp
         
     combined_name = combined_name.lower()
+    
+    # ---------------------------------------------------------
+    # BLOCO SMOE (MIXTURE OF EXPERTS) - Intercepta antes
+    # ---------------------------------------------------------
+    if "mixtral" in combined_name:
+        if params >= 100:
+            return 56 # Mixtral 8x22B (~141B)
+        return 32     # Mixtral 8x7B (~47B)
+        
+    if "moe" in combined_name:
+        # A maioria dos modelos MoE pequenos/médios da família Qwen/DeepSeek
+        # costuma reaproveitar a profundidade do seu modelo denso base.
+        if "qwen" in combined_name:
+            if params < 20: 
+                return 24 # Ex: Qwen1.5-MoE-A2.7B (14.3B Total)
+            return 48
+        if "deepseek" in combined_name:
+            if params < 20:
+                return 27 # DeepSeek-Coder-V2-Lite (16B Total)
+            return 60     # DeepSeek-V2 (236B Total)
+            
+    # ---------------------------------------------------------
+    # MODELOS DENSOS
+    # ---------------------------------------------------------
     
     # Família 7B - 8B
     if 7 <= params <= 9:
@@ -57,7 +80,6 @@ def guess_num_layers(combined_name: str, params: float) -> int:
         return 80
 
     return -1
-
 
 # ---------------------------------------------------------------------------
 # 2. O WORKER DA GPU (Thread Dedicada e Eterna)

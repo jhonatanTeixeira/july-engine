@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 import logging
 import re
 from pydantic import BaseModel
+import os
 
 logger = logging.getLogger("JulyEngine.Routers.Calculator")
 
@@ -28,7 +29,7 @@ QUANTIZATION_MULTIPLIERS = {
     "F16": 16.0,
 }
 
-def estimate_vram_ram(params_b: float, quant: str, ctx: int, layers: int = -1):
+def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int, layers: int = -1, total_layers: int = 32):
     quant_upper = quant.upper()
     bits_per_weight = None
     
@@ -38,21 +39,35 @@ def estimate_vram_ram(params_b: float, quant: str, ctx: int, layers: int = -1):
             break
             
     if bits_per_weight is None:
-        # Default fallback if unknown (assume Q4)
-        bits_per_weight = 4.5
+        bits_per_weight = 4.5 # Default fallback (assume Q4)
 
-    # 1 Billion params * bits per weight / 8 = Bytes. Then / 1024^3 = GB.
-    # Basically: Params(B) * bits_per_weight / 8 = Size in GB
+    # 1. PESO ESTÁTICO DO MODELO (Todos os parâmetros contam, mesmo em MoE)
+    # Params(B) * bits_per_weight / 8 = Size in GB
     model_size_gb = (params_b * bits_per_weight) / 8.0
     
-    # Context window estimate: very rough heuristic
-    # Usually around 100MB per 1k context for a 7B model
-    # We scale it relative to params for an approximation
-    ctx_memory_gb = (ctx / 1024) * 0.1 * (params_b / 7.0)
+    # 2. CÁLCULO DO KV CACHE (A Mágica do Contexto)
+    # Se for MoE, o KV Cache escala apenas com os parâmetros ATIVOS na Atenção,
+    # que costumam ser grosseiramente ~1/3.5 do total em arquiteturas como Mixtral.
+    is_moe = "mixtral" in combined_name.lower() or "moe" in combined_name.lower()
+    effective_kv_params = params_b / 3.5 if is_moe else params_b
     
+    # Estimativa base do KV Cache em FP16 (16-bits): ~100MB por 1k ctx para um modelo 7B
+    base_ctx_memory_gb = (ctx / 1024) * 0.1 * (effective_kv_params / 7.0)
+    
+    # Lendo a sua variável de ambiente mágica
+    kv_quant = str(os.environ.get('KV_CACHE_QUANTIZATION', '16'))
+    
+    # Aplicando os multiplicadores de economia de VRAM do KV Cache
+    if kv_quant == '8':
+        ctx_memory_gb = base_ctx_memory_gb * 0.5  # Q8_0 pesa metade do FP16
+    elif kv_quant == '4':
+        ctx_memory_gb = base_ctx_memory_gb * 0.25 # Q4_0 pesa um quarto do FP16
+    else:
+        ctx_memory_gb = base_ctx_memory_gb        # FP16 (Tamanho normal)
+        
     total_required_gb = model_size_gb + ctx_memory_gb
     
-    # If layers is -1, assume 100% offload to VRAM
+    # 3. DIVISÃO VRAM vs RAM (Baseado em Layers reais)
     if layers == -1:
         vram_req = total_required_gb
         ram_req = 0.5 # Minimal base RAM overhead
@@ -60,9 +75,10 @@ def estimate_vram_ram(params_b: float, quant: str, ctx: int, layers: int = -1):
         vram_req = 0.0
         ram_req = total_required_gb + 0.5
     else:
-        # Simplistic split: assume standard model has ~32 layers. 
-        # If user says 16 layers, ~50% goes to VRAM.
-        ratio = min(layers / 32.0, 1.0)
+        # Usando a quantidade REAL de layers do modelo para achar o ratio matemático
+        safe_total_layers = max(total_layers, 1) # Previne divisão por zero
+        ratio = min(layers / float(safe_total_layers), 1.0)
+        
         vram_req = total_required_gb * ratio
         ram_req = (total_required_gb * (1 - ratio)) + 0.5
 
@@ -73,6 +89,7 @@ def estimate_vram_ram(params_b: float, quant: str, ctx: int, layers: int = -1):
         "estimated_vram_gb": round(vram_req, 2),
         "estimated_ram_gb": round(ram_req, 2)
     }
+
 
 @router.post("/check-resources")
 async def check_resources(req: ResourceCheckRequest):

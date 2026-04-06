@@ -45,14 +45,26 @@ class GGUF:
         model_path = hf_hub_download(repo_id=meta["model_id"], filename=meta["filename"])
 
         try:
+            from llama_cpp import Llama
+            import llama_cpp
+            
             logger.info(f"GGUF: Loading model {self.meta['model_alias']} on {self.backend} (n_ctx={effective_n_ctx})")
             
             params = {
                 "model_path": model_path,
                 "n_gpu_layers": n_gpu_layers,
                 "n_ctx": effective_n_ctx,
-                "verbose": False
+                "verbose": False,
+                "flash_attn": True, # Acelera a matemática da atenção e corta o pico de memória
             }
+
+            if quant := os.environ.get('KV_CACHE_QUANTIZATION', None):
+                if quant == '8':
+                    params["type_k"] = llama_cpp.GGML_TYPE_Q8_0
+                    params["type_v"] = llama_cpp.GGML_TYPE_Q8_0
+                if quant == '4':
+                    params["type_k"] = llama_cpp.GGML_TYPE_Q4_0
+                    params["type_v"] = llama_cpp.GGML_TYPE_Q4_0
 
             if meta.get("template"):
                 params["chat_format"] = meta["template"]
@@ -76,7 +88,6 @@ class GGUF:
                     from llama_cpp.llama_chat_format import Llava15ChatHandler
                     params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
 
-            from llama_cpp import Llama
             self.model = Llama(**params)
             
         except Exception as e:
@@ -109,8 +120,6 @@ class GGUF:
 
         # O Truque do Force Reasoning: A IA começa já pensando
         if force_reasoning:
-            # Verifica se já não existe uma mensagem do sistema ou se o modelo já suporta nativamente
-            # Para o nosso caso, apenas concatenamos se a última não for assistente começando com think
             messages.append({"role": "assistant", "content": "<think>\n"})
 
         response = self.model.create_chat_completion(
