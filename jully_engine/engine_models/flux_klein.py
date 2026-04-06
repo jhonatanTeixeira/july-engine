@@ -45,6 +45,7 @@ class FluxKleinNode:
         self.model_t2i = AutoPipelineForText2Image.from_pretrained(
             self.model_id, 
             torch_dtype=torch.bfloat16,
+            low_cpu_mem_usage=True,
             cache_dir=self.cache_dir
         )
 
@@ -65,7 +66,8 @@ class FluxKleinNode:
 
         # 4. Kit Sobrevivência 4GB
         logger.info("FluxKleinNode: Ativando travas de segurança de VRAM...")
-        self.model_t2i.enable_model_cpu_offload()
+        # self.model_t2i.enable_model_cpu_offload()
+        self.model_t2i.enable_sequential_cpu_offload()
         self.model_t2i.vae.enable_tiling()
         self.model_t2i.vae.enable_slicing()
         

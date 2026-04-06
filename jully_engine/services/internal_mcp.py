@@ -51,7 +51,7 @@ class InternalMCP:
                 "fire-and-forget": True,
                 "function": {
                     "name": "generate_image",
-                    "description": "CRITICAL: Generates a new image based on a prompt. You MUST use this tool whenever your System Prompt instructions dictate generating a visual response, or when the user requests a picture. The output format MUST strictly be XML: <generate_image><prompt>HIGHLY_DETAILED_ENGLISH_PROMPT_HERE</prompt></generate_image>.",
+                    "description": "CRITICAL: Generates a new image based on a prompt. You MUST use this tool whenever your System Prompt instructions dictate generating a visual response, or when the user requests a picture.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -140,7 +140,7 @@ class InternalMCP:
                 "fire-and-forget": True,
                 "function": {
                     "name": "image_edit",
-                    "description": "CRITICAL: Modifies or edits an existing image in the context. You MUST use this tool whenever the user asks to alter, change, filter, fix, or manipulate a picture. NEVER claim that you cannot edit images or that you are a text-based AI. DO NOT just describe the changes in text. The output format MUST strictly be XML: <image_edit><instruction>CLEAR_AND_DETAILED_ENGLISH_INSTRUCTION</instruction></image_edit>.",
+                    "description": "CRITICAL: Modifies or edits an existing image in the context. You MUST use this tool whenever the user asks to alter, change, filter, fix, or manipulate a picture. NEVER claim that you cannot edit images or that you are a text-based AI. DO NOT just describe the changes in text.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -172,7 +172,7 @@ class InternalMCP:
     def inject_tools(self, payload: Dict, whitelist: List[str] = None):
         if not payload.get('tools', None):
             payload['tools'] = self.get_tools(whitelist)
-            
+
         print(payload)
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
@@ -239,8 +239,11 @@ class InternalMCP:
             if name == "generate_image":
                 prompt = arguments.get("prompt", "")
                 logger.info(f"InternalMCP: Generating image with prompt: '{prompt[:100]}...'")
-                # response = await model_loader.get_presence(backend, model)._strategy.run_image_gen(model, arguments.get("prompt", ""))
-                response = await bridge.process_image_generation({"prompt": prompt}, {})
+                # process_image_generation returns an OpenAI-format dict: {"data": [{"b64_json": "..."}]}
+                bridge_res = await bridge.process_image_generation({"prompt": prompt}, {})
+                
+                # Extract the raw base64 string
+                response = bridge_res["data"][0]["b64_json"] if "data" in bridge_res and len(bridge_res["data"]) > 0 else ""
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
@@ -297,17 +300,21 @@ class InternalMCP:
                 )
             
             elif name == "image_edit":
-                response = await bridge.process_image_edit({
+                # process_image_edit returns an OpenAI-format dict: {"data": [{"b64_json": "..."}]}
+                bridge_res = await bridge.process_image_edit({
                     "prompt": arguments.get("instruction", ""),
                     "image": arguments.get("image", "")
                 }, {})
+                
+                # Extract the raw base64 string
+                response = bridge_res["data"][0]["b64_json"] if "data" in bridge_res and len(bridge_res["data"]) > 0 else ""
+                
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
                     "Image edited",
                     UserToolReponse(response, 'image')
                 )
-
         except Exception as e:
             logger.error(f"InternalMCP: Erro na tool {name}: {e}")
             return (
@@ -317,27 +324,42 @@ class InternalMCP:
 
     async def stream_orchestrate(self, response: AsyncGenerator[Dict, None], brain_instance, original_payload: Dict[str, Any]) -> AsyncGenerator[Dict, None]:
         is_calling = False
-        tools = {}
+        tools = {} # Mapeado por index (int)
         assistant_content = ''
         tool_messages = []
         assistant_tool_calls = []
+        print('é aqui')
         
         async for chunk in response:
-            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '')
+            assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '') or ''
+
+            if chunk.get('choices')[0].get('delta', {}).get('reasoning_content', None):
+                yield chunk
+                await asyncio.sleep(0)
              
             if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
                 is_calling = True
                 
                 for tool_call in tool_calls:
-                    if name := tool_call.get('function', {}).get('name', None):
-                        tools.setdefault(name, {"arguments": "", "response": [], "id": tool_call.get("id", None)})
-                    else:
-                        tools.get(name)["arguments"] += tool_call.get("function", {}).get('arguments', '')
+                    idx = tool_call.get("index")
+                    if idx not in tools:
+                        tools[idx] = {"name": "", "arguments": "", "response": [], "id": None}
+                    
+                    tc_fn = tool_call.get('function', {})
+                    if name := tc_fn.get('name'):
+                        tools[idx]["name"] = name
+                    if args := tc_fn.get('arguments'):
+                        tools[idx]["arguments"] += args
+                    if tc_id := tool_call.get("id"):
+                        tools[idx]["id"] = tc_id
                 
                 continue
             
             if is_calling:
-                for name, tool in tools.items():
+                for idx, tool in tools.items():
+                    name = tool.get("name")
+                    if not name: continue
+                    
                     # Status messages mapping
                     status_map = {
                         "search_web": "searching the web",
@@ -353,7 +375,12 @@ class InternalMCP:
                     yield {"status_update": display_name}
                     await asyncio.sleep(0)
                     
-                    tool["response"] = await self.execute_tool(name, json.loads(tool['arguments']))
+                    args_json = tool['arguments'] or "{}"
+                    try:
+                        tool["response"] = await self.execute_tool(name, json.loads(args_json))
+                    except json.JSONDecodeError:
+                        logger.error(f"InternalMCP: Erro ao decodificar JSON para tool {name}: {args_json}")
+                        tool["response"] = (f"Error parsing arguments: {args_json}", None)
                     
                     # Yield end status
                     yield {"status_update": ""} # Empty string to clear/finish status
@@ -365,7 +392,10 @@ class InternalMCP:
                 requires_second_call = False
                 all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
                 
-                for name, tool in tools.items():
+                for idx, tool in tools.items():
+                    name = tool.get("name")
+                    if not name: continue
+                    
                     llm, user = tool.get("response")
                     
                     is_faf = all_indexed_tools.get(name, {}).get("fire-and-forget", False)
@@ -404,16 +434,17 @@ class InternalMCP:
                 original_payload['messages'].extend(tool_messages)
                 
                 if requires_second_call:
-                    async for chunk in brain_instance.chat(original_payload):
-                        yield chunk
+                    async for chunk_2p in brain_instance.chat(original_payload):
+                        yield chunk_2p
                         await asyncio.sleep(0)
+                    continue
 
             yield chunk
             await asyncio.sleep(0)
         
     # --- UTILITÁRIO ---
     async def orchestrate(self, response: Union[Dict[str, Any], AsyncGenerator], brain, original_payload: Dict[str, Any]) -> Union[Dict[str, Any], AsyncGenerator]:
-        if isinstance(response, AsyncGenerator):
+        if isinstance(response, AsyncGenerator) or hasattr(response, '__aiter__'):
             return self.stream_orchestrate(response, brain, original_payload)
         else:
             choice = response.get("choices", [{}])[0]
