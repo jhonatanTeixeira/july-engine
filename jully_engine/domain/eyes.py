@@ -9,7 +9,7 @@ from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..engine_models.tagger import ONNXTagger
-    from ..engine_models.gguf import GGUF
+    from ..engine_models.llama_cpp import GGUF
     from ..engine_models.fastvlm import FastVLM
     from ..engine_models.emotion import Emotion
     from ..engine_models.llm_api import LLMApi
@@ -52,7 +52,7 @@ class Eyes:
         model = get_backend().get_model(self.model_tag)
 
         if self.backend in ["gpu", "cpu"]:
-            from ..engine_models.gguf import GGUF
+            from ..engine_models.llama_cpp import GGUF
             return GGUF(backend=self.backend, model=model)
         else:
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
@@ -107,7 +107,7 @@ class Eyes:
 
     async def analyze(self, payload: Dict[str, Any]) -> List[str]:
         from ..engine_models.llm_api import LLMApi
-        from ..engine_models.gguf import GGUF
+        from ..engine_models.llama_cpp import GGUF
         from ..engine_models.emotion import Emotion
         from ..engine_models.tagger import ONNXTagger
         from ..engine_models.fastvlm import FastVLM

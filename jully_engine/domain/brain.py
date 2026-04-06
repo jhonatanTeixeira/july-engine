@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..engine_models.gguf import GGUF
+    from ..engine_models.llama_cpp import GGUF
     from ..engine_models.llm_api import LLMApi
 from ..services.models_service import ModelsService
 from ..services.mcp_emulator import McpEmulator
@@ -31,14 +31,14 @@ class Brain:
         model = model_service.get(self.model_tag) or model_service.resolve_by_settings(self.model_tag)
         
         if self.backend in ["gpu", "cpu"] and model is not None:
-            from ..engine_models.gguf import GGUF
+            from ..engine_models.llama_cpp import GGUF
             return GGUF(backend=self.backend, model=model)
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
     async def chat(self, payload: Dict[str, Any]):
         from ..engine_models.llm_api import LLMApi
-        from ..engine_models.gguf import GGUF
+        from ..engine_models.llama_cpp import GGUF
         
         headers = payload.get("headers", {})
         

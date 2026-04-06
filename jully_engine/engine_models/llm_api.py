@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 from httpx import HTTPStatusError
 
@@ -8,9 +9,56 @@ if TYPE_CHECKING:
     import litellm
     from litellm import completion, embedding, image_generation, transcription, speech, acompletion, aembedding, aimage_generation, atranscription, aspeech
 
-# Configuração global agora será feita sob demanda
-
 logger = logging.getLogger("JulyEngine.Models.LLMApi")
+
+
+class DownloadImage:
+    """
+    Classe utilitária para garantir resiliência em requisições de rede severas
+    com retry automático caso o servidor (Cloudflare/Gateway) aborte a conexão.
+    """
+    @staticmethod
+    async def post_api_with_retry(url: str, headers: dict, data: dict, files: dict, retries: int = 10) -> dict:
+        import httpx
+        last_error = None
+        
+        for attempt in range(1, retries + 1):
+            try:
+                # timeout=None garante que o nosso lado não corte a conexão prematuramente
+                async with httpx.AsyncClient(timeout=None) as client:
+                    response = await client.post(url, headers=headers, data=data, files=files)
+                    response.raise_for_status()
+                    return response.json()
+            except Exception as e:
+                last_error = e
+                logger.warning(f"DownloadImage [POST]: Tentativa {attempt}/{retries} falhou na API {url}. Erro: {str(e)}")
+                if attempt < retries:
+                    await asyncio.sleep(2)  # Backoff simples antes da próxima tentativa
+        
+        logger.error(f"DownloadImage [POST]: Falha fatal após {retries} tentativas.")
+        raise last_error
+
+    @staticmethod
+    def get_base64_sync_with_retry(url: str, retries: int = 10) -> str:
+        import requests
+        import base64
+        import time
+        last_error = None
+        
+        for attempt in range(1, retries + 1):
+            try:
+                response = requests.get(url, timeout=None)
+                response.raise_for_status()
+                return base64.b64encode(response.content).decode("utf-8")
+            except Exception as e:
+                last_error = e
+                logger.warning(f"DownloadImage [GET]: Tentativa {attempt}/{retries} falhou ao baixar arquivo. Erro: {str(e)}")
+                if attempt < retries:
+                    time.sleep(2)
+                    
+        logger.error(f"DownloadImage [GET]: Falha fatal de download após {retries} tentativas.")
+        raise last_error
+
 
 class LLMApi:
     """
@@ -156,20 +204,12 @@ class LLMApi:
             raise e
 
     def _ensure_base64(self, data: str) -> str:
-        """Helper to ensure image data is returned as base64 string."""
+        """Helper to ensure image data is returned as base64 string using DownloadImage retries."""
         if not data:
             return ""
         if data.startswith("http"):
-            import requests
-            import base64
-            try:
-                logger.info(f"LLMApi: Downloading image from {data}")
-                response = requests.get(data)
-                response.raise_for_status()
-                return base64.b64encode(response.content).decode("utf-8")
-            except Exception as e:
-                logger.error(f"LLMApi: Failed to download image from URL: {e}")
-                raise e
+            logger.info(f"LLMApi: Downloading image from {data} (with 10 retries)")
+            return DownloadImage.get_base64_sync_with_retry(data, retries=10)
         return data
 
     async def run_image_gen(self, model: str, prompt: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
@@ -202,7 +242,7 @@ class LLMApi:
             raise e
 
     async def run_image_edit(self, model: str, prompt: str, image: Any, mask: Optional[Any] = None, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
-        """Runs image editing directly via httpx since litellm lacks image_editing."""
+        """Runs image editing directly via httpx since litellm lacks image_editing, now wrapped in DownloadImage."""
         api_base = self._extract_base_url(headers) or "https://api.openai.com/v1"
         api_key = self._extract_api_key(headers)
         
@@ -234,14 +274,10 @@ class LLMApi:
                 data[k] = str(v)
         
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=None) as client:
-                response = await client.post(url, headers=req_headers, data=data, files=files)
-                response.raise_for_status()
-                res_json = response.json()
-                raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
-                logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
-                return self._ensure_base64(raw_data)
+            res_json = await DownloadImage.post_api_with_retry(url, headers=req_headers, data=data, files=files, retries=10)
+            raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
+            logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
+            return self._ensure_base64(raw_data)
                 
         except HTTPStatusError as e:
             logger.error(f"LLMApi: Image edit failed: {e.response.status_code} - {e.response.content.decode('utf-8')}")

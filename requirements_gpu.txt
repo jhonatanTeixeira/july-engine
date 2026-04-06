@@ -20,3 +20,5 @@ basicsr
 realesrgan
 gfpgan
 facexlib
+gguf
+sdnq
