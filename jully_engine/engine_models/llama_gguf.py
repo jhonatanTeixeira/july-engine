@@ -10,38 +10,52 @@ from ..services.resource_calculator import estimate_vram_ram
 
 logger = logging.getLogger("JulyEngine.Models.GGUF")
 
+import re
+
 def guess_num_layers(combined_name: str, params: float) -> int:
-    """Adivinha o número de layers baseado no tamanho do modelo."""
+    """Adivinha o número de layers baseado no tamanho e arquitetura do modelo."""
     if not params or params == -1:
         return -1 # -1 significa "auto" para o llama.cpp
         
     combined_name = combined_name.lower()
     
     # ---------------------------------------------------------
-    # BLOCO SMOE (MIXTURE OF EXPERTS) - Intercepta antes
+    # DETECÇÃO DE MoE (Assinatura explícita ou notação oculta -aXb)
     # ---------------------------------------------------------
-    if "mixtral" in combined_name:
-        if params >= 100:
-            return 56 # Mixtral 8x22B (~141B)
-        return 32     # Mixtral 8x7B (~47B)
+    is_moe = "mixtral" in combined_name or "moe" in combined_name or bool(re.search(r'-a(\d+(?:\.\d+)?)b', combined_name))
+    
+    if is_moe:
+        # Mixtral 8x22B (~141B)
+        if "mixtral" in combined_name and params >= 100:
+            return 56 
         
-    if "moe" in combined_name:
-        # A maioria dos modelos MoE pequenos/médios da família Qwen/DeepSeek
-        # costuma reaproveitar a profundidade do seu modelo denso base.
+        # Mixtral 8x7B (~47B)
+        if "mixtral" in combined_name:
+            return 32
+
+        # Família Qwen MoE
         if "qwen" in combined_name:
             if params < 20: 
                 return 24 # Ex: Qwen1.5-MoE-A2.7B (14.3B Total)
-            return 48
+            if 25 <= params <= 35:
+                return 32 # Ex: Qwen3-30B-A3B (Arquitetura otimizada)
+            if 50 <= params <= 65:
+                return 64 # Ex: Qwen2-57B-A14B
+            return 32 # Fallback para MoEs desconhecidos
+
+        # Família DeepSeek MoE
         if "deepseek" in combined_name:
             if params < 20:
-                return 27 # DeepSeek-Coder-V2-Lite (16B Total)
-            return 60     # DeepSeek-V2 (236B Total)
-            
+                return 27 # DeepSeek-Coder-V2-Lite
+            return 60     # DeepSeek-V2/V3 (Modelos gigantes)
+
+        return 32 # Fallback genérico para MoE (arquitetura padrão tipo Mixtral)
+
     # ---------------------------------------------------------
-    # MODELOS DENSOS
+    # MODELOS DENSOS (Sem MoE)
     # ---------------------------------------------------------
     
-    # Família 7B - 8B
+    # Família 7B - 9B
     if 7 <= params <= 9:
         if "gemma" in combined_name and params >= 9:
             return 42 # Gemma 2 9B
@@ -49,10 +63,10 @@ def guess_num_layers(combined_name: str, params: float) -> int:
         
     # Família 0.5B - 3B
     if params < 3:
-        if "qwen" in combined_name and params < 1:
-            return 24 # Qwen 0.5B
-        if "qwen" in combined_name and 1 <= params <= 2:
-            return 28 # Qwen 1.5B
+        if "qwen" in combined_name:
+            if params < 1: return 24 # Qwen 0.5B
+            if 1 <= params <= 2: return 28 # Qwen 1.5B
+            if 2 <= params <= 3: return 32 # Qwen 2.5/3B
         if "gemma" in combined_name:
             return 18 # Gemma 2B
         if "phi" in combined_name:
@@ -67,7 +81,9 @@ def guess_num_layers(combined_name: str, params: float) -> int:
         
     # Família 32B - 35B
     if 30 <= params <= 35:
-        return 64
+        # Se chegou aqui, não é MoE (is_moe foi False)
+        # Modelos densos nessa faixa (ex: Qwen2.5-32B) são muito profundos
+        return 64 
         
     # Família 70B+
     if params >= 70:
@@ -94,31 +110,27 @@ class GGUF:
         self.model = None
 
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM necessária para rodar este modelo GGUF."""
-        if self.backend == "cpu":
-            return 0
+        if self.backend == "cpu": return 0
             
         meta = self.meta
         params_b = meta.get("num_params", 0)
         quant = meta.get("quantization", "Q4_K_M")
+        combined_name = meta.get("model_id", "") + meta.get("filename", "")
         
         headers = payload.get("headers", {})
         effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
         
-        n_layers = payload.get("num_layers") or meta.get("num_layers") or -1
-        if n_layers == -1:
-            n_layers = guess_num_layers(meta.get("model_id", "") + meta.get("filename", ""), params_b)
-            
-        total_layers = meta.get("num_layers", 32)
-        if total_layers == -1: total_layers = 32
-        
+        # O pulo do gato: 'layers' é o que queremos. 'physical_total' é o que o modelo TEM.
+        layers_to_offload = payload.get("num_layers") or meta.get("num_layers") or -1
+        physical_total = guess_num_layers(combined_name, params_b)
+
         estimates = estimate_vram_ram(
-            meta.get("model_id", "") + meta.get("filename", ""),
+            combined_name,
             params_b, 
             quant, 
             effective_n_ctx, 
-            n_layers,
-            total_layers=total_layers
+            layers=layers_to_offload,
+            total_layers=physical_total # Agora o denominador está correto (32)
         )
         
         return int(estimates["estimated_vram_gb"] * 1024)

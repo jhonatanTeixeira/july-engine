@@ -352,8 +352,7 @@ class GpuOrchestrator:
 
         # 4. Iterative layer optimization se ainda não couber (apenas para GGUF)
         # Identificamos GGUF pela estratégia interna ou metadados
-        db = load_models_db()
-        meta = db.get(model_tag, {})
+        meta = domain._strategy.meta
         is_gguf = meta.get('model_type', 'text') in ['text', 'vision'] and model_tag not in ["fastvlm", "moondream"]
         
         if is_gguf and available_vram < required_vram_mb:
@@ -361,6 +360,7 @@ class GpuOrchestrator:
             # Se não estiver no payload, o GGUF usou o guess_num_layers.
             # Vamos iterar removendo camadas do payload explicitamente.
             from ..engine_models.llama_gguf import guess_num_layers
+
             n_layers = payload.get("num_layers") or meta.get("num_layers") or -1
             if n_layers == -1:
                 params_b = meta.get("num_params", 0)
@@ -370,7 +370,7 @@ class GpuOrchestrator:
                 logger.info(f"GpuOrchestrator: Model {model_tag} ({required_vram_mb:.2f}MB) too big for VRAM ({available_vram:.2f}MB). Decrementing layers...")
                 
                 while n_layers > 0 and available_vram < required_vram_mb:
-                    n_layers -= 2 # Decremento mais agressivo para poupar tempo
+                    n_layers -= 1
                     if n_layers < 0: n_layers = 0
                     payload["num_layers"] = n_layers
                     required_vram_mb = domain.get_required_vram(payload)
