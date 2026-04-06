@@ -1,4 +1,5 @@
 import os
+import re
 import logging
 
 logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
@@ -38,14 +39,28 @@ def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int,
     # Params(B) * bits_per_weight / 8 = Size in GB
     model_size_gb = (params_b * bits_per_weight) / 8.0
     
-    # 2. CÁLCULO DO KV CACHE (A Mágica do Contexto)
-    # Se for MoE, o KV Cache escala apenas com os parâmetros ATIVOS na Atenção,
-    # que costumam ser grosseiramente ~1/3.5 do total em arquiteturas como Mixtral.
-    is_moe = "mixtral" in combined_name.lower() or "moe" in combined_name.lower()
-    effective_kv_params = params_b / 3.5 if is_moe else params_b
+    # 2. CÁLCULO DO KV CACHE (A Mágica Blindada com Regex)
+    combined_name_lower = combined_name.lower()
     
-    # Estimativa base do KV Cache em FP16 (16-bits): ~100MB por 1k ctx para um modelo 7B
-    base_ctx_memory_gb = (ctx / 1024) * 0.1 * (effective_kv_params / 7.0)
+    active_params = params_b # Padrão: assume modelo denso
+    is_moe = False
+
+    # Regra 1: Tem a assinatura explícita? (ex: Mixtral, Qwen-MoE)
+    if "mixtral" in combined_name_lower or "moe" in combined_name_lower:
+        is_moe = True
+        active_params = params_b / 3.5  # Fallback de divisão genérica
+        
+    # Regra 2: O Caçador da Notação Oculta (Ex: -a3b, -a14b, -a2.7b)
+    # Procura um traço 'a', seguido de números (com ou sem ponto), seguido de 'b'
+    match_active = re.search(r'-a(\d+(?:\.\d+)?)b', combined_name_lower)
+    
+    if match_active:
+        is_moe = True
+        # Extrai o valor exato! Para 'qwen3-30b-a3b', ele puxa o float(3.0)
+        active_params = float(match_active.group(1))
+
+    # Estimativa base do KV Cache em FP16 (16-bits) usando parâmetros ativos
+    base_ctx_memory_gb = (ctx / 1024) * 0.1 * (active_params / 7.0)
     
     # Lendo a variável de ambiente para compactação de cache
     kv_quant = str(os.environ.get('KV_CACHE_QUANTIZATION', '16'))
