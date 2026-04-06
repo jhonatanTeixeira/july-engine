@@ -6,8 +6,75 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, List, Optional
+from ..services.resource_calculator import estimate_vram_ram
 
 logger = logging.getLogger("JulyEngine.Models.GGUF")
+
+def guess_num_layers(combined_name: str, params: float) -> int:
+    """Adivinha o número de layers baseado no tamanho do modelo."""
+    if not params or params == -1:
+        return -1 # -1 significa "auto" para o llama.cpp
+        
+    combined_name = combined_name.lower()
+    
+    # ---------------------------------------------------------
+    # BLOCO SMOE (MIXTURE OF EXPERTS) - Intercepta antes
+    # ---------------------------------------------------------
+    if "mixtral" in combined_name:
+        if params >= 100:
+            return 56 # Mixtral 8x22B (~141B)
+        return 32     # Mixtral 8x7B (~47B)
+        
+    if "moe" in combined_name:
+        # A maioria dos modelos MoE pequenos/médios da família Qwen/DeepSeek
+        # costuma reaproveitar a profundidade do seu modelo denso base.
+        if "qwen" in combined_name:
+            if params < 20: 
+                return 24 # Ex: Qwen1.5-MoE-A2.7B (14.3B Total)
+            return 48
+        if "deepseek" in combined_name:
+            if params < 20:
+                return 27 # DeepSeek-Coder-V2-Lite (16B Total)
+            return 60     # DeepSeek-V2 (236B Total)
+            
+    # ---------------------------------------------------------
+    # MODELOS DENSOS
+    # ---------------------------------------------------------
+    
+    # Família 7B - 8B
+    if 7 <= params <= 9:
+        if "gemma" in combined_name and params >= 9:
+            return 42 # Gemma 2 9B
+        return 32
+        
+    # Família 0.5B - 3B
+    if params < 3:
+        if "qwen" in combined_name and params < 1:
+            return 24 # Qwen 0.5B
+        if "qwen" in combined_name and 1 <= params <= 2:
+            return 28 # Qwen 1.5B
+        if "gemma" in combined_name:
+            return 18 # Gemma 2B
+        if "phi" in combined_name:
+            return 32 # Phi-2 / Phi-3 Mini
+        return 24
+        
+    # Família 13B - 14B
+    if 12 <= params <= 15:
+        if "qwen" in combined_name:
+            return 48
+        return 40
+        
+    # Família 32B - 35B
+    if 30 <= params <= 35:
+        return 64
+        
+    # Família 70B+
+    if params >= 70:
+        return 80
+
+    return -1
+
 
 def detect_model_type(repo_id_or_filename: str) -> str:
     name = repo_id_or_filename.lower()
@@ -25,6 +92,36 @@ class GGUF:
         self.meta = model
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.model = None
+
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM necessária para rodar este modelo GGUF."""
+        if self.backend == "cpu":
+            return 0
+            
+        meta = self.meta
+        params_b = meta.get("num_params", 0)
+        quant = meta.get("quantization", "Q4_K_M")
+        
+        headers = payload.get("headers", {})
+        effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
+        
+        n_layers = payload.get("num_layers") or meta.get("num_layers") or -1
+        if n_layers == -1:
+            n_layers = guess_num_layers(meta.get("model_id", "") + meta.get("filename", ""), params_b)
+            
+        total_layers = meta.get("num_layers", 32)
+        if total_layers == -1: total_layers = 32
+        
+        estimates = estimate_vram_ram(
+            meta.get("model_id", "") + meta.get("filename", ""),
+            params_b, 
+            quant, 
+            effective_n_ctx, 
+            n_layers,
+            total_layers=total_layers
+        )
+        
+        return int(estimates["estimated_vram_gb"] * 1024)
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         meta = self.meta

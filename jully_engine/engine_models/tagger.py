@@ -25,6 +25,10 @@ class ONNXTagger:
         self.session = None
         self.tags_names: List[str] = []
         self.target_size = 448 
+
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """ONNXTagger roda na CPU (ONNX)."""
+        return 0
         
     def load(self):
         if self.is_loaded():

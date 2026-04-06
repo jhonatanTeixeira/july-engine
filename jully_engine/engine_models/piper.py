@@ -19,6 +19,10 @@ class Piper:
         self.voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
         os.makedirs(self.voices_dir, exist_ok=True)
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Piper roda na CPU (Subprocesso)."""
+        return 0
+
     def _ensure_voice_files(self, voice_id: str, hf_path: Optional[str] = None) -> str:
         """
         Ensures .onnx and .onnx.json exist. Downloads from HF if missing.

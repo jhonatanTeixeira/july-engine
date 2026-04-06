@@ -48,6 +48,12 @@ class Mouth:
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Delega a estimativa de VRAM para a estratégia atual."""
+        if hasattr(self._strategy, "get_required_vram"):
+            return self._strategy.get_required_vram(payload)
+        return 0
+
     async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
         from ..engine_models.replicate_api import Replicate
         from ..engine_models.xtts2 import XTTS2

@@ -14,6 +14,12 @@ class XTTS2:
         self.device = "cpu" # Default until load()
         self.model = None
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o XTTS2."""
+        if self.backend == "cpu":
+            return 0
+        return 2200 # ~2.2GB
+
     def load(self):
         if self.model is None:
             import torch

@@ -25,6 +25,16 @@ class StableDiffusion:
         self.model_path = model_path
         self.lora_path = lora_path
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o SD 1.5 + IP-Adapter."""
+        if self.device == "cpu":
+            return 0
+        
+        # Este modelo usa enable_model_cpu_offload por padrão se estiver na GPU
+        # O pico de ativação é o VAE Decode (~200MB além do peso estático)
+        # Mas para garantir fluidez, reservamos um bloco maior.
+        return 3500 # ~3.5GB para o setup completo
+
     def load_insightface(self):
         """Inicializa o extrator biométrico 512-d na CPU"""
         from insightface.app import FaceAnalysis

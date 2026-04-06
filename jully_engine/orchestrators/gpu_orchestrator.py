@@ -14,75 +14,7 @@ from fastapi import HTTPException
 logger = logging.getLogger("JulyEngine.Orchestrators.GpuOrchestrator")
 
 # ---------------------------------------------------------------------------
-# 1. HEURÍSTICA DE LAYERS
-# ---------------------------------------------------------------------------
-def guess_num_layers(combined_name: str, params: float) -> int:
-    """Adivinha o número de layers baseado no tamanho do modelo."""
-    if not params or params == -1:
-        return -1 # -1 significa "auto" para o llama.cpp
-        
-    combined_name = combined_name.lower()
-    
-    # ---------------------------------------------------------
-    # BLOCO SMOE (MIXTURE OF EXPERTS) - Intercepta antes
-    # ---------------------------------------------------------
-    if "mixtral" in combined_name:
-        if params >= 100:
-            return 56 # Mixtral 8x22B (~141B)
-        return 32     # Mixtral 8x7B (~47B)
-        
-    if "moe" in combined_name:
-        # A maioria dos modelos MoE pequenos/médios da família Qwen/DeepSeek
-        # costuma reaproveitar a profundidade do seu modelo denso base.
-        if "qwen" in combined_name:
-            if params < 20: 
-                return 24 # Ex: Qwen1.5-MoE-A2.7B (14.3B Total)
-            return 48
-        if "deepseek" in combined_name:
-            if params < 20:
-                return 27 # DeepSeek-Coder-V2-Lite (16B Total)
-            return 60     # DeepSeek-V2 (236B Total)
-            
-    # ---------------------------------------------------------
-    # MODELOS DENSOS
-    # ---------------------------------------------------------
-    
-    # Família 7B - 8B
-    if 7 <= params <= 9:
-        if "gemma" in combined_name and params >= 9:
-            return 42 # Gemma 2 9B
-        return 32
-        
-    # Família 0.5B - 3B
-    if params < 3:
-        if "qwen" in combined_name and params < 1:
-            return 24 # Qwen 0.5B
-        if "qwen" in combined_name and 1 <= params <= 2:
-            return 28 # Qwen 1.5B
-        if "gemma" in combined_name:
-            return 18 # Gemma 2B
-        if "phi" in combined_name:
-            return 32 # Phi-2 / Phi-3 Mini
-        return 24
-        
-    # Família 13B - 14B
-    if 12 <= params <= 15:
-        if "qwen" in combined_name:
-            return 48
-        return 40
-        
-    # Família 32B - 35B
-    if 30 <= params <= 35:
-        return 64
-        
-    # Família 70B+
-    if params >= 70:
-        return 80
-
-    return -1
-
-# ---------------------------------------------------------------------------
-# 2. O WORKER DA GPU (Thread Dedicada e Eterna)
+# 1. O WORKER DA GPU (Thread Dedicada e Eterna)
 # ---------------------------------------------------------------------------
 
 def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, ready_event: threading.Event):
@@ -216,7 +148,7 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 in_q.task_done()
 
 # ---------------------------------------------------------------------------
-# 3. O ORQUESTRADOR CENTRAL (Gestor de Threads)
+# 2. O ORQUESTRADOR CENTRAL (Gestor de Threads)
 # ---------------------------------------------------------------------------
 
 class GpuOrchestrator:
@@ -388,69 +320,67 @@ class GpuOrchestrator:
     # --- O PONTO DE ENTRADA DO BRIDGE ---
     async def submit_task(self, task_type: str, payload: Any) -> Union[Any, AsyncGenerator[Any, None]]:
         from ..resource_manager import resource_manager
+        from ..model_loader import model_loader
         
         if not self.running: raise RuntimeError("GpuOrchestrator not running")
         if task_type not in self.workers: raise ValueError(f"Unknown GPU task type: {task_type}")
         
         model_tag = payload.get("model")
         model_key = self.task_to_key.get(task_type, "llm")
+        backend = "gpu"
 
-        # 1. Resource pre-check and unloading
-        db = load_models_db()
-        meta = db.get(model_tag, {})
-
-        effective_n_ctx = 2048
-        n_layers = -1
-        params_b = 0
-        quant = "Q4_K_M"
-
-        # Heurística para modelos específicos
-        if model_tag in ["fastvlm", "moondream"]:
-            required_vram_mb = 2048 # ~2GB fixo para esses modelos
-        elif model_tag == 'lcm':
-            required_vram_mb = 200 # Pico de ativação do SD1.5 (VAE Decode)
-        elif meta.get('model_type', 'text') in ['text', 'vision']:
-            params_b = meta.get("num_params", 0)
-            quant = meta.get("quantization", "Q4_K_M")
-            
-            headers = payload.get("headers", {})
-            effective_n_ctx = int(headers.get("x-context-window") or meta.get("context_window") or 2048)
-            
-            n_layers = meta.get("num_layers", -1)
-            if n_layers == -1:
-                n_layers = guess_num_layers(model_tag + meta.get("filename", ""), params_b)
-            
-            estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, n_layers)
-            required_vram_mb = estimates["estimated_vram_gb"] * 1024
+        # 1. Obter instância do domínio (leve, sem carregar pesos)
+        if task_type == "text_chat": domain = model_loader.get_brain(backend, model_tag)
+        elif task_type == "vision_chat": domain = model_loader.get_eyes(backend, model_tag)
+        elif task_type == "tts": domain = model_loader.get_mouth(backend, model_tag)
+        elif task_type == "stt": domain = model_loader.get_ears(backend, model_tag)
+        elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update"]: 
+            domain = model_loader.get_memory(backend, model_tag)
+        elif task_type in ["pix2pix", "image_generation", "image_resize"]: 
+            domain = model_loader.get_presence(backend, model_tag)
         else:
-            required_vram_mb = meta.get('estimated_vram', 0)
+            raise ValueError(f"Orchestrator: No domain mapping for {task_type}")
+
+        # 2. Estimar VRAM necessária
+        required_vram_mb = domain.get_required_vram(payload)
             
         if self.active_gpu_models.get(model_key) == model_tag:
+            # Modelo já está na memória, custo de ativação é residual ou zero
             required_vram_mb = 0
 
-        # 2. Try to free up memory
+        # 3. Try to free up memory
         available_vram = await self.ensure_resources(model_key, required_vram_mb)
 
-        # 3. Iterative layer optimization se ainda não couber (apenas para GGUF)
-        if meta.get('model_type', 'text') in ['text', 'vision'] and model_tag not in ["fastvlm", "moondream"] and available_vram < required_vram_mb and n_layers > 0:
-            logger.info(f"GpuOrchestrator: Model {model_tag} ({required_vram_mb:.2f}MB) too big for VRAM ({available_vram:.2f}MB). Decrementing layers...")
-            
-            while n_layers > 0 and available_vram < required_vram_mb:
-                n_layers -= 1
-                estimates = estimate_vram_ram(params_b, quant, effective_n_ctx, n_layers)
-                required_vram_mb = estimates["estimated_vram_gb"] * 1024
-            
-            logger.info(f"GpuOrchestrator: Optimized model to {n_layers} layers ({required_vram_mb:.2f}MB required)")
-            
-            # Safety margin: decrement one more if possible
+        # 4. Iterative layer optimization se ainda não couber (apenas para GGUF)
+        # Identificamos GGUF pela estratégia interna ou metadados
+        db = load_models_db()
+        meta = db.get(model_tag, {})
+        is_gguf = meta.get('model_type', 'text') in ['text', 'vision'] and model_tag not in ["fastvlm", "moondream"]
+        
+        if is_gguf and available_vram < required_vram_mb:
+            # Tenta descobrir o número de camadas atual (ou sugerido)
+            # Se não estiver no payload, o GGUF usou o guess_num_layers.
+            # Vamos iterar removendo camadas do payload explicitamente.
+            from ..engine_models.llama_gguf import guess_num_layers
+            n_layers = payload.get("num_layers") or meta.get("num_layers") or -1
+            if n_layers == -1:
+                params_b = meta.get("num_params", 0)
+                n_layers = guess_num_layers(model_tag + meta.get("filename", ""), params_b)
+
             if n_layers > 0:
-                n_layers -= 1
+                logger.info(f"GpuOrchestrator: Model {model_tag} ({required_vram_mb:.2f}MB) too big for VRAM ({available_vram:.2f}MB). Decrementing layers...")
                 
-            payload["num_layers"] = n_layers
+                while n_layers > 0 and available_vram < required_vram_mb:
+                    n_layers -= 2 # Decremento mais agressivo para poupar tempo
+                    if n_layers < 0: n_layers = 0
+                    payload["num_layers"] = n_layers
+                    required_vram_mb = domain.get_required_vram(payload)
+                
+                logger.info(f"GpuOrchestrator: Optimized model to {n_layers} layers ({required_vram_mb:.2f}MB required)")
 
         if available_vram < required_vram_mb:
             logger.error(f"GpuOrchestrator: Insufficient VRAM for {model_tag}. Required: {required_vram_mb:.2f}MB, Available: {available_vram:.2f}MB.")
-            raise HTTPException(status_code=422, detail=f"Insufficient VRAM even with 0 layers. Required: {required_vram_mb:.2f}MB, Available: {available_vram:.2f}MB.")
+            raise HTTPException(status_code=422, detail=f"Insufficient VRAM for local execution. Required: {required_vram_mb:.2f}MB, Available: {available_vram:.2f}MB.")
 
         self.mark_busy(model_key)
         
@@ -468,8 +398,11 @@ class GpuOrchestrator:
                 in_q.put({"cmd": "LOAD", "payload": payload})
                 
                 load_resp = await asyncio.to_thread(out_q.get)
-                if load_resp.get("type") == "ERROR":
-                    raise RuntimeError(f"Falha no load: {load_resp.get('data')}")
+                if load_resp.get("status") != "LOAD_OK":
+                     # Note que mudei o status check pois no worker ele retornava status: LOAD_OK, e aqui estava verificando type: ERROR
+                     if load_resp.get("type") == "ERROR":
+                        raise RuntimeError(f"Falha no load: {load_resp.get('data')}")
+                     raise RuntimeError(f"Resposta inesperada no load: {load_resp}")
                     
                 self.active_gpu_models[model_key] = model_tag
 

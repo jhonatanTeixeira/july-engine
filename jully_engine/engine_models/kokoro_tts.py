@@ -19,6 +19,12 @@ class KokoroTTS:
         self.device = "cuda" if backend == "gpu" else "cpu"
         self.lang_code = None
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o Kokoro TTS."""
+        if self.device == "cpu":
+            return 0
+        return 500 # ~500MB
+
     def load(self, lang_code='a'):
         if self.pipeline is None or lang_code != self.lang_code:
             from kokoro import KPipeline

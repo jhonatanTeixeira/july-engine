@@ -49,6 +49,15 @@ class LCMVideoPipeline:
         self.pipe = None
         self._loaded = False
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o motor de vídeo (AnimateDiff + LCM)."""
+        if self.device == "cpu":
+            return 0
+            
+        # Com Extreme Offload (CPU Offload) conseguimos rodar em ~4GB.
+        # Reservamos 3800MB para segurança na 3050.
+        return 3800
+
     def load(self):
         if self._loaded:
             return

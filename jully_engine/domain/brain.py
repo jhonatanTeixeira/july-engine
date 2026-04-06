@@ -36,6 +36,12 @@ class Brain:
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Delega a estimativa de VRAM para a estratégia atual."""
+        if hasattr(self._strategy, "get_required_vram"):
+            return self._strategy.get_required_vram(payload)
+        return 0
+
     async def chat(self, payload: Dict[str, Any]):
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.llama_gguf import GGUF

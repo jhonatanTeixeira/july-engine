@@ -11,6 +11,12 @@ class MultilingualE5:
         self.model_id = "intfloat/multilingual-e5-small"
         self.model = None
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o MultilingualE5."""
+        if self.backend == "cpu":
+            return 0
+        return 500 # ~500MB
+
     def load(self):
         if self.model is None:
             import torch

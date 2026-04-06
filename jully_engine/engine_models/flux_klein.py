@@ -19,6 +19,12 @@ class FluxKleinNode:
         
         self.model_id = self.meta.get("id", "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o FLUX.2 Klein SDNQ."""
+        if self.backend == "cpu":
+            return 0
+        return 3800 # ~3.8GB. Otimizado para 4GB VRAM.
+
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():
             return

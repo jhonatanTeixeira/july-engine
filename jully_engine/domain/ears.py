@@ -26,6 +26,12 @@ class Ears:
         else:
             raise ValueError(f"Ears: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Delega a estimativa de VRAM para a estratégia atual."""
+        if hasattr(self._strategy, "get_required_vram"):
+            return self._strategy.get_required_vram(payload)
+        return 0
+
     def _extract_text(self, response: Any) -> str:
         """Helper to force OpenAI-like STT responses into pure text."""
         if not response:

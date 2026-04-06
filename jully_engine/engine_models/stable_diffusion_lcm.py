@@ -134,6 +134,19 @@ class LCMFaceIDPipeline:
     # Carregamento
     # ------------------------------------------------------------------
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM necessária baseado na configuração de offload."""
+        if self.device == "cpu":
+            return 0
+        
+        # Se for usar offload sequencial ou de modelo, o consumo cai drasticamente
+        if self.use_sequential_offload or payload.get("use_sequential_offload"):
+            return 2100 # ~2.1GB
+        if self.use_cpu_offload or payload.get("use_cpu_offload"):
+            return 2800 # ~2.8GB
+            
+        return 4200 # ~4.2GB para SD1.5 + IP-Adapter sem offload
+
     def load(self):
         if self._loaded:
             return

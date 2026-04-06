@@ -17,6 +17,10 @@ class BgeMicro:
         self.model = None
         self.tokenizer = None
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """BgeMicro roda na CPU (ONNX)."""
+        return 0
+
     def load(self):
         if self.model is None:
             try:

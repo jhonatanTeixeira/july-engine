@@ -19,6 +19,12 @@ class Pix2Pix:
         self.pipeline = None
         self.model_id = "timbrooks/instruct-pix2pix"
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o Pix2Pix (SD1.5 based)."""
+        if self.device == "cpu":
+            return 0
+        return 2800 # ~2.8GB para InstructPix2Pix (float16)
+
     def load(self):
         if self.pipeline is None:
             import torch

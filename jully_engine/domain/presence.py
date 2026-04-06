@@ -63,6 +63,12 @@ class Presence:
             from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Delega a estimativa de VRAM para a estratégia atual."""
+        if hasattr(self._strategy, "get_required_vram"):
+            return self._strategy.get_required_vram(payload)
+        return 0
+
     def _find_last_image(self, messages: List[Dict[str, Any]]) -> Optional[str]:
         """Busca a última imagem enviada nas mensagens, do fim para o começo."""
         for msg in reversed(messages):

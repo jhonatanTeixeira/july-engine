@@ -33,6 +33,12 @@ class Memory:
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Delega a estimativa de VRAM para a estratégia atual."""
+        if hasattr(self._strategy, "get_required_vram"):
+            return self._strategy.get_required_vram(payload)
+        return 0
+
     async def embed(self, payload: Dict[str, Any], emb_type: str = "passage"):
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.bge_micro import BgeMicro

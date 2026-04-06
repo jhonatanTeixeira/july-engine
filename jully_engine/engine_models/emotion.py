@@ -18,6 +18,10 @@ class Emotion:
         self.session = None
         self.face_detector = face_detector
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Emotion roda na CPU (ONNX)."""
+        return 0
+
     def load(self):
         if self.session is None:
             import onnxruntime as ort

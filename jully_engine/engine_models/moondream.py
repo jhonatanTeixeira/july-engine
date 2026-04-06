@@ -16,6 +16,12 @@ class MoondreamVLM:
         self.vlm = None
         self.tokenizer = None
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o Moondream VLM."""
+        if self.backend == "cpu":
+            return 0
+        return 2048 # ~2GB fixo para este modelo 4-bit lightweight
+
     def load_transformers(self):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig

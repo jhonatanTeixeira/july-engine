@@ -68,6 +68,10 @@ class LLMApi:
     def __init__(self, backend="api"):
         self.backend = backend
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """API baseada em nuvem não consome VRAM local."""
+        return 0
+
     def _extract_api_key(self, headers: Optional[Dict[str, Any]]) -> Optional[str]:
         if not headers:
             return None

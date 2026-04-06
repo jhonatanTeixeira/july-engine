@@ -14,6 +14,24 @@ class FasterWhisper:
         self.model = None
         self.model_size = os.environ.get("STT_MODEL", "medium")
 
+    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM necessária para rodar o FasterWhisper."""
+        if self.backend == "cpu":
+            return 0
+            
+        # Estimativas médias baseadas no tamanho do modelo
+        sizes_mb = {
+            "tiny": 250,
+            "base": 400,
+            "small": 750,
+            "medium": 1500,
+            "large-v1": 3000,
+            "large-v2": 3000,
+            "large-v3": 3500,
+            "large": 3500
+        }
+        return sizes_mb.get(self.model_size.lower(), 1500)
+
     def load(self):
         if self.model is None:
             import torch
