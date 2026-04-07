@@ -16,6 +16,8 @@ class FluxKleinNode:
         self.model_t2i = None
         self.model_i2i = None
         self.device = "cuda" if backend == "gpu" else "cpu"
+        self.lora_loaded = False
+        self.lora_path = os.path.join(os.getcwd(), "models", "Flux Klein - NSFW v2.safetensors")
         
         self.model_id = self.meta.get("id", "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic")
 
@@ -89,6 +91,22 @@ class FluxKleinNode:
         input_image_data = payload.get("image")
 
         generator = torch.Generator(device=self.device).manual_seed(seed)
+        
+        # NSFW LoRA Logic - Easter Egg
+        headers = payload.get("headers", {})
+        nsfw_requested = str(headers.get("x-nsfw", "0")) == "1"
+
+        if nsfw_requested and not self.lora_loaded:
+            if os.path.exists(self.lora_path):
+                logger.info(f"FluxKleinNode: [NSFW] Ativando LoRA: {self.lora_path}")
+                self.model_t2i.load_lora_weights(self.lora_path)
+                self.lora_loaded = True
+            else:
+                logger.warning(f"FluxKleinNode: [NSFW] Arquivo LoRA não encontrado em {self.lora_path}")
+        elif not nsfw_requested and self.lora_loaded:
+            logger.info("FluxKleinNode: [NSFW] Desativando LoRA (Voltando ao padrão)...")
+            self.model_t2i.unload_lora_weights()
+            self.lora_loaded = False
         
         # Argumentos básicos aceitos por ambos os pipelines
         kwargs_infer = {
