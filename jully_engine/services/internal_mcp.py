@@ -3,7 +3,7 @@ import json
 import logging
 import base64
 from pprint import pprint
-from typing import Dict, Any, List, AsyncGenerator, Tuple, Union
+from typing import Dict, Any, List, AsyncGenerator, Tuple, Union, Optional
 
 from numpy import append
 
@@ -282,7 +282,7 @@ class InternalMCP:
                 )
             
             elif name == "search_memory":
-                res = await model_loader.get_memory(backend, model).search('query: ' + arguments.get("query", ""))
+                res = await model_loader.get_memory(backend, model).search(arguments.get("query", ""))
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
@@ -291,7 +291,7 @@ class InternalMCP:
                 )
             
             elif name == "save_memory":
-                success = await model_loader.get_memory(backend, model).add_to_rag('passage: ' + arguments.get("fact", ""))
+                success = await model_loader.get_memory(backend, model).add_to_rag(arguments.get("fact", ""))
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
@@ -316,7 +316,7 @@ class InternalMCP:
                     UserToolReponse(response, 'image')
                 )
         except Exception as e:
-            logger.error(f"InternalMCP: Erro na tool {name}: {e}")
+            logger.exception(f"InternalMCP: Erro na tool {name}")
             return (
                 f"Error executing tool: {str(e)}",
                 None

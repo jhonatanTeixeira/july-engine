@@ -110,7 +110,7 @@ class VectorStore:
             coll.add(
                 embeddings=[embedding],
                 documents=[text],
-                metadatas=[metadata or {}],
+                metadatas=[metadata] if metadata else None,
                 ids=[doc_id]
             )
         elif self.db_type == "pgvector":

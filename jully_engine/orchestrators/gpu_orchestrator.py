@@ -334,6 +334,7 @@ class GpuOrchestrator:
     async def submit_task(self, task_type: str, payload: Any) -> Union[Any, AsyncGenerator[Any, None]]:
         from ..resource_manager import resource_manager
         from ..model_loader import model_loader
+        from ..engine_models.llama_gguf import GGUF
         
         if not self.running: raise RuntimeError("GpuOrchestrator not running")
         if task_type not in self.workers: raise ValueError(f"Unknown GPU task type: {task_type}")
@@ -366,10 +367,10 @@ class GpuOrchestrator:
 
         # 4. Iterative layer optimization se ainda não couber (apenas para GGUF)
         # Identificamos GGUF pela estratégia interna ou metadados
-        meta = domain._strategy.meta
-        is_gguf = meta.get('model_type', 'text') in ['text', 'vision'] and model_tag not in ["fastvlm", "moondream"]
+        is_gguf = isinstance(domain._strategy, GGUF)
         
         if is_gguf and available_vram < required_vram_mb:
+            meta = domain._strategy.meta
             # Tenta descobrir o número de camadas atual (ou sugerido)
             # Se não estiver no payload, o GGUF usou o guess_num_layers.
             # Vamos iterar removendo camadas do payload explicitamente.

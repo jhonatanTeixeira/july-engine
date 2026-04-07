@@ -160,7 +160,7 @@ class McpEmulator:
             
         system_prompt = textwrap.dedent(f'''
 # TOOLING CAPABILITIES
-You are an intelligent agent equipped with external tools. The environment will execute the tool and return the results to you.
+You can call tools to get information or perform actions. The environment will execute the tool and return the results to you.
 
 ## 🛑 ANTI-REFUSAL PROTOCOL (CRITICAL)
 NEVER say "I cannot create images", "I cannot save memories", or "As an AI, I don't have access to...". 

@@ -17,7 +17,7 @@ class FluxKleinNode:
         self.model_i2i = None
         self.device = "cuda" if backend == "gpu" else "cpu"
         self.lora_loaded = False
-        self.lora_path = os.path.join(os.getcwd(), "models", "Flux Klein - NSFW v2.safetensors")
+        self.lora_path = os.path.join(os.getcwd(), "models", "ExcellentFullNude_F2K4B_1.safetensors")
         
         self.model_id = self.meta.get("id", "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic")
 
