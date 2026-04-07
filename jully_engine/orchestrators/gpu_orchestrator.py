@@ -21,6 +21,8 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
     Thread isolada e eterna. 
     Mantém o contexto CUDA vivo. Lê da in_q, processa e joga na out_q.
     """
+    from ..resource_manager import resource_manager
+
     logger.info(f">> [GpuThread-{task_type}] Iniciada (Thread ID: {threading.get_native_id()})")
     
     loop = asyncio.new_event_loop()
@@ -58,13 +60,23 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 backend = "gpu"
                 from ..model_loader import model_loader
                 
-                if task_type == "text_chat": domain_instance = model_loader.get_brain(backend, model_tag)
-                elif task_type == "vision_chat": domain_instance = model_loader.get_eyes(backend, model_tag)
-                elif task_type == "tts": domain_instance = model_loader.get_mouth(backend, model_tag)
-                elif task_type == "stt": domain_instance = model_loader.get_ears(backend, model_tag)
+                if task_type == "text_chat": 
+                    domain_instance = model_loader.get_brain(backend, model_tag)
+                elif task_type == "vision_chat": 
+                    domain_instance = model_loader.get_eyes(backend, model_tag)
+                elif task_type == "tts": 
+                    domain_instance = model_loader.get_mouth(backend, model_tag)
+                elif task_type == "stt": 
+                    domain_instance = model_loader.get_ears(backend, model_tag)
                 elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update"]: 
                     domain_instance = model_loader.get_memory(backend, model_tag)
-                elif task_type in ["pix2pix", "image_generation", "image_resize"]: domain_instance = model_loader.get_presence(backend, model_tag)
+                elif task_type in ["pix2pix", "image_generation", "image_resize"]: 
+                    domain_instance = model_loader.get_presence(backend, model_tag)
+
+                if hasattr(domain_instance._strategy, 'load'):
+                    domain_instance._strategy.load()
+
+                resource_manager.clear_memory()
                 
                 out_q.put({"status": "LOAD_OK"})
 
@@ -135,6 +147,8 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
 
                 else:
                     out_q.put({"type": "DONE", "data": result})
+
+                resource_manager.clear_memory()
                     
                 # BLINDAGEM 2: Matar a referência fantasma no final da task
                 if 'result' in locals(): del result
