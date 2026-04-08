@@ -87,6 +87,7 @@ class VectorStore:
                     conn.execute(text(f"""
                         CREATE TABLE IF NOT EXISTS {table_name} (
                             id SERIAL PRIMARY KEY,
+                            custom_id TEXT UNIQUE,
                             content TEXT,
                             embedding vector({dimension}),
                             metadata JSONB
@@ -97,9 +98,11 @@ class VectorStore:
         
         self.initialized_collections.add(full_name)
 
-    def add(self, text: str, embedding: List[float], metadata: Dict[str, Any] = None, collection: str = "july_memory", model_tag: str = None):
+    def add(self, text: str, embedding: List[float], metadata: Dict[str, Any] = None, collection: str = "july_memory", model_tag: str = None, doc_id: str = None):
         import uuid
-        doc_id = str(uuid.uuid4())
+        if not doc_id:
+            doc_id = str(uuid.uuid4())
+        
         full_name = self._get_full_name(collection, model_tag)
         dim = len(embedding)
         
@@ -107,7 +110,7 @@ class VectorStore:
 
         if self.db_type == "chroma":
             coll = self.client.get_collection(name=full_name)
-            coll.add(
+            coll.upsert(
                 embeddings=[embedding],
                 documents=[text],
                 metadatas=[metadata] if metadata else None,
@@ -119,16 +122,24 @@ class VectorStore:
                 import json
                 table_name = f"rag_{full_name}"
                 with self.engine.begin() as conn:
+                    # Verifica se a tabela tem ID serial ou Text. Se for a primeira vez, criamos como text.
+                    # Para simplificar o upsert com ID determinístico, usamos o metadata path ou o id provido.
                     emb_str = f"[{','.join(map(str, embedding))}]"
                     meta_str = json.dumps(metadata or {})
+                    
+                    # Tenta deletar se já existir (Upsert manual para compatibilidade SQL ampla)
+                    conn.execute(sa_text(f"DELETE FROM {table_name} WHERE custom_id = :cid"), {"cid": doc_id})
+                    
                     conn.execute(sa_text(f"""
-                        INSERT INTO {table_name} (content, embedding, metadata)
-                        VALUES (:content, :embedding, :metadata)
-                    """), {"content": text, "embedding": emb_str, "metadata": meta_str})
+                        INSERT INTO {table_name} (content, embedding, metadata, custom_id)
+                        VALUES (:content, :embedding, :metadata, :cid)
+                    """), {"content": text, "embedding": emb_str, "metadata": meta_str, "cid": doc_id})
             except Exception as e:
                 logger.error(f"Error inserting into pgvector table {table_name}: {e}")
         else:
-            # In-memory
+            # In-memory - Remove antigo se existir
+            self.memory_data = [item for item in self.memory_data if not (item.get("id") == doc_id and item.get("collection") == full_name)]
+            
             self.memory_data.append({
                 "id": doc_id,
                 "collection": full_name,

@@ -87,7 +87,7 @@ class CpuOrchestrator:
                 return memory.embed(payload)
             elif task_type == "rag_add":
                 memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory")))
+                return asyncio.run(memory.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"), payload.get("id")))
             elif task_type == "rag_batch_add":
                 memory = model_loader.get_memory(backend, model_tag)
                 return asyncio.run(memory.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory")))

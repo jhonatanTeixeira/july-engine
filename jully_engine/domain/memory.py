@@ -67,7 +67,7 @@ class Memory:
             
         return None
 
-    async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None, collection: str = "july_memory"):
+    async def add_to_rag(self, text: str, metadata: Dict[str, Any] = None, collection: str = "july_memory", doc_id: str = None):
         """Generates an embedding and adds it to the RAG database."""
         from ..persistence.vector_store import vector_store
         
@@ -82,7 +82,7 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            vector_store.add(text, embedding, metadata, collection=collection, model_tag=self.model_tag)
+            vector_store.add(text, embedding, metadata, collection=collection, model_tag=self.model_tag, doc_id=doc_id)
 
             return True
         return False
@@ -119,7 +119,7 @@ class Memory:
                 continue
             
             try:
-                success = await self.add_to_rag(text=text, metadata=metadata, collection=collection)
+                success = await self.add_to_rag(text=text, metadata=metadata, collection=collection, doc_id=doc.get("id"))
                 if success:
                     inserted += 1
                 else:
