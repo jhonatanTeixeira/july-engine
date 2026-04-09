@@ -164,7 +164,7 @@ class GGUF:
                 "n_gpu_layers": n_gpu_layers,
                 "n_ctx": effective_n_ctx,
                 "verbose": False,
-                "flash_attn": True, # Acelera a matemática da atenção e corta o pico de memória
+                "flash_attn": os.environ.get("FLASH_ATTN", "false").lower() == "true",
             }
 
             if quant := os.environ.get('KV_CACHE_QUANTIZATION', None):
@@ -239,45 +239,75 @@ class GGUF:
 
         if stream:
             async def stream_adapter():
-                in_reasoning = force_reasoning
-                buffer = ''
+                tag_opened = force_reasoning
+                buffer = ""
+                raw_response = ""
                 
                 for chunk in response:
-                    delta = chunk["choices"][0].get("delta", {})
-                    raw_text = delta.get("content", "")
-                    
-                    if not raw_text:
-                        yield chunk
-                        continue
-                    
-                    # Lógica simplificada de detecção de tags
-                    if "<think>" in raw_text:
-                        in_reasoning = True
-                        raw_text = raw_text.replace("<think>", "")
-                    
-                    if "</think>" in raw_text:
-                        in_reasoning = False
-                        # O que vem antes do fechamento é pensamento, o que vem depois é conteúdo
-                        parts = raw_text.split("</think>")
-                        
-                        # Emite a parte do pensamento
-                        if parts[0]:
-                            mod_chunk = dict(chunk)
-                            mod_chunk["choices"][0]["delta"] = {"reasoning_content": parts[0]}
-                            yield mod_chunk
-                        
-                        # Continua com a parte do conteúdo
-                        raw_text = parts[1]
-                        if not raw_text: continue
+                    content = chunk["choices"][0].get("delta", {}).pop("content", "")
+                    buffer += content
+                    raw_response += content
 
-                    mod_chunk = dict(chunk)
-                    if in_reasoning:
-                        mod_chunk["choices"][0]["delta"] = {"reasoning_content": raw_text}
-                    else:
-                        mod_chunk["choices"][0]["delta"] = {"content": raw_text}
+                    if chunk["choices"][0].get("finish_reason") == "stop":
+                        prompt_data = ""
+
+                        for message in messages:
+                            prompt_data += message["content"] if isinstance(message["content"], str) else "".join([c.get("text", "") for c in message['content']])
+
+                        prompt_tokens = len(self.model.tokenize(prompt_data.encode('utf-8')))
+                        completion_tokens = len(self.model.tokenize(raw_response.encode('utf-8')))
+
+                        chunk["choices"][0].setdefault("usage", {
+                            "prompt_tokens": prompt_tokens,
+                            "completion_tokens": completion_tokens,
+                            "total_tokens": (prompt_tokens + completion_tokens)
+                        })
+
+                    if '<' in buffer and re.match(r'(.*?)?<$|<\w+$', buffer) and not tag_opened:
+                        continue
+
+                    if '<' in buffer and re.match(r'(.*?)?<$|</$|</\w+$', buffer) and tag_opened:
+                        continue
+
+                    if '<think>' in buffer and not tag_opened:
+                        tag_opened = True
+                        before, after = buffer.split('<think>')
+
+                        if before:
+                            yield {**chunk, 'content': before}
                         
-                    yield mod_chunk
+                        if after:
+                            yield {**chunk, 'reasoning_content': after}
+
+                        buffer = ""
+                    
+                    elif tag_opened and '</think>' in buffer:
+                        tag_opened = False
+                        before, after = buffer.split('</think>')
+
+                        if before:
+                            yield {**chunk, 'reasoning_content': before}
+                        
+                        if after:
+                            yield {**chunk, 'content': after}
+                        
+                        buffer = ""
+                    
+                    elif tag_opened:
+                        yield {**chunk, 'reasoning_content': content}
+                        buffer = ""
+
+                    elif not tag_opened:
+                        yield {**chunk, 'content': content}
+                        buffer = ""
+
+
                     await asyncio.sleep(0)
+
+                # Flush residual do buffer se sobrar algo
+                if buffer:
+                    yield {**chunk, 'content' if not tag_opened else 'reasoning_content': buffer}
+
             return stream_adapter()
             
         else:

@@ -132,6 +132,17 @@ class Bridge:
                             interaction_id = normalized["id"]
                         if "usage" in normalized and normalized["usage"]:
                             tokens = normalized["usage"].get("total_tokens", tokens)
+                        
+                        # Normalização Universal de Reasoning
+                        if "choices" in normalized and len(normalized["choices"]) > 0:
+                            delta = normalized["choices"][0].get("delta", {})
+                            # Padrão LiteLLM às vezes usa 'reasoning'
+                            if "reasoning" in delta and "reasoning_content" not in delta:
+                                delta["reasoning_content"] = delta.pop("reasoning")
+                            # Alguns provedores usam 'thought'
+                            if "thought" in delta and "reasoning_content" not in delta:
+                                delta["reasoning_content"] = delta.pop("thought")
+                                
                     yield normalized
                     await asyncio.sleep(0)
             finally:

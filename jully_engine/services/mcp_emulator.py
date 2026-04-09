@@ -22,9 +22,9 @@ class Chunk:
         
         delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
         
-        self.content = delta['content'] if 'content' in delta else None
+        self.content = delta.get("content", "")
         self.is_reasoning = True if 'reasoning_content' in delta else False
-        self.reasoning_content = delta['reasoning_content'] if self.is_reasoning else None
+        self.reasoning_content = delta.get("reasoning_content", "")
         
     @classmethod
     def from_str(cls, text):
@@ -56,13 +56,13 @@ class XMLStreamParser:
         async for chunk in self.stream:
             delta = Chunk(chunk)
             
-            if not delta.content:
-                yield chunk
+            if not delta.is_reasoning:
+                yield delta
                 continue
             
             buffer += delta.content
             
-            if '<' in buffer and re.match(r'(.*?)?<$|<\w+$|<\w+$', buffer) and not tag_opened:
+            if '<' in buffer and re.match(r'(.*?)?<$|<\w+$', buffer) and not tag_opened:
                 continue
             
             if (match := re.search(r'<(\w+)>', buffer)) and not tag_opened:
@@ -325,8 +325,9 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 # O Parser consome a rede neural, nós consumimos o Parser!
                 async for item in XMLStreamParser(response):
                     if isinstance(item, Chunk):
-                        first_response += item.content
-                        # Joga na tela!
+                        if not item.is_reasoning:
+                            first_response += item.content
+
                         yield item.delta
                         
                     elif isinstance(item, Tool):
