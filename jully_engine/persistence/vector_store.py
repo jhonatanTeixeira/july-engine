@@ -217,9 +217,9 @@ class VectorStore:
                     for i in range(len(results["ids"][0])):
                         matches.append({
                             "id": results["ids"][0][i],
-                            "distance": results["distances"][0][i],
-                            "metadata": results["metadatas"][0][i],
-                            "embedding": results["embeddings"][0][i]
+                            "distance": float(results["distances"][0][i]) if "distances" in results and results["distances"] else 0.0,
+                            "metadata": results["metadatas"][0][i] if "metadatas" in results and results["metadatas"] else {},
+                            "embedding": results["embeddings"][0][i].tolist() if hasattr(results["embeddings"][0][i], "tolist") else results["embeddings"][0][i]
                         })
                 return matches
             except Exception:

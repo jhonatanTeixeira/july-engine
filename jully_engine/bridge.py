@@ -66,6 +66,16 @@ class Bridge:
         if hasattr(obj, "__dict__"):
             return self._normalize_object(vars(obj))
             
+        # Handle NumPy types if present
+        try:
+            import numpy as np
+            if isinstance(obj, np.ndarray):
+                return self._normalize_object(obj.tolist())
+            if isinstance(obj, np.generic):
+                return obj.item()
+        except ImportError:
+            pass
+            
         return str(obj)
     
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
@@ -498,7 +508,8 @@ class Bridge:
         """Busca contexto no RAG orquestrado."""
         payload['headers'] = headers
         result = await inference_helper.process("rag_search", payload)
-        return {"results": result, "collection": payload.get("collection", "july_memory")}
+        normalized = self._normalize_object(result)
+        return {"results": normalized, "collection": payload.get("collection", "july_memory")}
 
     async def process_rag_vector_add(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         """Adiciona um vetor bruto diretamente ao banco orquestrado."""
@@ -510,7 +521,8 @@ class Bridge:
         """Busca avançada orquestrada."""
         payload['headers'] = headers
         result = await inference_helper.process("rag_search_details", payload)
-        return {"results": result, "collection": payload.get("collection", "july_memory")}
+        normalized = self._normalize_object(result)
+        return {"results": normalized, "collection": payload.get("collection", "july_memory")}
 
     async def process_rag_update(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         """Atualiza a coordenada geométrica de um vetor orquestrado."""
