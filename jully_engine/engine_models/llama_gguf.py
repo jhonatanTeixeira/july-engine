@@ -274,10 +274,12 @@ class GGUF:
                         before, after = buffer.split('<think>')
 
                         if before:
-                            yield {**chunk, 'content': before}
+                            chunk["choices"][0]["delta"]["content"] = before
+                            yield chunk
                         
                         if after:
-                            yield {**chunk, 'reasoning_content': after}
+                            chunk["choices"][0]["delta"]["reasoning_content"] = after
+                            yield chunk
 
                         buffer = ""
                     
@@ -286,27 +288,32 @@ class GGUF:
                         before, after = buffer.split('</think>')
 
                         if before:
-                            yield {**chunk, 'reasoning_content': before}
+                            chunk["choices"][0]["delta"]["reasoning_content"] = before
+                            yield chunk
                         
                         if after:
-                            yield {**chunk, 'content': after}
+                            chunk["choices"][0]["delta"]["content"] = after
+                            yield chunk
                         
                         buffer = ""
                     
                     elif tag_opened:
-                        yield {**chunk, 'reasoning_content': content}
+                        chunk["choices"][0]["delta"]["reasoning_content"] = content
+                        yield chunk
                         buffer = ""
 
                     elif not tag_opened:
-                        yield {**chunk, 'content': content}
+                        chunk["choices"][0]["delta"]["content"] = buffer
+                        yield chunk
                         buffer = ""
-
 
                     await asyncio.sleep(0)
 
                 # Flush residual do buffer se sobrar algo
                 if buffer:
-                    yield {**chunk, 'content' if not tag_opened else 'reasoning_content': buffer}
+                    target_key = 'content' if not tag_opened else 'reasoning_content'
+                    chunk["choices"][0]["delta"][target_key] = buffer
+                    yield chunk
 
             return stream_adapter()
             

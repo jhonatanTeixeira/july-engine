@@ -23,8 +23,8 @@ class Chunk:
         delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
         
         self.content = delta.get("content", "")
-        self.is_reasoning = True if 'reasoning_content' in delta else False
         self.reasoning_content = delta.get("reasoning_content", "")
+        self.is_reasoning = True if self.reasoning_content else False
         
     @classmethod
     def from_str(cls, text):
@@ -56,7 +56,7 @@ class XMLStreamParser:
         async for chunk in self.stream:
             delta = Chunk(chunk)
             
-            if not delta.is_reasoning:
+            if delta.is_reasoning:
                 yield delta
                 continue
             
