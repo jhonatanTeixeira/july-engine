@@ -109,7 +109,7 @@ class GGUF:
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.model = None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         if self.backend == "cpu": return 0
             
         meta = self.meta
@@ -120,17 +120,22 @@ class GGUF:
         headers = payload.get("headers", {})
         effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
         
-        # O pulo do gato: 'layers' é o que queremos. 'physical_total' é o que o modelo TEM.
+        # 1. Resolve deterministic metadata (Local or Remote)
+        from ..services.gguf_scanner import GGUFMetadataScanner
+        resolved_meta = await GGUFMetadataScanner.resolve_metadata(meta.get("model_id"), meta.get("filename"))
+        
+        # 2. Get layers config
         layers_to_offload = payload.get("num_layers") or meta.get("num_layers") or -1
-        physical_total = guess_num_layers(combined_name, params_b)
-
+        
+        # 3. Calculate with precision
         estimates = estimate_vram_ram(
             combined_name,
             params_b, 
             quant, 
             effective_n_ctx, 
             layers=layers_to_offload,
-            total_layers=physical_total # Agora o denominador está correto (32)
+            metadata=resolved_meta,
+            kv_cache_quantization=meta.get("kv_cache_quantization", "FP16")
         )
         
         return int(estimates["estimated_vram_gb"] * 1024)
@@ -164,16 +169,26 @@ class GGUF:
                 "n_gpu_layers": n_gpu_layers,
                 "n_ctx": effective_n_ctx,
                 "verbose": False,
-                "flash_attn": os.environ.get("FLASH_ATTN", "false").lower() == "true",
             }
 
-            if quant := os.environ.get('KV_CACHE_QUANTIZATION', None):
-                if quant == '8':
+            if os.environ.get("FLASH_ATTN", "false").lower() == "true":
+                params["flash_attn"] = True
+
+            # Use KV Cache Quantization from metadata (preferred) or env var
+            kv_quant = meta.get("kv_cache_quantization") or os.environ.get('KV_CACHE_QUANTIZATION')
+            
+            if kv_quant:
+                kv_quant = str(kv_quant).upper()
+                if "8" in kv_quant or "Q8_0" in kv_quant:
                     params["type_k"] = llama_cpp.GGML_TYPE_Q8_0
                     params["type_v"] = llama_cpp.GGML_TYPE_Q8_0
-                if quant == '4':
+                    logger.info("GGUF: Using Q8_0 for KV Cache")
+                elif "4" in kv_quant or "Q4_0" in kv_quant:
                     params["type_k"] = llama_cpp.GGML_TYPE_Q4_0
                     params["type_v"] = llama_cpp.GGML_TYPE_Q4_0
+                    logger.info("GGUF: Using Q4_0 for KV Cache")
+                else:
+                    logger.info("GGUF: Using default FP16 for KV Cache")
 
             if meta.get("template"):
                 params["chat_format"] = meta["template"]

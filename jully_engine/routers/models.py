@@ -119,6 +119,7 @@ class DownloadRequest(BaseModel):
     context_window: Optional[int] = 2048
     num_params: Optional[float] = None # In billions
     quantization: Optional[str] = None
+    kv_cache_quantization: Optional[str] = "FP16"
     num_layers: Optional[int] = -1
     force_reasoning: Optional[bool] = None
 
@@ -132,6 +133,7 @@ class UpdateMetadataRequest(BaseModel):
     context_window: Optional[int] = None
     num_params: Optional[float] = None
     quantization: Optional[str] = None
+    kv_cache_quantization: Optional[str] = None
     num_layers: Optional[int] = None
     force_reasoning: Optional[bool] = None
 
@@ -185,8 +187,29 @@ def save_models_db(db: Dict[str, Any]):
 
 @router.post("/detect_metadata")
 async def api_detect_metadata(request: DetectRequest):
-    """Detecta heurísticas do modelo baseado no nome e arquivo."""
+    """Detecta heurísticas e metadados reais do GGUF via Range Requests."""
+    from ..services.gguf_scanner import GGUFMetadataScanner
+    
+    # 1. Heurísticas baseadas em nome (Regex)
     metadata = detect_model_metadata(request.model_id, request.filename)
+    
+    # 2. Scanner Determinístico (Hugging Face)
+    hf_url = GGUFMetadataScanner.get_huggingface_url(request.model_id, request.filename)
+    real_meta = await GGUFMetadataScanner.scan_remote_metadata(hf_url)
+    
+    if real_meta:
+        # Mescla os dados reais (sobrescrevendo heurísticas se necessário)
+        metadata["architecture"] = real_meta.get("architecture")
+        metadata["num_layers"] = real_meta.get("block_count")
+        
+        # Guardamos o objeto completo para o calculador
+        metadata["raw_gguf_meta"] = real_meta
+        
+        # Ajuste de parâmetros se detectado via scanner (opcional, scanner foca em layers/heads)
+        if not metadata["num_params"]:
+             # Poderíamos estimar aqui, mas o scanner foca na arquitetura
+             pass
+
     return {
         "status": "success",
         "detected_metadata": metadata
@@ -244,6 +267,7 @@ async def download_gguf(request: DownloadRequest):
                 "context_window": request.context_window,
                 "num_params": final_params,
                 "quantization": final_quant,
+                "kv_cache_quantization": request.kv_cache_quantization or "FP16",
                 "num_layers": request.num_layers,
                 "force_reasoning": final_reasoning,
                 "file_path": file_path,

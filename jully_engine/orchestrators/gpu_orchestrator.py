@@ -355,8 +355,10 @@ class GpuOrchestrator:
         else:
             raise ValueError(f"Orchestrator: No domain mapping for {task_type}")
 
-        # 2. Estimar VRAM necessária
+        # 2. Estimar VRAM necessária (Suporta Sync ou Async)
         required_vram_mb = domain.get_required_vram(payload)
+        if asyncio.iscoroutine(required_vram_mb):
+            required_vram_mb = await required_vram_mb
             
         if self.active_gpu_models.get(model_key) == model_tag:
             # Modelo já está na memória, custo de ativação é residual ou zero

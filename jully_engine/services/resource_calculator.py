@@ -19,7 +19,16 @@ QUANTIZATION_MULTIPLIERS = {
     "F16": 16.0,
 }
 
-def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int, layers: int = -1, total_layers: int = 32):
+def estimate_vram_ram(
+    combined_name: str, 
+    params_b: float, 
+    quant: str, 
+    ctx: int, 
+    layers: int = -1, 
+    total_layers: int = -1,
+    metadata: dict = None,
+    kv_cache_quantization: str = "FP16"
+):
     """
     Estimates VRAM and RAM requirements for an LLM model running via GGUF.
     Logic shared between the router (API) and engine models (orchestrator).
@@ -39,43 +48,53 @@ def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int,
     # Params(B) * bits_per_weight / 8 = Size in GB
     model_size_gb = (params_b * bits_per_weight) / 8.0
     
-    # 2. CÁLCULO DO KV CACHE (A Mágica Blindada com Regex)
-    combined_name_lower = combined_name.lower()
-    
-    active_params = params_b # Padrão: assume modelo denso
-    is_moe = False
-
-    # Regra 1: Tem a assinatura explícita? (ex: Mixtral, Qwen-MoE)
-    if "mixtral" in combined_name_lower or "moe" in combined_name_lower:
-        is_moe = True
-        active_params = params_b / 3.5  # Fallback de divisão genérica
+    # 2. CÁLCULO DO KV CACHE (Determinístico via GQA se houver metadata)
+    # BytesPerElement: FP16=2, Q8_0=1, Q4_0=0.5
+    bytes_per_element = 2.0
+    kv_quant_upper = str(kv_cache_quantization).upper()
+    if "Q8_0" in kv_quant_upper:
+        bytes_per_element = 1.0
+    elif "Q4_0" in kv_quant_upper:
+        bytes_per_element = 0.5
         
-    # Regra 2: O Caçador da Notação Oculta (Ex: -a3b, -a14b, -a2.7b)
-    # Procura um traço 'a', seguido de números (com ou sem ponto), seguido de 'b'
-    match_active = re.search(r'-a(\d+(?:\.\d+)?)b', combined_name_lower)
-    
-    if match_active:
-        is_moe = True
-        # Extrai o valor exato! Para 'qwen3-30b-a3b', ele puxa o float(3.0)
-        active_params = float(match_active.group(1))
-
-    # Estimativa base do KV Cache em FP16 (16-bits) usando parâmetros ativos
-    base_ctx_memory_gb = (ctx / 1024) * 0.1 * (active_params / 7.0)
-    
-    # Lendo a variável de ambiente para compactação de cache
-    kv_quant = str(os.environ.get('KV_CACHE_QUANTIZATION', '16'))
-    
-    # Aplicando os multiplicadores de economia de VRAM do KV Cache
-    if kv_quant == '8':
-        ctx_memory_gb = base_ctx_memory_gb * 0.5  # Q8_0 pesa metade do FP16
-    elif kv_quant == '4':
-        ctx_memory_gb = base_ctx_memory_gb * 0.25 # Q4_0 pesa um quarto do FP16
+    if metadata and all(k in metadata for k in ["block_count", "head_count_kv", "embedding_length", "head_count"]):
+        # FÓRMULA GQA: 2 * Layers * Heads_kv * (Embedding / Heads_total) * BytesPerElement
+        layers_count = metadata["block_count"]
+        heads_kv = metadata["head_count_kv"]
+        embedding = metadata["embedding_length"]
+        heads_total = metadata["head_count"]
+        
+        # Memory per token in bytes
+        memory_per_token = 2 * layers_count * heads_kv * (embedding / heads_total) * bytes_per_element
+        ctx_memory_gb = (memory_per_token * ctx) / (1024**3)
+        
+        # Update total_layers if we have real data
+        if total_layers == -1:
+            total_layers = layers_count
+            
     else:
-        ctx_memory_gb = base_ctx_memory_gb        # FP16 (Tamanho normal)
+        # FALLBACK: Estimativa base do KV Cache baseada em parâmetros ativos (mais imprecisa)
+        combined_name_lower = combined_name.lower()
+        active_params = params_b 
+        
+        if "mixtral" in combined_name_lower or "moe" in combined_name_lower:
+            active_params = params_b / 3.5
+            
+        match_active = re.search(r'-a(\d+(?:\.\d+)?)b', combined_name_lower)
+        if match_active:
+            active_params = float(match_active.group(1))
+
+        # Estimativa legada baseada em params/7.0
+        base_ctx_memory_gb = (ctx / 1024) * 0.1 * (active_params / 7.0)
+        
+        # Ajuste de bits (FP16 assume 2 bytes por elemento)
+        ctx_memory_gb = base_ctx_memory_gb * (bytes_per_element / 2.0)
         
     total_required_gb = model_size_gb + ctx_memory_gb
     
     # 3. DIVISÃO VRAM vs RAM (Baseado em Layers reais)
+    if total_layers == -1: total_layers = 32 # Fallback genérico se tudo falhar
+    
     if layers == -1:
         vram_req = total_required_gb
         ram_req = 0.5 # Minimal base RAM overhead
@@ -84,7 +103,7 @@ def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int,
         ram_req = total_required_gb + 0.5
     else:
         # Usando a quantidade REAL de layers do modelo para achar o ratio matemático
-        safe_total_layers = max(total_layers, 1) # Previne divisão por zero
+        safe_total_layers = max(total_layers, 1) 
         ratio = min(layers / float(safe_total_layers), 1.0)
         
         vram_req = total_required_gb * ratio
@@ -95,5 +114,6 @@ def estimate_vram_ram(combined_name: str, params_b: float, quant: str, ctx: int,
         "context_memory_gb": round(ctx_memory_gb, 2),
         "total_required_gb": round(total_required_gb, 2),
         "estimated_vram_gb": round(vram_req, 2),
-        "estimated_ram_gb": round(ram_req, 2)
+        "estimated_ram_gb": round(ram_req, 2),
+        "total_layers": total_layers
     }
