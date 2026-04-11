@@ -219,6 +219,7 @@ class VectorStore:
                             "id": results["ids"][0][i],
                             "distance": float(results["distances"][0][i]) if "distances" in results and results["distances"] else 0.0,
                             "metadata": results["metadatas"][0][i] if "metadatas" in results and results["metadatas"] else {},
+                            "content": results["documents"][0][i] if "documents" in results and results["documents"] else "",
                             "embedding": results["embeddings"][0][i].tolist() if hasattr(results["embeddings"][0][i], "tolist") else results["embeddings"][0][i]
                         })
                 return matches
@@ -269,6 +270,7 @@ class VectorStore:
                     "id": item["id"],
                     "distance": 1.0 - score,
                     "metadata": item.get("metadata", {}),
+                    "content": item.get("content", ""),
                     "embedding": item["embedding"]
                 })
             

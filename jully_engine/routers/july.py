@@ -205,17 +205,35 @@ async def add_rag_batch(
 
 
 @router.get("/rag")
+@router.post("/rag")
 async def search_rag(
     http_request: Request,
-    query: str,
+    query: Optional[str] = None,
     collection: str = "july_memory",
-    top_k: int = 3,
+    top_k: int = 3
 ):
-    """Busca o contexto associado ao input num database MultiTenant/Segmentado"""
+    """Busca avançada de contexto (Texto ou Vetor) que retorna IDs, Distâncias e Metadados."""
     headers = dict(http_request.headers)
     
+    # Se for POST, tenta pegar os parâmetros do body JSON
+    if http_request.method == "POST":
+        try:
+            body = await http_request.json()
+            query = body.get("query", query)
+            collection = body.get("collection", collection)
+            top_k = body.get("top_k", top_k)
+            vector = body.get("vector")
+            
+            # Se houver vetor, realiza busca vetorial direta
+            if vector:
+                payload = {"vector": vector, "collection": collection, "top_k": top_k}
+                result = await bridge.process_rag_search(payload, headers)
+                return JSONResponse(content=result)
+        except Exception:
+            pass
+
     if not query:
-        return JSONResponse(status_code=400, content={"error": "A querystring 'query' é obrigatória."})
+        return JSONResponse(status_code=400, content={"error": "Envie 'query' ou um payload POST com 'vector'."})
         
     try:
         payload = {"query": query, "collection": collection, "top_k": top_k}
@@ -223,6 +241,7 @@ async def search_rag(
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 @router.post("/rag/vector")
 async def add_rag_vector(
@@ -237,24 +256,6 @@ async def add_rag_vector(
          
     try:
         result = await bridge.process_rag_vector_add(payload, headers)
-        return JSONResponse(content=result)
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"error": str(e)})
-
-
-@router.post("/rag/search")
-async def search_rag_details(
-    http_request: Request,
-    payload: dict
-):
-    """Busca avançada MultiModal que retorna IDs, Distâncias e Metadados."""
-    headers = dict(http_request.headers)
-    
-    if not payload.get("query") and not payload.get("vector"):
-         return JSONResponse(status_code=400, content={"error": "Envie 'query' (Texto) ou 'vector' (Matriz Float)."})
-         
-    try:
-        result = await bridge.process_rag_search_details(payload, headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

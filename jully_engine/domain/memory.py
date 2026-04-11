@@ -87,8 +87,8 @@ class Memory:
             return True
         return False
 
-    async def search(self, query: str, top_k: int = 3, collection: str = "july_memory") -> str:
-        """Searches the RAG database using the query embedding."""
+    async def search(self, query: str, top_k: int = 3, collection: str = "july_memory") -> List[Dict[str, Any]]:
+        """Searches the RAG database using the query embedding and returns details."""
         from ..persistence.vector_store import vector_store
         
         payload = {"input": query}
@@ -101,10 +101,9 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            results = vector_store.search(embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
-            return "\n---\n".join(results)
+            return vector_store.search_with_details(embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
             
-        return "Nenhuma memória encontrada."
+        return []
 
     async def add_batch_to_rag(self, documents: List[Dict[str, Any]], collection: str = "july_memory") -> Dict[str, int]:
         """Inserts multiple documents into the RAG database."""

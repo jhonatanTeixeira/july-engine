@@ -517,12 +517,6 @@ class Bridge:
         success = await inference_helper.process("rag_vector_add", payload)
         return {"success": success, "collection": payload.get("collection", "july_memory")}
 
-    async def process_rag_search_details(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-        """Busca avançada orquestrada."""
-        payload['headers'] = headers
-        result = await inference_helper.process("rag_search_details", payload)
-        normalized = self._normalize_object(result)
-        return {"results": normalized, "collection": payload.get("collection", "july_memory")}
 
     async def process_rag_update(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         """Atualiza a coordenada geométrica de um vetor orquestrado."""

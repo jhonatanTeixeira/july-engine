@@ -115,18 +115,14 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 elif task_type == "embedding": result = domain_instance.embed(payload)
                 elif task_type == "rag_add": result = domain_instance.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"))
                 elif task_type == "rag_batch_add": result = domain_instance.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory"))
-                elif task_type == "rag_search": result = domain_instance.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory"))
-                elif task_type == "rag_vector_add": result = domain_instance.add_vector_to_rag(payload.get("vector"), payload.get("text", ""), payload.get("metadata"), payload.get("collection", "july_memory"))
-                elif task_type == "rag_search_details": 
+                elif task_type == "rag_search": 
                     vector = payload.get("vector")
                     if vector:
                         result = domain_instance.search_with_details_vector(vector, payload.get("top_k", 3), payload.get("collection", "july_memory"))
                     else:
-                        # Fallback se for texto (emb -> search)
-                        emb = asyncio.run(domain_instance.embed({"input": payload.get("query")}))
-                        if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list): emb = emb[0]
-                        result = domain_instance.search_with_details_vector(emb, payload.get("top_k", 3), payload.get("collection", "july_memory"))
-                elif task_type == "rag_update": result = domain_instance.update_embedding(str(payload.get("id")), payload.get("vector"))
+                        result = domain_instance.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory"))
+                elif task_type == "rag_vector_add": result = domain_instance.add_vector_to_rag(payload.get("vector"), payload.get("text", ""), payload.get("metadata"), payload.get("collection", "july_memory"))
+                elif task_type == "rag_update": result = domain_instance.update_embedding(str(payload.get("id")), payload.get("vector"), payload.get("collection", "july_memory"))
                 elif task_type in ["pix2pix", "image_generation"]: result = domain_instance.generate(payload)
                 elif task_type == "image_resize": result = domain_instance.resize(payload)
 
@@ -213,7 +209,7 @@ class GpuOrchestrator:
                 self.running = True
                 task_types = [
                     "text_chat", "vision_chat", "stt", "tts", "embedding", 
-                    "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update",
+                    "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update",
                     "pix2pix", "image_generation", "image_resize"
                 ]
                 for tt in task_types:
@@ -348,7 +344,7 @@ class GpuOrchestrator:
         elif task_type == "vision_chat": domain = model_loader.get_eyes(backend, model_tag)
         elif task_type == "tts": domain = model_loader.get_mouth(backend, model_tag)
         elif task_type == "stt": domain = model_loader.get_ears(backend, model_tag)
-        elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update"]: 
+        elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update"]: 
             domain = model_loader.get_memory(backend, model_tag)
         elif task_type in ["pix2pix", "image_generation", "image_resize"]: 
             domain = model_loader.get_presence(backend, model_tag)

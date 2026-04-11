@@ -93,22 +93,17 @@ class CpuOrchestrator:
                 return asyncio.run(memory.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory")))
             elif task_type == "rag_search":
                 memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory")))
-            elif task_type == "rag_vector_add":
-                memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.add_vector_to_rag(payload.get("vector"), payload.get("text", ""), payload.get("metadata"), payload.get("collection", "july_memory")))
-            elif task_type == "rag_search_details":
-                memory = model_loader.get_memory(backend, model_tag)
                 vector = payload.get("vector")
                 if vector:
                     return asyncio.run(memory.search_with_details_vector(vector, payload.get("top_k", 3), payload.get("collection", "july_memory")))
                 else:
-                    emb = asyncio.run(memory.embed({"input": payload.get("query")}))
-                    if isinstance(emb, list) and len(emb) > 0 and isinstance(emb[0], list): emb = emb[0]
-                    return asyncio.run(memory.search_with_details_vector(emb, payload.get("top_k", 3), payload.get("collection", "july_memory")))
+                    return asyncio.run(memory.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory")))
+            elif task_type == "rag_vector_add":
+                memory = model_loader.get_memory(backend, model_tag)
+                return asyncio.run(memory.add_vector_to_rag(payload.get("vector"), payload.get("text", ""), payload.get("metadata"), payload.get("collection", "july_memory")))
             elif task_type == "rag_update":
                 memory = model_loader.get_memory(backend, model_tag)
-                return asyncio.run(memory.update_embedding(str(payload.get("id")), payload.get("vector")))
+                return asyncio.run(memory.update_embedding(str(payload.get("id")), payload.get("vector"), payload.get("collection", "july_memory")))
             elif task_type in ["pix2pix", "image_generation"]:
                 presence = model_loader.get_presence(backend, model_tag)
                 return asyncio.run(presence.generate(payload))
