@@ -65,8 +65,9 @@ class LLMApi:
     Unified API strategy using litellm for all domains.
     Supported: Chat, Vision, Embeddings, TTS, STT, Image Gen/Edit.
     """
-    def __init__(self, backend="api"):
+    def __init__(self, backend="api", model=None):
         self.backend = backend
+        self.model = model or {}
 
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """API baseada em nuvem não consome VRAM local."""
@@ -75,27 +76,29 @@ class LLMApi:
     def _extract_api_key(self, headers: Optional[Dict[str, Any]]) -> Optional[str]:
         if not headers:
             return None
-        return headers.get("x-api-key", None)
+        return headers.get("x-api-key", self.model.get("api_key", None))
 
     def _extract_base_url(self, headers: Optional[Dict[str, str]]) -> Optional[str]:
         if not headers:
             return None
-        return headers.get("x-base-url", None)
+        return headers.get("x-base-url", self.model.get("base_url", None))
 
-    async def run_chat(self, model: str, messages: List[Dict[str, Any]], stream: bool = False, headers: Optional[Dict[str, str]] = None, **kwargs):
+    async def run_chat(self, payload: dict, **kwargs):
         """Runs chat/vision completions via litellm."""
         import litellm
         from litellm import acompletion
-        litellm.drop_params = True
+        # litellm.drop_params = True
 
-        reasoning_enabled = kwargs.pop("reasoning_enabled", None)
-        reasoning_effort = kwargs.pop("reasoning_effort", None)
+        headers = payload.pop("headers", {})
+        payload_model = payload.pop("model", None)
+        model = self.model.get("model", None) or payload_model
+        reasoning_enabled = payload.pop("reasoning_enabled", None) or kwargs.pop("reasoning_enabled", None) or self.model.get("reasoning_enabled", False)
+        reasoning_effort = payload.pop("reasoning_effort", None) or kwargs.pop("reasoning_effort", None) or self.model.get("reasoning_effort", "medium")
         
         params = {
             "model": model,
-            "messages": messages,
-            "stream": stream,
-            **kwargs
+            **kwargs,
+            **payload
         }
         
         if reasoning_enabled:
@@ -107,10 +110,12 @@ class LLMApi:
             }
         
         api_base = self._extract_base_url(headers)
+
         if api_base:
             params["api_base"] = api_base
             
         api_key = self._extract_api_key(headers)
+
         if api_key:
             params["api_key"] = api_key
         

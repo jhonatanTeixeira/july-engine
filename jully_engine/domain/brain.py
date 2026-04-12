@@ -19,16 +19,20 @@ class Brain:
     def __init__(self, backend: str, model_tag: str):
         self.backend = backend
         self.model_tag = model_tag
+        self.config = None
         self._strategy = self._get_strategy()
         self._mcp = McpEmulator(InternalMCP())
 
     def _get_strategy(self):
-        if self.backend == "api":
-            from ..engine_models.llm_api import LLMApi
-            return LLMApi(backend=self.backend)
-        
         model_service = ModelsService()
         model = model_service.get(self.model_tag) or model_service.resolve_by_settings(self.model_tag)
+        self.config = model
+
+        logger.debug(f"Brain: Model {self.model_tag} loaded. Config: {self.config}")
+
+        if self.backend == "api":
+            from ..engine_models.llm_api import LLMApi
+            return LLMApi(backend=self.backend, model=model)
         
         if self.backend in ["gpu", "cpu"] and model is not None:
             from ..engine_models.llama_gguf import GGUF
@@ -46,35 +50,12 @@ class Brain:
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.llama_gguf import GGUF
         
-        headers = payload.get("headers", {})
-        
-        from ..persistence import get_backend
-        backend_db = get_backend()
-        text_presets = backend_db.get_setting("TEXT_PRESETS") or []
-        config = next((p for p in text_presets if p.get("alias") == self.model_tag), None)
-        if not config and text_presets:
-            config = text_presets[0]
-            
         mcp_option = "emulated"
         
-        if config:
-            if "x-base-url" not in headers and "base_url" in config:
-                headers["x-base-url"] = config["base_url"]
-            has_auth = "authorization" in headers or "x-api-key" in headers
-            
-            if not has_auth and "api_key" in config and config["api_key"]:
-                headers["x-api-key"] = config["api_key"]
-                headers["authorization"] = f"Bearer {config['api_key']}"
+        if self.config:
+            mcp_option = self.config.get("mcp_option", "emulated")
 
-            if config.get("reasoning_enabled"):
-                payload["reasoning_enabled"] = config.get("reasoning_enabled")
-                payload["reasoning_effort"] = config.get("reasoning_effort", "medium")
-                
-            payload['model'] = config.get('model', self.model_tag)
-                
-            mcp_option = config.get("mcp_option", "emulated")
-
-        enable_internal_mcp = headers.get("x-enable-internal-mcp", "0") == "1"
+        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
         tools_whitelist = payload.pop("tools_whitelist", [])
         mcp_handler = None
         
@@ -104,11 +85,7 @@ class Brain:
                 msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") == "text"]
 
         if isinstance(self._strategy, LLMApi):
-            model = payload.pop('model', self.model_tag)
-            messages = payload.pop("messages", [])
-            stream = payload.pop("stream", False)
-            req_headers = payload.pop("headers", {})
-            response = await self._strategy.run_chat(model, messages, stream=stream, headers=req_headers, **payload)
+            response = await self._strategy.run_chat(payload)
             
         elif isinstance(self._strategy, GGUF):
             messages = payload.pop("messages", [])

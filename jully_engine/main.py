@@ -27,7 +27,7 @@ class ColorFormatter(logging.Formatter):
 
 # Configura o logger raiz para o ecossistema JulyEngine
 root_logger = logging.getLogger("JulyEngine")
-root_logger.setLevel(logging.INFO)
+root_logger.setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.INFO)
 root_logger.propagate = False # Evita duplicidade se o root do sistema também estiver configurado
 
 if not root_logger.handlers:
@@ -38,6 +38,7 @@ if not root_logger.handlers:
 # Silenciar logs barulhentos de bibliotecas externas
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("llama_cpp").setLevel(logging.WARNING)
 
 # --- FIM CONFIGURAÇÃO DE LOGS ---
 

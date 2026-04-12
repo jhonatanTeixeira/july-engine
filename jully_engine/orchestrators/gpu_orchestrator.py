@@ -68,7 +68,7 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                     domain_instance = model_loader.get_mouth(backend, model_tag)
                 elif task_type == "stt": 
                     domain_instance = model_loader.get_ears(backend, model_tag)
-                elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update", "rag_delete", "rag_list"]: 
+                elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_search_details", "rag_update", "rag_delete", "rag_list", "rag_smart_search"]: 
                     domain_instance = model_loader.get_memory(backend, model_tag)
                 elif task_type in ["pix2pix", "image_generation", "image_resize"]: 
                     domain_instance = model_loader.get_presence(backend, model_tag)
@@ -125,6 +125,7 @@ def gpu_thread_worker(task_type: str, in_q: queue.Queue, out_q: queue.Queue, rea
                 elif task_type == "rag_update": result = domain_instance.update_embedding(str(payload.get("id")), payload.get("vector"), payload.get("collection", "july_memory"))
                 elif task_type == "rag_delete": result = domain_instance.delete_from_rag(payload.get("ids", []), payload.get("collection", "july_memory"))
                 elif task_type == "rag_list": result = domain_instance.list_rag_metadata(payload.get("collection", "july_memory"))
+                elif task_type == "rag_smart_search": result = domain_instance.smart_search(payload)
                 elif task_type in ["pix2pix", "image_generation"]: result = domain_instance.generate(payload)
                 elif task_type == "image_resize": result = domain_instance.resize(payload)
 
@@ -192,6 +193,7 @@ class GpuOrchestrator:
             "rag_update": "memory",
             "rag_delete": "memory",
             "rag_list": "memory",
+            "rag_smart_search": "memory",
             "pix2pix": "pix2pix",
             "image_resize": "pix2pix",
             "image_generation": "pix2pix"
@@ -213,7 +215,7 @@ class GpuOrchestrator:
                 self.running = True
                 task_types = [
                     "text_chat", "vision_chat", "stt", "tts", "embedding", 
-                    "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update", "rag_delete", "rag_list",
+                    "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update", "rag_delete", "rag_list", "rag_smart_search",
                     "pix2pix", "image_generation", "image_resize"
                 ]
                 for tt in task_types:
@@ -348,7 +350,7 @@ class GpuOrchestrator:
         elif task_type == "vision_chat": domain = model_loader.get_eyes(backend, model_tag)
         elif task_type == "tts": domain = model_loader.get_mouth(backend, model_tag)
         elif task_type == "stt": domain = model_loader.get_ears(backend, model_tag)
-        elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update", "rag_delete", "rag_list"]: 
+        elif task_type in ["embedding", "rag_add", "rag_batch_add", "rag_search", "rag_vector_add", "rag_update", "rag_delete", "rag_list", "rag_smart_search"]: 
             domain = model_loader.get_memory(backend, model_tag)
         elif task_type in ["pix2pix", "image_generation", "image_resize"]: 
             domain = model_loader.get_presence(backend, model_tag)

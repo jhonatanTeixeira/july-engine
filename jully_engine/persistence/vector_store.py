@@ -361,7 +361,7 @@ class VectorStore:
                     output.append({
                         "id": results["ids"][i],
                         "metadata": results["metadatas"][i] if results["metadatas"] else {},
-                        "content_summary": (results["documents"][i][:100] + "...") if results["documents"] and results["documents"][i] else ""
+                        "document": results["documents"][i] if results["documents"] and results["documents"][i] else ""
                     })
                 return output
             except Exception as e:
@@ -373,14 +373,14 @@ class VectorStore:
                 from sqlalchemy import text as sa_text
                 table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
-                    result = conn.execute(sa_text(f"SELECT id, custom_id, metadata, left(content, 100) FROM {table_name}"))
+                    result = conn.execute(sa_text(f"SELECT id, custom_id, metadata, content FROM {table_name}"))
                     output = []
                     for row in result:
                         output.append({
                             "id": str(row[0]),
                             "custom_id": row[1],
                             "metadata": row[2] if row[2] else {},
-                            "content_summary": row[3] + "..." if row[3] else ""
+                            "document": row[3] if row[3] else ""
                         })
                     return output
             except Exception as e:
@@ -392,7 +392,7 @@ class VectorStore:
                 {
                     "id": i.get("id"),
                     "metadata": i.get("metadata", {}),
-                    "content_summary": (i.get("content", "")[:100] + "...")
+                    "document": i.get("content", "")
                 }
                 for i in self.memory_data if i.get("collection") == full_name
             ]

@@ -110,6 +110,9 @@ class CpuOrchestrator:
             elif task_type == "rag_list":
                 memory = model_loader.get_memory(backend, model_tag)
                 return asyncio.run(memory.list_rag_metadata(payload.get("collection", "july_memory")))
+            elif task_type == "rag_smart_search":
+                memory = model_loader.get_memory(backend, model_tag)
+                return asyncio.run(memory.smart_search(payload))
             elif task_type in ["pix2pix", "image_generation"]:
                 presence = model_loader.get_presence(backend, model_tag)
                 return asyncio.run(presence.generate(payload))

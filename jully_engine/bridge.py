@@ -536,4 +536,10 @@ class Bridge:
         results = await inference_helper.process("rag_list", payload)
         return {"results": results}
 
+    async def process_rag_smart_search(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Realiza busca inteligente orquestrada no RAG."""
+        payload['headers'] = headers
+        results = await inference_helper.process("rag_smart_search", payload)
+        return {"results": results}
+
 bridge = Bridge()

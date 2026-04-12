@@ -101,7 +101,8 @@ class InferenceHelper:
             "rag_search_details": "EMBEDDINGS",
             "rag_update": "EMBEDDINGS",
             "rag_delete": "EMBEDDINGS",
-            "rag_list": "EMBEDDINGS"
+            "rag_list": "EMBEDDINGS",
+            "rag_smart_search": "EMBEDDINGS"
         }
     
     async def _await_orch_task(self, future_or_coro):

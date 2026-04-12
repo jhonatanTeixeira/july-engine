@@ -234,7 +234,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
 
     async def orchestrate(self, response: Union[Dict, AsyncGenerator], brain, original_payload: Dict):
 
-        if isinstance(response, Dict):
+        if isinstance(response, dict):
             # ==============================
             # MODO NÃO-STREAM (SÍNCRONO)
             # ==============================

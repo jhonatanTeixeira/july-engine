@@ -63,6 +63,9 @@ class ApiOrchestrator:
             elif task_type == "rag_list":
                 memory = model_loader.get_memory(backend, model_tag)
                 return await memory.list_rag_metadata(payload.get("collection", "july_memory"))
+            elif task_type == "rag_smart_search":
+                memory = model_loader.get_memory(backend, model_tag)
+                return await memory.smart_search(payload)
             elif task_type == "pix2pix" or task_type == 'image_edit':
                 presence = model_loader.get_presence(backend, model_tag)
                 return await presence.edit(payload)
@@ -81,7 +84,7 @@ class ApiOrchestrator:
             else:
                 raise ValueError(f"Unknown API task type: {task_type}")
         except Exception as e:
-            logger.error(f"ApiOrchestrator: Task {task_type} failed: {e}")
+            logger.error(f"ApiOrchestrator: Task {task_type} failed: {e.__traceback__}")
             raise e
 
 api_orchestrator = ApiOrchestrator()

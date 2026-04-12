@@ -159,3 +159,152 @@ class Memory:
         """Lista IDs e metadados de uma coleção."""
         from ..persistence.vector_store import vector_store
         return vector_store.list_metadata(collection=collection, model_tag=self.model_tag)
+
+    async def smart_search(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Realiza uma busca 'inteligente' no RAG:
+        1. Quebra a query em sub-queries focadas (Processado via Brain).
+        2. Busca no RAG para cada sub-query.
+        3. Filtra resultados duplicados.
+        4. Analisa a relevância de cada resultado (Processado via Brain).
+        """
+        from ..services.helpers import inference_helper
+        import asyncio
+        
+        prompt = payload.get("prompt")
+        top_k = payload.get("top_k", 5)
+        max_split_questions = payload.get("max_split_questions", 3)
+        collection = payload.get("collection", "july_memory")
+        llm_model = payload.get("llm_model")
+
+        # 1. Break down the task into sub-queries
+        system_prompt = (
+            "You are a technical search expert generating queries for a Vector Database (RAG).\n"
+            f"Break the user's task into {max_split_questions} distinct, highly descriptive semantic search queries.\n"
+            "DO NOT invent file extensions or literal class names unless the user specifies them.\n"
+            "Focus on concepts, architectures, and technical workflows."
+        )
+        
+        user_prompt = f"Task: {prompt}\nOutput ONLY the queries, one per line."
+
+        headers = {"x-enable-internal-mcp": "1"}
+
+        breakdown_payload = {
+            "model": llm_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": False,
+            "headers": headers
+        }
+
+        logger.debug(f"Memory: Breakdown payload: {breakdown_payload}")
+
+        breakdown_res = await inference_helper.process("text_chat", breakdown_payload)
+
+        if isinstance(breakdown_res, dict) and "choices" in breakdown_res:
+            content = breakdown_res["choices"][0]["message"]["content"]
+            queries = [q.strip().lstrip("-*123. ") for q in content.strip().split("\n") if q.strip()]
+            queries = queries[:max_split_questions]
+        else:
+            queries = [prompt]
+
+        logger.debug(f"Memory: Generated queries: {queries}")
+
+        # 2. Search for each query
+        all_raw_results = []
+        seen_ids = set()
+        
+        for q in queries:
+            try:
+                results = await self.search(query=q, top_k=top_k, collection=collection)
+                for r in results:
+                    rid = r.get("id")
+                    if rid not in seen_ids:
+                        seen_ids.add(rid)
+                        all_raw_results.append(r)
+                
+                logger.info(f"Memory: Found {len(results)} results for query '{q}'")
+            except Exception as e:
+                logger.error(f"Memory: Error searching RAG for query '{q}': {e}")
+
+        # 3. Analyze relevance for each result
+        final_results = []
+        
+        async def check_relevance(item):
+            path = item.get("metadata", {}).get("path") or item.get("metadata", {}).get("file") or "unknown"
+            content = item.get("content") or item.get("text") or ""
+            
+            system_prompt = (
+                "You are a technical document relevance analyzer.\n"
+                "Determine if the document snippet is strictly useful for fulfilling the user task.\n"
+                "Answer ONLY with YES or NO."
+            )
+            
+            user_prompt = (
+                f"TASK: {prompt}\n"
+                f"FILE: {path}\n"
+                f"CONTENT: {content[:2000]}\n\n"
+                "Is this relevant?"
+            )
+            
+            rel_payload = {
+                "model": llm_model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                "stream": False,
+                "max_tokens": 5,
+                "headers": headers
+            }
+
+            logger.debug(f"Memory: Relevance payload: {rel_payload}")
+            logger.info(f"Memory: checking relevance for item")
+            
+            try:
+                rel_res = await inference_helper.process("text_chat", rel_payload)
+                logger.debug(f"Memory: Relevance response: {rel_res}")
+
+                if rel_res.get("choices"):
+                    ans: str = rel_res.get("choices", [{}])[0].get("message", {}).get("content", "").upper()
+                    logger.debug(f"Memory: Relevance answer: {ans}")
+                    return "YES" in ans
+                return False
+            except Exception:
+                return False
+
+        # Run relevance checks sequentially
+        if all_raw_results:
+            for item in all_raw_results:
+                is_relevant = await check_relevance(item)
+                if is_relevant:
+                    # Omit vector/embedding data
+                    result_item = {k: v for k, v in item.items() if k != "embedding"}
+                    final_results.append(result_item)
+
+        logger.debug(f"Memory: Final results: {final_results}")
+
+        if payload.get('structured_response', False):
+            logger.info("Memory: Structuring response")
+
+            data = '\n'.join([r['content'] for r in final_results])
+            system_prompt = f"Based on given data: {data}, answer the user's question."
+            
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+
+            structured_payload = {
+                "model": llm_model,
+                "messages": messages,
+                "stream": payload.get("stream_response", False),
+            }
+
+            from ..bridge import bridge
+
+            return bridge.process_openai_chat(structured_payload, headers)
+
+        return final_results

@@ -2,10 +2,16 @@ import os
 import time
 import uuid
 import base64
-from typing import List, Optional, Dict, Any
+import logging
+import asyncio
+import json
+from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException, Body
-from fastapi.responses import JSONResponse
+from fastapi.sse import EventSourceResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger("JulyEngine.Routers.July")
 
 # Assumindo que o bridge já está importado ou acessível
 from ..bridge import bridge
@@ -16,6 +22,21 @@ router = APIRouter(prefix="/july/v1", tags=["July Custom"])
 class RagBatchDeleteRequest(BaseModel):
     ids: List[str]
     collection: str = "july_memory"
+
+
+class SmartSearchRequest(BaseModel):
+    prompt: str
+    rag_model: Optional[str] = None
+    llm_model: Optional[str] = None
+    top_k: int = 5
+    max_split_questions: int = 3
+    collection: str = "july_memory"
+    structured_response: Optional[bool] = False
+    stream_response: Optional[bool] = False
+
+
+class SmartSearchResponse(BaseModel):
+    results: List[Dict[str, Any]]
 
 
 async def save_upload_stream(upload_file: UploadFile, dest_folder: str = "storage/temp") -> str:
@@ -334,35 +355,43 @@ async def list_rag_metadata(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@router.post("/vision/image/resize")
-async def resize_image(
-    http_request: Request,
-    image: Optional[UploadFile] = File(None),
-    image_b64: Optional[str] = Form(None),
-    scale: Optional[float] = Form(1.0),
-    width: Optional[int] = Form(None),
-    height: Optional[int] = Form(None),
-    model: Optional[str] = Form(None)
-):
-    """Redimensiona ou faz upscale de uma imagem."""
-    headers = dict(http_request.headers)
+@router.post("/rag/smart-search", response_model=None)
+async def smart_search_rag(
+    request: Request,
+    payload: SmartSearchRequest
+) -> Union[SmartSearchResponse, EventSourceResponse, JSONResponse]:
+    """
+    Realiza uma busca 'inteligente' no RAG (delegado ao Bridge -> Orchestrator -> Memory).
+    """
+    headers = dict(request.headers)
     
-    if image:
-        bytes_data = await image.read()
-        img_input = base64.b64encode(bytes_data).decode('utf-8')
-    elif image_b64:
-        img_input = image_b64
-    else:
-        return JSONResponse(status_code=400, content={"error": "Envie 'image' ou 'image_b64'."})
+    try:
+        # Resolvemos via Bridge seguindo a arquitetura do sistema
+        result = await bridge.process_rag_smart_search(payload.model_dump(), headers)
         
-    payload = {
-        "image": img_input,
-        "scale": scale,
-        "width": width,
-        "height": height,
-        "model": model
-    }
-    
-    result = await bridge.process_image_resize(payload, headers)
-    return JSONResponse(content={"image": result})
-
+        if payload.structured_response:
+
+            if payload.stream_response:
+                async def sse_formatter(generator):
+                    try:
+                        async for chunk_dict in generator:
+                            # Pega o dicionário e transforma em string JSON com o prefixo 'data: '
+                            chunk_str = json.dumps(chunk_dict)
+                            yield f"data: {chunk_str}\n\n"
+                    finally:
+                        # O padrão OpenAI exige que o stream termine com a string [DONE]
+                        yield "data: [DONE]\n\n"
+                        
+                # Retorna o StreamingResponse empacotando o nosso formatador
+                return StreamingResponse(
+                    sse_formatter(result.get("results")), 
+                    media_type="text/event-stream"
+                )
+
+            return result.get("results")
+
+        return SmartSearchResponse(results=result.get("results", []))
+    except Exception as e:
+        logger.error(f"Error in smart_search_rag: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+

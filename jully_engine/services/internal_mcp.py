@@ -173,8 +173,6 @@ class InternalMCP:
         if not payload.get('tools', None):
             payload['tools'] = self.get_tools(whitelist)
 
-        print(payload)
-
     async def execute_tool(self, name: str, arguments: Dict[str, Any], stream=True) -> Tuple[Any | None, UserToolReponse | None]:
         from ..model_loader import model_loader
         from ..bridge import bridge
@@ -328,7 +326,6 @@ class InternalMCP:
         assistant_content = ''
         tool_messages = []
         assistant_tool_calls = []
-        print('é aqui')
         
         async for chunk in response:
             assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '') or ''
