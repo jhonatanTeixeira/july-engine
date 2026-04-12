@@ -57,7 +57,7 @@ def estimate_vram_ram(
     elif "Q4_0" in kv_quant_upper:
         bytes_per_element = 0.5
         
-    if metadata and all(k in metadata for k in ["block_count", "head_count_kv", "embedding_length", "head_count"]):
+    if metadata and all(metadata.get(k, 0) > 0 for k in ["block_count", "head_count_kv", "embedding_length", "head_count"]):
         # FÓRMULA GQA: 2 * Layers * Heads_kv * (Embedding / Heads_total) * BytesPerElement
         layers_count = metadata["block_count"]
         heads_kv = metadata["head_count_kv"]

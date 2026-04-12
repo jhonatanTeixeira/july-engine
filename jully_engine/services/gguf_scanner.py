@@ -69,6 +69,11 @@ class GGUFMetadataScanner:
                 "embedding_length": int(reader.get_field(f"{arch}.embedding_length") or 0),
             }
             
+            # Diagnostic for zero values
+            for k, v in metadata.items():
+                if v == 0 and k != "architecture":
+                    logger.warning(f"GGUF field '{arch}.{k}' returned 0 or missing.")
+            
             # Fallback for head_count_kv if missing (assume MHA instead of GQA/MQA)
             if metadata["head_count_kv"] == 0:
                 metadata["head_count_kv"] = metadata["head_count"]
