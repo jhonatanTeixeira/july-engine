@@ -37,7 +37,7 @@ class OrchestratorContainer:
             if not config:
                 raise HTTPException(422, detail=f"Model {payload.get('model')} is not configured on presets")
         else:
-            config = self.model_service.backend.get_setting(task_type)
+            config = self.model_service.backend.get_setting(task_type) or {}
         
         headers = payload.setdefault("headers", {})
         backend = headers.get("x-backend", config.get("backend"))
@@ -99,7 +99,9 @@ class InferenceHelper:
             "rag_search": "EMBEDDINGS",
             "rag_vector_add": "EMBEDDINGS",
             "rag_search_details": "EMBEDDINGS",
-            "rag_update": "EMBEDDINGS"
+            "rag_update": "EMBEDDINGS",
+            "rag_delete": "EMBEDDINGS",
+            "rag_list": "EMBEDDINGS"
         }
     
     async def _await_orch_task(self, future_or_coro):

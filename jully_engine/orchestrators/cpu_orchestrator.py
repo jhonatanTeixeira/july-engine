@@ -104,6 +104,12 @@ class CpuOrchestrator:
             elif task_type == "rag_update":
                 memory = model_loader.get_memory(backend, model_tag)
                 return asyncio.run(memory.update_embedding(str(payload.get("id")), payload.get("vector"), payload.get("collection", "july_memory")))
+            elif task_type == "rag_delete":
+                memory = model_loader.get_memory(backend, model_tag)
+                return asyncio.run(memory.delete_from_rag(payload.get("ids", []), payload.get("collection", "july_memory")))
+            elif task_type == "rag_list":
+                memory = model_loader.get_memory(backend, model_tag)
+                return asyncio.run(memory.list_rag_metadata(payload.get("collection", "july_memory")))
             elif task_type in ["pix2pix", "image_generation"]:
                 presence = model_loader.get_presence(backend, model_tag)
                 return asyncio.run(presence.generate(payload))

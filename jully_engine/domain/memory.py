@@ -35,6 +35,10 @@ class Memory:
 
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
+        # Se for uma tarefa de manutenção (sem input de texto), o custo é 0
+        if "input" not in payload and "documents" not in payload:
+            return 0
+            
         if hasattr(self._strategy, "get_required_vram"):
             return self._strategy.get_required_vram(payload)
         return 0
@@ -145,3 +149,13 @@ class Memory:
         """Atualiza a coordenada geométrica de um vetor existente pelo ID."""
         from ..persistence.vector_store import vector_store
         vector_store.update_embedding(doc_id, new_embedding, collection=collection, model_tag=self.model_tag)
+
+    async def delete_from_rag(self, ids: List[str], collection: str = "july_memory") -> int:
+        """Remove registros do RAG pelo ID."""
+        from ..persistence.vector_store import vector_store
+        return vector_store.delete(ids, collection=collection, model_tag=self.model_tag)
+
+    async def list_rag_metadata(self, collection: str = "july_memory") -> List[Dict[str, Any]]:
+        """Lista IDs e metadados de uma coleção."""
+        from ..persistence.vector_store import vector_store
+        return vector_store.list_metadata(collection=collection, model_tag=self.model_tag)

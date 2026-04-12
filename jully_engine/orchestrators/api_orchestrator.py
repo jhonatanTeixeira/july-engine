@@ -57,6 +57,12 @@ class ApiOrchestrator:
             elif task_type == "rag_update":
                 memory = model_loader.get_memory(backend, model_tag)
                 return await memory.update_embedding(str(payload.get("id")), payload.get("vector"), payload.get("collection", "july_memory"))
+            elif task_type == "rag_delete":
+                memory = model_loader.get_memory(backend, model_tag)
+                return await memory.delete_from_rag(payload.get("ids", []), payload.get("collection", "july_memory"))
+            elif task_type == "rag_list":
+                memory = model_loader.get_memory(backend, model_tag)
+                return await memory.list_rag_metadata(payload.get("collection", "july_memory"))
             elif task_type == "pix2pix" or task_type == 'image_edit':
                 presence = model_loader.get_presence(backend, model_tag)
                 return await presence.edit(payload)

@@ -305,9 +305,96 @@ class VectorStore:
         else:
             # In-memory
             for item in self.memory_data:
-                if item["id"] == doc_id and item.get("collection") == full_name:
+                if item.get("id") == doc_id and item.get("collection") == full_name:
                     item["embedding"] = new_embedding
                     break
             self._save_in_memory()
+
+    def delete(self, ids: List[str], collection: str = "july_memory", model_tag: str = None) -> int:
+        """Deleta registros pelo ID (id ou custom_id). Retorna a contagem de deletados."""
+        full_name = self._get_full_name(collection, model_tag)
+        deleted_count = 0
+
+        if self.db_type == "chroma":
+            try:
+                coll = self.client.get_collection(name=full_name)
+                # O Chroma não retorna a contagem de deletes facilmente, então assumimos sucesso
+                coll.delete(ids=ids)
+                deleted_count = len(ids)
+            except Exception as e:
+                logger.error(f"Error deleting from ChromaDB {full_name}: {e}")
+
+        elif self.db_type == "pgvector":
+            try:
+                from sqlalchemy import text as sa_text
+                table_name = f"rag_{full_name}"
+                with self.engine.begin() as conn:
+                    result = conn.execute(
+                        sa_text(f"DELETE FROM {table_name} WHERE custom_id IN :ids OR id::text IN :ids"),
+                        {"ids": tuple(ids)}
+                    )
+                    deleted_count = result.rowcount
+            except Exception as e:
+                logger.error(f"Error deleting from pgvector {table_name}: {e}")
+
+        else:
+            # In-memory
+            orig_len = len(self.memory_data)
+            self.memory_data = [item for item in self.memory_data if not (item.get("id") in ids and item.get("collection") == full_name)]
+            deleted_count = orig_len - len(self.memory_data)
+            self._save_in_memory()
+
+        return deleted_count
+
+    def list_metadata(self, collection: str = "july_memory", model_tag: str = None) -> List[Dict[str, Any]]:
+        """Lista todos os IDs e Metadados de uma coleção (sem vetores)."""
+        full_name = self._get_full_name(collection, model_tag)
+        
+        if self.db_type == "chroma":
+            try:
+                coll = self.client.get_collection(name=full_name)
+                # Buscamos tudo sem incluir o embedding
+                results = coll.get(include=["metadatas", "documents"])
+                
+                output = []
+                for i in range(len(results["ids"])):
+                    output.append({
+                        "id": results["ids"][i],
+                        "metadata": results["metadatas"][i] if results["metadatas"] else {},
+                        "content_summary": (results["documents"][i][:100] + "...") if results["documents"] and results["documents"][i] else ""
+                    })
+                return output
+            except Exception as e:
+                logger.error(f"Error listing ChromaDB metadata {full_name}: {e}")
+                return []
+
+        elif self.db_type == "pgvector":
+            try:
+                from sqlalchemy import text as sa_text
+                table_name = f"rag_{full_name}"
+                with self.engine.connect() as conn:
+                    result = conn.execute(sa_text(f"SELECT id, custom_id, metadata, left(content, 100) FROM {table_name}"))
+                    output = []
+                    for row in result:
+                        output.append({
+                            "id": str(row[0]),
+                            "custom_id": row[1],
+                            "metadata": row[2] if row[2] else {},
+                            "content_summary": row[3] + "..." if row[3] else ""
+                        })
+                    return output
+            except Exception as e:
+                logger.error(f"Error listing pgvector metadata {table_name}: {e}")
+                return []
+        else:
+            # In-memory
+            return [
+                {
+                    "id": i.get("id"),
+                    "metadata": i.get("metadata", {}),
+                    "content_summary": (i.get("content", "")[:100] + "...")
+                }
+                for i in self.memory_data if i.get("collection") == full_name
+            ]
 
 vector_store = VectorStore()

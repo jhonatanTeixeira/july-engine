@@ -524,4 +524,16 @@ class Bridge:
         success = await inference_helper.process("rag_update", payload)
         return {"success": success}
 
+    async def process_rag_delete(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Remove registros do RAG orquestrado."""
+        payload['headers'] = headers
+        count = await inference_helper.process("rag_delete", payload)
+        return {"deleted_count": count}
+
+    async def process_rag_list(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
+        """Lista metadados de uma coleção orquestrada."""
+        payload['headers'] = headers
+        results = await inference_helper.process("rag_list", payload)
+        return {"results": results}
+
 bridge = Bridge()

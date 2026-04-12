@@ -3,13 +3,19 @@ import time
 import uuid
 import base64
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException, Body
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 # Assumindo que o bridge já está importado ou acessível
 from ..bridge import bridge
 
 router = APIRouter(prefix="/july/v1", tags=["July Custom"])
+
+
+class RagBatchDeleteRequest(BaseModel):
+    ids: List[str]
+    collection: str = "july_memory"
 
 
 async def save_upload_stream(upload_file: UploadFile, dest_folder: str = "storage/temp") -> str:
@@ -276,6 +282,55 @@ async def update_rag_embedding(
         result = await bridge.process_rag_update(payload, headers)
         return JSONResponse(content=result)
     except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.delete("/rag/{item_id}")
+async def delete_rag_single(
+    item_id: str,
+    request: Request,
+    collection: str = "july_memory"
+):
+    """Deleta um único registro do RAG via URL padrão REST."""
+    headers = dict(request.headers)
+    try:
+        payload = {"ids": [item_id], "collection": collection}
+        result = await bridge.process_rag_delete(payload, headers)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in delete_rag_single: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@router.post("/rag/batch-delete")
+async def delete_rag_batch(
+    request_data: RagBatchDeleteRequest,
+    request: Request
+):
+    """Deleta múltiplos registros do RAG via POST (Batch standard)."""
+    headers = dict(request.headers)
+    try:
+        payload = request_data.model_dump()
+        result = await bridge.process_rag_delete(payload, headers)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in delete_rag_batch: {e}", exc_info=True)
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@router.get("/rag/list")
+async def list_rag_metadata(
+    http_request: Request,
+    collection: str = "july_memory"
+):
+    """Lista metadados (IDs, path, etc) de uma coleção sem carregar os vetores."""
+    headers = dict(http_request.headers)
+    
+    try:
+        payload = {"collection": collection}
+        result = await bridge.process_rag_list(payload, headers)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Error in list_rag_metadata: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
