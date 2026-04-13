@@ -50,75 +50,100 @@ class GridPackerService:
         return Image.fromarray(grid_rgb)
 
 
-class VideoProcessorService:
-    """Interface de Infraestrutura para extração de frames e bifurcação de stream"""
-    
-    def __init__(self, video_path: str):
-        self.video_path = video_path
-        self.cap = cv2.VideoCapture(video_path)
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.duration = self.total_frames / self.fps if self.fps > 0 else 0
-
-    def extract_segments(self, interval_sec: int = 2, frames_per_grid: int = 4):
-        """
-        Extrai frames em um buffer e retorna Grids para o VLM processar.
-        interval_sec: Intervalo entre frames capturados.
-        frames_per_grid: Quantos frames compõem um Grid (N).
-        """
-        hop = int(self.fps * interval_sec)
-        frame_buffer = []
-        timestamps = []
-        count = 0
-        
-        while self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if not ret: break
-            
-            if count % hop == 0:
-                frame_buffer.append(frame)
-                timestamps.append(count / self.fps)
-                
-                # Se o buffer atingiu N, despacha o Grid (Rota B)
-                if len(frame_buffer) >= frames_per_grid:
-                    grid_img = GridPackerService.pack_frames(frame_buffer)
-                    yield timestamps[0], timestamps[-1], grid_img
-                    frame_buffer = []
-                    timestamps = []
-            
-            count += 1
-        
-        # Despacha o resto se sobrar
-        if frame_buffer:
-            grid_img = GridPackerService.pack_frames(frame_buffer)
-            yield timestamps[0], timestamps[-1], grid_img
-            
-        self.cap.release()
-
-
 class OpenCVBifurcator:
     def __init__(self, temp_dir: str = "storage/temp_video"):
         # Agora ele só guarda configuração de infraestrutura (diretórios)
         self.temp_dir = temp_dir
         os.makedirs(temp_dir, exist_ok=True)
 
-    def sample_frames(self, video_path: str, interval_sec: float) -> Generator[tuple, None, None]:
-        logger.info('sampling frames')
+    def sample_frames(self, video_path: str, interval_sec: float, scene_threshold: float = 0.85, detect_change=False) -> Generator[tuple, None, None]:
+        """
+        Extrai frames em intervalos regulares e filtra frames com mudanças insignificantes.
+
+        A detecção de cena usa dois critérios combinados:
+          1. Correlação de histograma HSV — rápida e robusta a variações de iluminação.
+          2. Ratio de matching ORB — detecta mudanças estruturais (nova pose, objeto, cenário)
+
+        Só envia frames onde ao menos um dos critérios indica mudança significativa.
+        """
+        logger.info(f'sampling frames with scene-change detection (threshold={scene_threshold})')
         cap = cv2.VideoCapture(video_path)
         fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps == 0: return
-        
+        if fps == 0:
+            cap.release()
+            return
+
         hop = int(fps * interval_sec)
         count = 0
-        
+        last_keyframe: Optional[np.ndarray] = None
+        last_hist: Optional[np.ndarray] = None
+
+        # Inicializa detector ORB para capturar mudanças estruturais
+        orb = cv2.ORB_create(nfeatures=500)
+        bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+        def _compute_hsv_hist(frame: np.ndarray) -> np.ndarray:
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            hist = cv2.calcHist([hsv], [0, 1], None, [50, 60], [0, 180, 0, 256])
+            cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+            return hist
+
+        def _is_significant_change(current: np.ndarray, reference: np.ndarray, ref_hist: np.ndarray) -> bool:
+            """Retorna True se a mudança entre `current` e `reference` for significativa."""
+            # Critério 1: Correlação de histograma (1.0 = idêntico, <threshold = mudou)
+            curr_hist = _compute_hsv_hist(current)
+            hist_corr = cv2.compareHist(ref_hist, curr_hist, cv2.HISTCMP_CORREL)
+            if hist_corr < scene_threshold:
+                logger.debug(f"Scene change (histogram corr={hist_corr:.3f} < {scene_threshold})")
+                return True, curr_hist
+
+            # Critério 2: ORB matching ratio — poucas correspondencias = cena diferente
+            try:
+                ref_small = cv2.resize(reference, (320, 180))
+                cur_small = cv2.resize(current, (320, 180))
+                kp1, des1 = orb.detectAndCompute(ref_small, None)
+                kp2, des2 = orb.detectAndCompute(cur_small, None)
+                if des1 is not None and des2 is not None and len(des1) > 10 and len(des2) > 10:
+                    matches = bf.match(des1, des2)
+                    good_matches = [m for m in matches if m.distance < 50]
+                    match_ratio = len(good_matches) / max(len(kp1), len(kp2), 1)
+                    if match_ratio < (1.0 - scene_threshold):
+                        logger.debug(f"Scene change (ORB match_ratio={match_ratio:.3f})")
+                        return True, curr_hist
+            except Exception as e:
+                logger.debug(f"ORB matching skipped: {e}")
+
+            return False, curr_hist
+
         while cap.isOpened():
             ret, frame = cap.read()
-            if not ret: break
-            
+            if not ret:
+                break
+
             if count % hop == 0:
                 timestamp = count / fps
-                yield timestamp, frame
+
+                if not detect_change:
+                    yield timestamp, frame
+
+                    continue
+
+                if last_keyframe is None:
+                    # Primeiro frame sempre é enviado como keyframe
+                    last_keyframe = frame
+                    last_hist = _compute_hsv_hist(frame)
+                    yield timestamp, frame
+                else:
+                    changed, new_hist = _is_significant_change(frame, last_keyframe, last_hist)
+                    if changed:
+                        last_keyframe = frame
+                        last_hist = new_hist
+                        yield timestamp, frame
+                    else:
+                        logger.debug(f"Frame at {timestamp:.2f}s skipped (no significant change)")
+
             count += 1
+
         cap.release()
 
     def extract_audio_stream(self, video_path: str) -> Optional[str]:
@@ -222,9 +247,10 @@ class IVideoAnalysisStrategy(abc.ABC):
 
 
 class ObjectInteractionStrategy(IVideoAnalysisStrategy):
-    def __init__(self, yolo_model_path='yolov8n.pt'):
+    def __init__(self, yolo_model_path='yolo11s.pt'):
         from ultralytics import YOLO
         self.yolo = YOLO(yolo_model_path)
+        logger.info(f"ObjectInteractionStrategy: loaded YOLO model '{yolo_model_path}'")
 
     async def analyze_batch(self, grids: List[Image.Image], time_ranges: List[tuple], face_service: FaceService, vlm: Any) -> List[VideoSegment]:
         segments = []
@@ -365,7 +391,7 @@ class MultimodalVideoAnalysisUseCase:
         self.vlm = vlm
         self.face_service = FaceService()
 
-    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10, strategy: str = "default"):
+    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10, strategy: str = "default", detect_changes=False):
         logger.info(f"Starting multimodal native batch analysis for: {video_path} with strategy: {strategy}")
         
         video_aggregate = VideoAggregate(
@@ -395,7 +421,7 @@ class MultimodalVideoAnalysisUseCase:
             analysis_strategy = EmotionAndAttentionStrategy()
 
         # Passando o video_path para o gerador
-        for ts, frame in self.bifurcator.sample_frames(video_path, interval_sec):
+        for ts, frame in self.bifurcator.sample_frames(video_path, interval_sec, detect_changes=detect_changes):
             frame_buffer.append(frame)
             timestamps.append(ts)
             

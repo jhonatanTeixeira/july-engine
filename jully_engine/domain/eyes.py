@@ -287,17 +287,25 @@ class Eyes:
     async def sync_faces_batch(self, images: List[Image.Image], pic_ids: List[str], collection: str = "faces_embeddings") -> List[List[Dict[str, Any]]]:
         return self.face_service.sync_faces_batch(images, pic_ids, collection)
 
-    async def describe_video(self, payload: Dict) -> str:
+    async def describe_video(self, payload: Dict):
+        """
+        Analisa um vídeo e retorna uma descrição (str) ou o VideoAggregate bruto.
+
+        - Se `description_model` estiver presente no payload, sintetiza o aggregate em uma
+          narrativa textual usando o LLM indicado e retorna uma str.
+        - Se `description_model` ausente, retorna o VideoAggregate bruto para que o
+          chamador possa processar a estrutura diretamente via API.
+        """
         import os
         from ..services.video_processing import multimodal_video_analysis
         from ..services.helpers import inference_helper
-        from ..services.models_service import ModelsService
-        
+
         video_path = payload.get("video_path")
         interval_sec = float(payload.get("interval_sec", 2.0))
         frames_per_grid = int(payload.get("frames_per_grid", 4))
         strategy = payload.get("strategy", "default")
-                
+        detect_changes = payload.get("detect_changes", "false") == "true"
+
         if not video_path or not os.path.exists(video_path):
             raise ValueError(f"Eyes: Video path is invalid or missing: {video_path}")
 
@@ -306,10 +314,17 @@ class Eyes:
             video_path=video_path,
             interval_sec=interval_sec,
             frames_per_grid=frames_per_grid,
-            strategy=strategy
+            strategy=strategy,
+            detect_changes=detect_changes
         )
-        
-        # 2. Monta o Dossiê (Super-Prompt) combinando Visão e Áudio
+
+        # 2. Se não houver description_model, retorna o aggregate bruto para a API
+        description_model = payload.get("description_model")
+        if not description_model:
+            logger.info("Eyes.describe_video: no description_model provided — returning raw VideoAggregate.")
+            return aggregate
+
+        # 3. Monta o Dossiê (Super-Prompt) combinando Visão e Áudio
         prompt_parts = [
             "You are an expert video analyst. I will provide you with a chronological breakdown of a video's visual segments and its full audio transcription.",
             "Please synthesize this information into a single, cohesive, highly detailed and fluid narrative of what happens in the video.",
@@ -318,37 +333,32 @@ class Eyes:
             aggregate.full_transcription if aggregate.full_transcription else "[No speech detected]",
             "\n=== VISUAL TIMELINE ==="
         ]
-        
+
         # Costura a linha do tempo
         for seg in aggregate.segments:
-            # Garante a extração correta dependendo se é o objeto GridNarrative ou uma string pura
             desc = seg.narrative.text if hasattr(seg.narrative, 'text') else str(seg.narrative)
             prompt_parts.append(f"[{seg.start_offset:.1f}s to {seg.end_offset:.1f}s]: {desc}")
-            
+
         final_prompt = "\n".join(prompt_parts)
-        
-        # 3. Repassa para a Inteligência de Texto (O Roteador/Brain)
-        # O inference_helper vai cuidar de alocar o Qwen ou o Llama para ler esse textão
+
+        # 4. Repassa para a Inteligência de Texto (O Roteador/Brain)
         llm_payload = {
             "messages": [
                 {"role": "system", "content": "You are a multimodal video synthesis AI."},
                 {"role": "user", "content": final_prompt}
             ],
             "headers": {"x-context-window": payload.get("headers", {}).get("x-context-window", None)},
+            "model": description_model,
             "stream": False
         }
-        
-        if (ds_model := payload.get("description_model", None)):
-            llm_payload['model'] = ds_model
-        else:
-            llm_payload["model"] = ModelsService().get_default_text_model().get("alias", None)
-        
+
+        logger.info(f"Eyes.describe_video: synthesizing with description_model='{description_model}'")
         synthesis_result = await inference_helper.process("text_chat", llm_payload)
-        
-        # 4. Extrai a string pura do retorno padrão da OpenAI
+
+        # 5. Extrai a string pura do retorno padrão da OpenAI
         if isinstance(synthesis_result, dict) and "choices" in synthesis_result:
             return synthesis_result["choices"][0]["message"].get("content", "")
-            
+
         return str(synthesis_result)
 
     def unload(self):

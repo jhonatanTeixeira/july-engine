@@ -70,6 +70,7 @@ async def describe_video(
     model: Optional[str] = Form(None),
     strategy: Optional[str] = Form("default"), # Pode ser "default", "interaction" ou "emotion"
     description_model: Optional[str] = Form(None),
+    detect_changes: Optional[bool] = Form(False),
 ):
     """
     Analisa os frames visuais de um vídeo e retorna uma descrição detalhada 
@@ -87,6 +88,7 @@ async def describe_video(
         "model": model,
         "strategy": strategy,
         "description_model": description_model,
+        "detect_changes": detect_changes
     }
     
     try:
