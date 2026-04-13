@@ -22,7 +22,7 @@ class Chunk:
         
         delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
         
-        self.content = delta.get("content", "")
+        self.content = delta.get("content", "") or ""
         self.reasoning_content = delta.get("reasoning_content", "")
         self.is_reasoning = True if self.reasoning_content else False
         

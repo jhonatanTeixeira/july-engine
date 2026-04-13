@@ -157,7 +157,7 @@ class ExternalMCPManager:
                 
                 original_payload['messages'].extend(tool_messages)
                 
-                async for chunk in brain_instance.chat(original_payload):
+                async for chunk in await brain_instance.chat(original_payload):
                     yield chunk
                     await asyncio.sleep(0)
 

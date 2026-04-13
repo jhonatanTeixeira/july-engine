@@ -431,7 +431,7 @@ class InternalMCP:
                 original_payload['messages'].extend(tool_messages)
                 
                 if requires_second_call:
-                    async for chunk_2p in brain_instance.chat(original_payload):
+                    async for chunk_2p in await brain_instance.chat(original_payload):
                         yield chunk_2p
                         await asyncio.sleep(0)
                     continue
