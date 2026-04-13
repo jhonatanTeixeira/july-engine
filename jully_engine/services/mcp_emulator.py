@@ -234,11 +234,11 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
 
     async def orchestrate(self, response: Union[Dict, AsyncGenerator], brain, original_payload: Dict):
 
-        if isinstance(response, dict):
+        if not original_payload.get('stream'):
             # ==============================
             # MODO NÃO-STREAM (SÍNCRONO)
             # ==============================
-            message = response["choices"][0].setdefault("message", {})
+            message = response["choices"][0].get("message", {})
             raw_content = message.get("content") or ""
             
             # Unescape HTML entities (e.g., &lt; -> <)
@@ -309,7 +309,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 if isinstance(second_content, list):
                     message['content'].extend(second_content)
                 else:
-                    message['content'].append(second_content)
+                    message['content'].append({"type": "text", "text": second_content})
 
             return response
             
