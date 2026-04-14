@@ -19,3 +19,4 @@ mcp
 piexif
 exif
 numpy
+pyppeteer

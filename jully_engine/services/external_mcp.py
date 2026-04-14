@@ -88,7 +88,7 @@ class ExternalMCPManager:
         all_tools = []
         for tools in self.server_tools.values():
             for t in tools:
-                if whitelist is None or t["function"]["name"] in whitelist:
+                if not whitelist or t["function"]["name"] in whitelist:
                     all_tools.append(t)
         return all_tools
 
@@ -228,11 +228,13 @@ class ExternalMCPManager:
         mcp_id, tool_name = full_name.split("__", 1)
         session = self.sessions.get(mcp_id)
         if not session:
+            logger.warning(f"MCP server {mcp_id} not connected")
             return f"MCP server {mcp_id} not connected"
             
         try:
             logger.info(f"ExternalMCP executing tool: {full_name} with arguments: {arguments}")
             result = await session.call_tool(tool_name, arguments)
+            logger.debug(f"ExternalMCP tool result: {result}")
             return result
         except Exception as e:
             logger.error(f"Error executing external tool {full_name}: {e}")

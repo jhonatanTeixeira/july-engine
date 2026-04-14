@@ -63,8 +63,7 @@ class Brain:
             if mcp_option == "emulated":
                 mcp_handler = self._mcp
             elif mcp_option == "internal":
-                from ..services.internal_mcp import InternalMCP
-                mcp_handler = InternalMCP()
+                mcp_handler = self._mcp.internal_mcp
             elif mcp_option == "external_only":
                 from ..services.external_mcp import external_mcp_manager
                 mcp_handler = external_mcp_manager

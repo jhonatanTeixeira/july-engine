@@ -21,7 +21,15 @@ class TavilySearch:
             logger.warning(f"TavilySearch: Não foi possível ler a API Key do banco: {e}")
         return ""
 
-    async def search(self, query: str, headers: dict = None):
+    async def search(
+        self, 
+        query: str, 
+        headers: dict = None, 
+        search_depth: str = "basic", 
+        include_answer: bool = True, 
+        max_results: int = 5,
+        include_list: bool = False
+    ):
         # Correção do anti-pattern de Python (dicionário mutável no parâmetro)
         if headers is None:
             headers = {}
@@ -40,11 +48,17 @@ class TavilySearch:
             # Chamada limpa e não-bloqueante usando os parâmetros corretos da lib
             response = await tavily_client.search(
                 query=query,
-                search_depth="basic",
-                include_answer=True,
-                max_results=5
+                search_depth=search_depth,
+                include_answer=include_answer,
+                max_results=max_results
             )
             
+            results = response.get("results", [])
+
+            if include_list:
+                logger.info(f"Engine TavilySearch executed successfully on {self.backend} (Returning result list)")
+                return results
+
             # Prioriza a resposta mastigada (answer) da própria Tavily
             answer = response.get("answer")
             if answer:
@@ -52,7 +66,6 @@ class TavilySearch:
                 return answer
                 
             # Fallback elegante caso a 'answer' venha vazia
-            results = response.get("results", [])
             if not results:
                 return "Nenhum resultado relevante encontrado para esta pesquisa."
                 

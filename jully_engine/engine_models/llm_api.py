@@ -74,13 +74,17 @@ class LLMApi:
         return 0
 
     def _extract_api_key(self, headers: Optional[Dict[str, Any]]) -> Optional[str]:
+        config_key = self.model.get("api_key", None)
+        
         if not headers:
-            return None
-        return headers.get("x-api-key", self.model.get("api_key", None))
+            return config_key
+
+        return headers.get("x-api-key", config_key)
 
     def _extract_base_url(self, headers: Optional[Dict[str, str]]) -> Optional[str]:
+        config_url = self.model.get("base_url", None)
         if not headers:
-            return None
+            return config_url
         return headers.get("x-base-url", self.model.get("base_url", None))
 
     async def run_chat(self, payload: dict, **kwargs):

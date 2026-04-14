@@ -40,7 +40,14 @@ class World:
         if engine.lower() == "google":
             return await self.google.search(query, headers=headers)
         else:
-            return await self.tavily.search(query, headers=headers)
+            return await self.tavily.search(
+                query, 
+                headers=headers,
+                search_depth=payload.get("search_depth", "basic"),
+                include_answer=payload.get("include_answer", True),
+                max_results=payload.get("max_results", 5),
+                include_list=payload.get("include_list", False)
+            )
 
     async def search_code(self, payload: Dict[str, Any]):
         query = payload.get("query", "")

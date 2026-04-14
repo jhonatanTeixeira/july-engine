@@ -93,6 +93,19 @@ class InternalMCP:
                             "query": {
                                 "type": "string",
                                 "description": "The exact search engine query."
+                            },
+                            "search_depth": {
+                                "type": "string",
+                                "enum": ["basic", "advanced"],
+                                "description": "The depth of the search. Defaults to 'basic'."
+                            },
+                            "include_answer": {
+                                "type": "boolean",
+                                "description": "Whether to include a direct answer from the search engine. Defaults to true."
+                            },
+                            "max_results": {
+                                "type": "integer",
+                                "description": "The maximum number of results to return. Defaults to 5."
                             }
                         },
                         "required": ["query"]
@@ -270,7 +283,15 @@ class InternalMCP:
             elif name == "search_web":
                 query = arguments.get("query", "")
                 logger.info(f"InternalMCP: Searching web for: '{query}'")
-                res = await bridge.process_search_web({"query": query}, {})
+                
+                search_payload = {
+                    "query": query,
+                    "search_depth": arguments.get("search_depth", "basic"),
+                    "include_answer": arguments.get("include_answer", True),
+                    "max_results": arguments.get("max_results", 5)
+                }
+                
+                res = await bridge.process_search_web(search_payload, {})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 logger.info(f"InternalMCP: Web search completed (result length: {len(str(res))})")

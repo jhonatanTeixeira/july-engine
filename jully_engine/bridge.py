@@ -10,6 +10,8 @@ from typing import Any, Dict, Optional, Union, AsyncGenerator, List
 
 from .events import event_manager
 from .services.helpers import inference_helper, MultiModalHelper
+from .services.scraper_service import scraper_service
+from .model_loader import model_loader
 
 logger = logging.getLogger("JulyEngine.Bridge")
 
@@ -406,6 +408,55 @@ class Bridge:
         gen_time = time.time() - start_time
         event_manager.emit("search_code", generation_time=gen_time)
         return res
+
+    async def process_search_and_scrape(self, search_results: List[Dict[str, Any]], query: str, headers: Dict[str, str], describe_model: Optional[str] = None) -> str:
+        urls = [r.get("url") for r in search_results if r.get("url")][:3] # Limit to top 3 for performance
+        if not urls:
+            return "No URLs found to scrape."
+            
+        scraped_data = await scraper_service.scrape_urls(urls)
+        
+        # Build context for the AI
+        context = ""
+        for data in scraped_data:
+            context += f"\n--- SOURCE: {data['url']} ---\n{data['content']}\n"
+            
+        if not describe_model:
+            logger.info("Bridge: No describe_model provided, returning raw scraped context.")
+            return context
+
+        # Call the AI to summarize via inference_helper
+        prompt = f"""
+        Você é um assistente de pesquisa especializado em síntese de informações.
+        Abaixo estão os conteúdos extraídos de vários sites para a pesquisa: "{query}".
+        
+        Sua tarefa:
+        1. Sumarize todos os dados encontrados de forma coesa e técnica em Português.
+        2. DESCONSIDERE dados de sites que apresentarem mensagens de anti-bot, CAPTCHA, "Access Denied", ou "Please enable JavaScript".
+        3. Se não houver dados úteis, informe que a proteção anti-bot impediu a coleta.
+        
+        DADOS COLETADOS:
+        {context}
+        """
+        
+        brain_payload = {
+            "model": describe_model,
+            "messages": [
+                {"role": "system", "content": "Você é um assistente de pesquisa altamente eficiente."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "stream": False,
+        }
+        
+        # Using inference_helper ensures we use the correct backend (local GPU or API)
+        response = await inference_helper.process("text_chat", brain_payload)
+        normalized = self._normalize_object(response)
+        
+        if isinstance(normalized, dict):
+            return normalized.get("choices", [{}])[0].get("message", {}).get("content", "Erro ao sumarizar dados.")
+        
+        return str(normalized)
 
     async def process_video_description(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         from .model_loader import model_loader
