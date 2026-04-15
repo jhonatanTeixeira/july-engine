@@ -50,22 +50,6 @@ MODEL_HEURISTICS = [
 # ==========================================
 # FUNÇÕES DE DETECÇÃO INTELIGENTE
 # ==========================================
-def guess_params_and_quant(filename: str):
-    params = None
-    quant = None
-    
-    # Busca por B (bilhões) ex: 7b, 7B, 0.5b
-    param_match = re.search(r'([\d\.]+)[Bb]', filename)
-    if param_match:
-        params = float(param_match.group(1))
-
-    # Busca por quantização padrão GGUF ex: q4_k_m, Q8_0, f16
-    quant_match = re.search(r'([QqFf]\d+_[Kk_0-9MmSsL]+|[Qq]\d|fp16|fp32)', filename, re.IGNORECASE)
-    if quant_match:
-        quant = quant_match.group(1).upper()
-
-    return params, quant
-
 def detect_model_metadata(model_id: str, filename: str) -> Dict[str, Any]:
     """Cruza o nome do repositório e do arquivo com a matriz de heurísticas."""
     combined_name = f"{model_id} {filename}".lower()
@@ -75,14 +59,7 @@ def detect_model_metadata(model_id: str, filename: str) -> Dict[str, Any]:
         "model_type": "text",
         "template": "chatml", # Fallback seguro geral
         "force_reasoning": False,
-        "num_params": None,
-        "quantization": None
     }
-    
-    # Params e Quantização (Regex puro)
-    p, q = guess_params_and_quant(filename)
-    detected["num_params"] = p
-    detected["quantization"] = q
     
     # Varre a Matriz de Conhecimento
     for rule in MODEL_HEURISTICS:
@@ -117,8 +94,6 @@ class DownloadRequest(BaseModel):
     mmproj_filename: Optional[str] = None
     template: Optional[str] = None
     context_window: Optional[int] = 2048
-    num_params: Optional[float] = None # In billions
-    quantization: Optional[str] = None
     kv_cache_quantization: Optional[str] = "FP16"
     num_layers: Optional[int] = -1
     force_reasoning: Optional[bool] = None
@@ -131,8 +106,6 @@ class UpdateMetadataRequest(BaseModel):
     mmproj_filename: Optional[str] = None
     template: Optional[str] = None
     context_window: Optional[int] = None
-    num_params: Optional[float] = None
-    quantization: Optional[str] = None
     kv_cache_quantization: Optional[str] = None
     num_layers: Optional[int] = None
     force_reasoning: Optional[bool] = None
@@ -147,19 +120,6 @@ def load_models_db() -> Dict[str, Any]:
     models = models_service.get_all()
     # convert list to dict
     db = {m.get("model_alias"): m for m in models if m.get("model_alias")}
-
-    # Auto-migrate from old json if present
-    old_path = os.path.join(CACHE_DIR, "july_models.json")
-    if os.path.exists(old_path):
-        try:
-            with open(old_path, "r", encoding="utf-8") as f:
-                old_data = json.load(f)
-            for alias, data in old_data.items():
-                if alias not in ['xtts', 'faster-whisper'] and alias not in db:
-                    models_service.set(alias, data)
-                    db[alias] = data
-        except Exception as e:
-            logger.error(f"Failed to migrate old models json: {e}")
 
     db.setdefault('xtts', {        'model_alias': 'xtts',
         'model_type': 'tts',
@@ -187,28 +147,22 @@ def save_models_db(db: Dict[str, Any]):
 
 @router.post("/detect_metadata")
 async def api_detect_metadata(request: DetectRequest):
-    """Detecta heurísticas e metadados reais do GGUF via Range Requests."""
-    from ..services.gguf_scanner import GGUFMetadataScanner
+    """Detecta heurísticas e metadados reais do GGUF via Smart Resolver."""
+    from ..services.resource_calculator import ModelMetadata
     
     # 1. Heurísticas baseadas em nome (Regex)
     metadata = detect_model_metadata(request.model_id, request.filename)
     
-    # 2. Scanner Determinístico (Hugging Face)
-    hf_url = GGUFMetadataScanner.get_huggingface_url(request.model_id, request.filename)
-    real_meta = await GGUFMetadataScanner.scan_remote_metadata(hf_url)
+    # 2. Scanner Determinístico (Hugging Face / Cache)
+    meta_service = ModelMetadata("model")
+    await meta_service.resolve(repo_id=request.model_id, filename=request.filename)
     
-    if real_meta:
+    if meta_service._raw_metadata:
         # Mescla os dados reais (sobrescrevendo heurísticas se necessário)
-        metadata["architecture"] = real_meta.get("architecture")
-        metadata["num_layers"] = real_meta.get("block_count")
-        
-        # Guardamos o objeto completo para o calculador
-        metadata["raw_gguf_meta"] = real_meta
-        
-        # Ajuste de parâmetros se detectado via scanner (opcional, scanner foca em layers/heads)
-        if not metadata["num_params"]:
-             # Poderíamos estimar aqui, mas o scanner foca na arquitetura
-             pass
+        metadata["architecture"] = meta_service.architecture
+        metadata["num_layers"] = meta_service.block_count
+        metadata["context_length"] = meta_service.context_length
+        metadata["file_size_gb"] = meta_service.file_size_gb
 
     return {
         "status": "success",
@@ -230,8 +184,6 @@ async def download_gguf(request: DownloadRequest):
             
             # Helper para preencher dinamicamente o que o usuário deixou em branco
             auto_meta = detect_model_metadata(request.model_id, request.filename)
-            final_params = request.num_params if request.num_params is not None else auto_meta["num_params"]
-            final_quant = request.quantization if request.quantization is not None else auto_meta["quantization"]
             final_template = request.template if request.template else auto_meta["template"]
             final_reasoning = request.force_reasoning if request.force_reasoning is not None else auto_meta["force_reasoning"]
 
@@ -265,8 +217,6 @@ async def download_gguf(request: DownloadRequest):
                 "mmproj_filename": request.mmproj_filename,
                 "template": final_template,
                 "context_window": request.context_window,
-                "num_params": final_params,
-                "quantization": final_quant,
                 "kv_cache_quantization": request.kv_cache_quantization or "FP16",
                 "num_layers": request.num_layers,
                 "force_reasoning": final_reasoning,

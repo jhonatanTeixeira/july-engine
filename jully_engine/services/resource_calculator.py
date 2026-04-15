@@ -7,9 +7,11 @@ logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
 
 
 class ModelMetadata:
-    def __init__(self, model_path, cache_dir="storage/cache"):
+    def __init__(self, model_path, cache_dir="storage/cache", repo_id=None, filename=None):
         self.model_path = model_path
         self.cache_dir = cache_dir
+        self.repo_id = repo_id
+        self.filename = filename
         self.file_size_gb = os.path.getsize(model_path) / (1024**3)
         
         # Criar pasta de cache se não existir
@@ -22,6 +24,86 @@ class ModelMetadata:
         
         self._raw_metadata = {}
         self._load_metadata()
+
+    async def _resolve(self):
+        """
+        Smart Resolver logic for finding metadata without downloading the full file.
+        """
+        repo_id = self.repo_id
+        filename = self.filename
+
+        # 2. Check Hugging Face Cache
+        if repo_id and filename:
+            url = f"https://huggingface.co/{repo_id}/resolve/main/{filename}"
+            logger.info(f"Metadata Resolver: {filename} not in cache. Performing remote scan (1MB).")
+            self._raw_metadata = await self._scan_remote(url)
+            
+            # Fetch remote size if we don't have it
+            if self._raw_metadata and not self.file_size_gb:
+                self.file_size_gb = await self._get_remote_size(url)
+
+    async def _scan_remote(self, url: str) -> dict:
+        """
+        Baixa apenas o início do arquivo GGUF (Partial Content) para extrair metadados.
+        """
+        metadata = {}
+        # 1MB costuma ser suficiente, mas 2MB é mais seguro para modelos MoE complexos
+        range_header = {"Range": "bytes=0-2097152"} 
+        
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+                logger.info(f"🌐 Solicitando Range parcial de {url}...")
+                response = await client.get(url, headers=range_header)
+                
+                if response.status_code not in [200, 206]:
+                    logger.error(f"❌ Falha ao acessar Hugging Face: Status {response.status_code}")
+                    return {}
+
+                # Criamos um stream em memória a partir dos bytes baixados
+                file_stream = io.BytesIO(response.content)
+                
+                # O GGUFReader consegue ler de um stream, mas como não temos o arquivo todo,
+                # ele pode lançar um erro ao tentar ler tensores no fim do arquivo.
+                # Capturamos apenas os campos (fields).
+                reader = GGUFReader(None, mode="r") # Iniciamos sem arquivo
+                
+                # Gambiarra técnica necessária: alimentamos o reader com o nosso stream parcial
+                reader.file_handler = file_stream
+                reader._prepare_read() # Lê o cabeçalho e os campos
+                
+                for field in reader.fields.values():
+                    parts = field.parts[field.data[0]]
+                    
+                    # Reaproveitamos a lógica de decodificação que já tens
+                    if hasattr(parts, "__len__") and not isinstance(parts, (str, bytes)):
+                        val = parts[0] if len(parts) > 0 else 0
+                    elif isinstance(parts, bytes):
+                        try: val = parts.decode('utf-8').strip('\x00')
+                        except: val = list(parts)
+                    else:
+                        val = parts
+                    
+                    # Conversão NumPy/JSON
+                    if hasattr(val, "item"): val = val.item()
+                    
+                    metadata[field.name] = val
+                
+                logger.info(f"✅ Metadados remotos extraídos com sucesso ({len(metadata)} chaves).")
+                return metadata
+
+        except Exception as e:
+            logger.error(f"❌ Erro no scan remoto: {str(e)}")
+            return {}
+    
+    async def _get_remote_size(self, url: str) -> float:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True) as client:
+                res = await client.head(url)
+                size = int(res.headers.get("Content-Length", 0))
+                return size / (1024**3)
+        except Exception as e:
+            logger.warning(f"Could not fetch remote size for {url}: {e}")
+            return 0
 
     def _load_metadata(self):
         """Tenta carregar do cache; se falhar, lê o GGUF e grava o cache."""
@@ -51,6 +133,11 @@ class ModelMetadata:
     def _read_and_cache_gguf(self):
         """Lê o GGUF binário e salva o resultado em JSON."""
         from gguf import GGUFReader
+
+        if not os.path.exists(self.model_path) and self.repo_id and self.filename:
+            self._resolve()
+            
+            return
 
         try:
             reader = GGUFReader(self.model_path)
@@ -223,9 +310,11 @@ def estimate_vram_ram(
     model_path: str,
     context_window: str | int = "2k",
     kv_cache_quantization: str = "FP16",
-    gpu_layers: int = None
+    gpu_layers: int = None,
+    repo_id: str = None,
+    filename: str = None
 ):
-    metadata = ModelMetadata(model_path)
+    metadata = ModelMetadata(model_path, repo_id=repo_id, filename=filename)
 
     ctx_int = context_window
 

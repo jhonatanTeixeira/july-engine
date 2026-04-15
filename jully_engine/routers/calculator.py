@@ -1,43 +1,35 @@
 from fastapi import APIRouter, HTTPException
 import logging
-import re
 from pydantic import BaseModel
-import os
 from typing import Optional, Dict, Any
+from ..services.resource_calculator import estimate_vram_ram
 
 logger = logging.getLogger("JulyEngine.Routers.Calculator")
-
 router = APIRouter(prefix="/system", tags=["System"])
 
 class ResourceCheckRequest(BaseModel):
-    model_name: Optional[str] = "model"
+    model_path: Optional[str] = "model"
     model_id: Optional[str] = None # repo_id
     filename: Optional[str] = None
-    num_params: float # In billions (e.g., 3 for 3B, 0.5 for 500M)
-    quantization: str
-    context_window: int
-    num_layers: int = -1
+    context_window: str | int = "2k"
+    gpu_layers: Optional[int] = -1
     kv_cache_quantization: Optional[str] = "FP16"
-    raw_gguf_meta: Optional[Dict[str, Any]] = None
-
 
 @router.post("/check-resources")
-async def check_resources(req: ResourceCheckRequest):
-    from ..services.resource_calculator import estimate_vram_ram
-    from ..services.gguf_scanner import GGUFMetadataScanner
-
-    resolved_meta = req.raw_gguf_meta
-    
-    # Se não mandou o metadado mastigado, tenta resolver agora (Puxa do cache ou remote)
-    if not resolved_meta and req.model_id and req.filename:
-        resolved_meta = await GGUFMetadataScanner.resolve_metadata(req.model_id, req.filename)
-
-    return estimate_vram_ram(
-        req.model_name or "model", 
-        req.num_params, 
-        req.quantization, 
-        req.context_window, 
-        layers=req.num_layers,
-        metadata=resolved_meta,
-        kv_cache_quantization=req.kv_cache_quantization
-    )
+def check_resources(req: ResourceCheckRequest):
+    """
+    Unified entry point for VRAM/RAM estimation. 
+    Supports local paths, HF cache, or remote scan.
+    """
+    try:
+        return estimate_vram_ram(
+            model_path=req.model_path,
+            context_window=req.context_window,
+            kv_cache_quantization=req.kv_cache_quantization,
+            gpu_layers=req.gpu_layers if req.gpu_layers != -1 else None,
+            repo_id=req.model_id,
+            filename=req.filename
+        )
+    except Exception as e:
+        logger.error(f"Error in check_resources: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
