@@ -16,6 +16,10 @@ class Replicate:
         self.backend = backend
         self.voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
 
+    def is_loaded(self):
+        """Replicate é baseado em API, sempre 'carregado'."""
+        return True
+
     def _extract_api_key(self, headers):
         if not headers: return None
         return headers.get('x-api-key')

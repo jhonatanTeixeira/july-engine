@@ -157,6 +157,9 @@ class FastVLM:
             return Image.open(io.BytesIO(img_bytes)).convert("RGB")
         return Image.open(io.BytesIO(image_data)).convert("RGB")
 
+    def is_loaded(self) -> bool:
+        return self.vlm is not None
+
     def unload(self):
         """Limpa a memória RAM e a VRAM ativamente."""
         if self.vlm:

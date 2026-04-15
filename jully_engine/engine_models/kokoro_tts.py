@@ -46,6 +46,9 @@ class KokoroTTS:
                 logger.error(f"KokoroTTS: Failed to load: {e}")
                 raise e
 
+    def is_loaded(self):
+        return self.pipeline is not None
+
     def clear(self):
         if self.pipeline is not None:
             logger.info("KokoroTTS: Unloading model")

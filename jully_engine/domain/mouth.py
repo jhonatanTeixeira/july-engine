@@ -135,6 +135,13 @@ class Mouth:
 
         return None
 
+    def is_loaded(self):
+        return hasattr(self._strategy, "is_loaded") and self._strategy.is_loaded()
+
+    def load(self):
+        if hasattr(self._strategy, "load"):
+            self._strategy.load()
+
     def unload(self):
         """Libera os recursos da estratégia (XTTS2, Piper, etc)."""
         if hasattr(self._strategy, "unload"):

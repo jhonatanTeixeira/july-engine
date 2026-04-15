@@ -1,119 +1,239 @@
 import os
-import re
+import json
+import hashlib
 import logging
 
 logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
 
-# Base size multipliers for quantizations (roughly bits per weight)
-QUANTIZATION_MULTIPLIERS = {
-    "Q2_K": 2.5,
-    "Q3_K_M": 3.3,
-    "Q3_K_L": 3.8,
-    "Q4_0": 4.5,
-    "Q4_K_M": 4.8,
-    "Q4_K_S": 4.5,
-    "Q5_K_M": 5.5,
-    "Q5_K_S": 5.2,
-    "Q6_K": 6.5,
-    "Q8_0": 8.5,
-    "F16": 16.0,
-}
+
+class ModelMetadata:
+    def __init__(self, model_path, cache_dir="storage/cache"):
+        self.model_path = model_path
+        self.cache_dir = cache_dir
+        self.file_size_gb = os.path.getsize(model_path) / (1024**3)
+        
+        # Criar pasta de cache se não existir
+        os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Gerar um ID único baseado no caminho do arquivo para o nome do cache
+        # Usamos MD5 para evitar problemas com caracteres especiais no nome do ficheiro
+        self.cache_id = hashlib.md5(model_path.encode()).hexdigest()
+        self.cache_file = os.path.join(self.cache_dir, f"{self.cache_id}.json")
+        
+        self._raw_metadata = {}
+        self._load_metadata()
+
+    def _load_metadata(self):
+        """Tenta carregar do cache; se falhar, lê o GGUF e grava o cache."""
+        if os.path.exists(self.cache_file):
+            logger.debug(f"--- Carregando metadados do cache: {self.cache_file} ---")
+
+            try:
+                with open(self.cache_file, 'r', encoding='utf-8') as f:
+                    self._raw_metadata = json.load(f)
+                
+                # Sanity check: if it's empty but parsed as valid JSON (like {}), 
+                # we might still want to regenerate if it's missing core keys.
+                if not self._raw_metadata:
+                    logger.warning(f"⚠️ Cache {self.cache_file} está vazio. Regenerando...")
+                    self._read_and_cache_gguf()
+            except (json.JSONDecodeError, IOError, ValueError) as e:
+                logger.warning(f"⚠️ Erro ao carregar cache {self.cache_file}: {str(e)}. Eliminando cache corrompido.")
+                try:
+                    os.remove(self.cache_file)
+                except:
+                    pass
+                self._read_and_cache_gguf()
+        else:
+            logger.debug(f"--- Cache não encontrado. Lendo arquivo GGUF (Processo pesado)... ---")
+            self._read_and_cache_gguf()
+
+    def _read_and_cache_gguf(self):
+        """Lê o GGUF binário e salva o resultado em JSON."""
+        from gguf import GGUFReader
+
+        try:
+            reader = GGUFReader(self.model_path)
+        except Exception as e:
+            logger.error(f"❌ Erro ao abrir arquivo GGUF: {str(e)}")
+            return
+
+        for field in reader.fields.values():
+            parts = field.parts[field.data[0]]
+            
+            # Lógica de decodificação
+            if hasattr(parts, "__len__") and not isinstance(parts, (str, bytes)):
+                val = parts[0] if len(parts) > 0 else 0
+            elif isinstance(parts, bytes):
+                try:
+                    val = parts.decode('utf-8').strip('\x00')
+                except:
+                    val = list(parts) # Se falhar, guarda como lista de números
+            else:
+                val = parts
+            
+            # --- Conversão para tipos JSON-serializáveis (uint32, float32, numpy, etc) ---
+            if hasattr(val, "item"): 
+                val = val.item() # Tipos NumPy
+            elif isinstance(val, (int, float, str, bool, list, dict)) or val is None:
+                pass # Tipos já compatíveis
+            else:
+                try:
+                    # Tenta converter para int ou float se possível
+                    if isinstance(val, (int, float)): 
+                        val = val
+                    else:
+                        val = int(val) 
+                except:
+                    val = str(val) # Fallback seguro
+            
+            self._raw_metadata[field.name] = val
+        
+        # Gravar no cache para a próxima vez de forma atómica
+        temp_file = self.cache_file + ".tmp"
+        try:
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(self._raw_metadata, f, indent=4)
+            
+            # No Windows, os.replace substitui o ficheiro se ele já existir (desde que não esteja aberto)
+            os.replace(temp_file, self.cache_file)
+            logger.debug(f"✅ Metadados guardados em cache para futuras leituras.")
+        except Exception as e:
+            logger.error(f"❌ Erro ao gravar cache: {str(e)}")
+            if os.path.exists(temp_file):
+                try: os.remove(temp_file)
+                except: pass
+
+    def _get_fuzzy(self, suffix, default=0):
+        """Busca interna por sufixo (Fuzzy Search)."""
+        for key, value in self._raw_metadata.items():
+            if key.endswith(f".{suffix}") or key == suffix:
+                return value
+        return default
+
+    # --- Propriedades (Getters) ---
+    @property
+    def architecture(self): 
+        return self._raw_metadata.get("general.architecture", "unknown")
+
+    @property
+    def block_count(self): 
+        return int(self._get_fuzzy("block_count", 0))
+
+    @property
+    def embedding_length(self): 
+        return int(self._get_fuzzy("embedding_length", 0))
+
+    @property
+    def context_length(self): 
+        return int(self._get_fuzzy("context_length", 32768))
+
+    @property
+    def head_count(self): 
+        return int(self._get_fuzzy("attention.head_count", 0))
+
+    @property
+    def head_count_kv(self):
+        return int(self._get_fuzzy("attention.head_count_kv", self.head_count))
+    
+    @property
+    def expert_count(self):
+        """Retorna o número de experts (MoE). Retorna 0 se for um modelo denso."""
+        return int(self._get_fuzzy("expert_count", 0))
+
+    @property
+    def expert_used_count(self):
+        """Retorna quantos experts são usados por token."""
+        return int(self._get_fuzzy("expert_used_count", 0))
+
+    @property
+    def is_moe(self):
+        """Verifica se o modelo usa arquitetura Mixture of Experts."""
+        return self.expert_count > 1
+
+    def estimate_vram_gb(self, context_window=None, kv_cache_quantization='FP16', gpu_layers=None):
+        """
+        Calcula a VRAM necessária com base no número de camadas na GPU e quantização de kv cache.
+        
+        Args:
+            gpu_layers (int): Quantidade de camadas a colocar na GPU. 
+                              Se None ou > total, usa todas as camadas.
+        """
+        total_layers = self.block_count
+
+        if gpu_layers is None or gpu_layers > total_layers:
+            gpu_layers = total_layers
+            
+        ctx = parse_context_window(context_window) if isinstance(context_window, str) else (context_window or self.context_length)
+        
+        # 1. Proporção do Peso do Modelo na GPU
+        # Nota: Reservamos cerca de 10% do peso para Embeddings/Header fixos
+        fixed_weights_ratio = 0.10
+        layer_weights_ratio = 1.0 - fixed_weights_ratio
+        
+        model_vram = self.file_size_gb * (fixed_weights_ratio + (layer_weights_ratio * (gpu_layers / total_layers)))
+
+        # 2. KV Cache na GPU (Apenas para as camadas que estão na GPU)
+        gqa_ratio = self.head_count_kv / self.head_count if self.head_count > 0 else 1.0
+        quant_map = {'FP16': 2.0, 'Q8_0': 1.0, 'Q4_0': 0.5}
+        bytes_per_element = quant_map.get(kv_cache_quantization.upper(), 2.0)
+        
+        # O KV Cache só ocupa VRAM para as layers que o motor processar na GPU
+        kv_cache_bytes = 2 * gpu_layers * (self.embedding_length * gqa_ratio) * ctx * bytes_per_element * 2
+        kv_cache_gb = kv_cache_bytes / (1024**3)
+
+        return {
+            "model_vram_gb": model_vram,
+            "model_vram_mb": model_vram * 1024,
+            "kv_cache_vram_gb": kv_cache_gb,
+            "kv_cache_vram_mb": kv_cache_gb * 1024,
+            "total_vram_gb": model_vram + kv_cache_gb,
+            "total_vram_mb": model_vram + kv_cache_gb * 1024,
+            "offloaded_layers": gpu_layers,
+            "total_layers": total_layers,
+            "percent_on_gpu": (gpu_layers / total_layers) * 100
+        }
+
+
+def parse_context_window(ctx_str: str) -> int:
+    """Converte strings como '4k' para 4096 e '1m' para 1.048.576."""
+    if isinstance(ctx_str, int):
+        return ctx_str
+        
+    ctx_str = ctx_str.lower().strip()
+    # Usamos 1024 para respeitar a arquitetura de memória (Base 2)
+    multipliers = {
+        'k': 1024, 
+        'm': 1024 * 1024
+    }
+    
+    if ctx_str[-1] in multipliers:
+        unit = ctx_str[-1]
+        number_part = ctx_str[:-1]
+        try:
+            # Aqui 4 * 1024 = 4096
+            return int(float(number_part) * multipliers[unit])
+        except ValueError:
+            return 2048 
+            
+    return int(ctx_str)
+
 
 def estimate_vram_ram(
-    combined_name: str, 
-    params_b: float, 
-    quant: str, 
-    ctx: int, 
-    layers: int = -1, 
-    total_layers: int = -1,
-    metadata: dict = None,
-    kv_cache_quantization: str = "FP16"
+    model_path: str,
+    context_window: str | int = "2k",
+    kv_cache_quantization: str = "FP16",
+    gpu_layers: int = None
 ):
-    """
-    Estimates VRAM and RAM requirements for an LLM model running via GGUF.
-    Logic shared between the router (API) and engine models (orchestrator).
-    """
-    quant_upper = str(quant).upper()
-    bits_per_weight = None
-    
-    for key, mult in QUANTIZATION_MULTIPLIERS.items():
-        if key in quant_upper:
-            bits_per_weight = mult
-            break
-            
-    if bits_per_weight is None:
-        bits_per_weight = 4.5 # Default fallback (assume Q4)
+    metadata = ModelMetadata(model_path)
 
-    # 1. PESO ESTÁTICO DO MODELO (Todos os parâmetros contam, mesmo em MoE)
-    # Params(B) * bits_per_weight / 8 = Size in GB
-    model_size_gb = (params_b * bits_per_weight) / 8.0
-    
-    # 2. CÁLCULO DO KV CACHE (Determinístico via GQA se houver metadata)
-    # BytesPerElement: FP16=2, Q8_0=1, Q4_0=0.5
-    bytes_per_element = 2.0
-    kv_quant_upper = str(kv_cache_quantization).upper()
-    if "Q8_0" in kv_quant_upper:
-        bytes_per_element = 1.0
-    elif "Q4_0" in kv_quant_upper:
-        bytes_per_element = 0.5
-        
-    if metadata and all(metadata.get(k, 0) > 0 for k in ["block_count", "head_count_kv", "embedding_length", "head_count"]):
-        # FÓRMULA GQA: 2 * Layers * Heads_kv * (Embedding / Heads_total) * BytesPerElement
-        layers_count = metadata["block_count"]
-        heads_kv = metadata["head_count_kv"]
-        embedding = metadata["embedding_length"]
-        heads_total = metadata["head_count"]
-        
-        # Memory per token in bytes
-        memory_per_token = 2 * layers_count * heads_kv * (embedding / heads_total) * bytes_per_element
-        ctx_memory_gb = (memory_per_token * ctx) / (1024**3)
-        
-        # Update total_layers if we have real data
-        if total_layers == -1:
-            total_layers = layers_count
-            
-    else:
-        # FALLBACK: Estimativa base do KV Cache baseada em parâmetros ativos (mais imprecisa)
-        combined_name_lower = combined_name.lower()
-        active_params = params_b 
-        
-        if "mixtral" in combined_name_lower or "moe" in combined_name_lower:
-            active_params = params_b / 3.5
-            
-        match_active = re.search(r'-a(\d+(?:\.\d+)?)b', combined_name_lower)
-        if match_active:
-            active_params = float(match_active.group(1))
+    ctx_int = context_window
 
-        # Estimativa legada baseada em params/7.0
-        base_ctx_memory_gb = (ctx / 1024) * 0.1 * (active_params / 7.0)
-        
-        # Ajuste de bits (FP16 assume 2 bytes por elemento)
-        ctx_memory_gb = base_ctx_memory_gb * (bytes_per_element / 2.0)
-        
-    total_required_gb = model_size_gb + ctx_memory_gb
+    if isinstance(context_window, str):
+        ctx_int = parse_context_window(context_window)
     
-    # 3. DIVISÃO VRAM vs RAM (Baseado em Layers reais)
-    if total_layers == -1: total_layers = 32 # Fallback genérico se tudo falhar
-    
-    if layers == -1:
-        vram_req = total_required_gb
-        ram_req = 0.5 # Minimal base RAM overhead
-    elif layers == 0:
-        vram_req = 0.0
-        ram_req = total_required_gb + 0.5
-    else:
-        # Usando a quantidade REAL de layers do modelo para achar o ratio matemático
-        safe_total_layers = max(total_layers, 1) 
-        ratio = min(layers / float(safe_total_layers), 1.0)
-        
-        vram_req = total_required_gb * ratio
-        ram_req = (total_required_gb * (1 - ratio)) + 0.5
-
-    return {
-        "model_size_gb": round(model_size_gb, 2),
-        "context_memory_gb": round(ctx_memory_gb, 2),
-        "total_required_gb": round(total_required_gb, 2),
-        "estimated_vram_gb": round(vram_req, 2),
-        "estimated_ram_gb": round(ram_req, 2),
-        "total_layers": total_layers
-    }
+    return metadata.estimate_vram_gb(
+        context_window=ctx_int, 
+        kv_cache_quantization=kv_cache_quantization,
+        gpu_layers=gpu_layers
+    )

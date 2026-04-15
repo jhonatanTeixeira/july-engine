@@ -23,6 +23,10 @@ class Piper:
         """Piper roda na CPU (Subprocesso)."""
         return 0
 
+    def is_loaded(self) -> bool:
+        """Piper é um motor de subprocesso, está sempre 'carregado'."""
+        return True
+
     def _ensure_voice_files(self, voice_id: str, hf_path: Optional[str] = None) -> str:
         """
         Ensures .onnx and .onnx.json exist. Downloads from HF if missing.

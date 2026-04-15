@@ -47,6 +47,9 @@ class FasterWhisper:
                 logger.error(f"FasterWhisper: Failed to load: {e}")
                 raise e
             
+    def is_loaded(self):
+        return self.model is not None
+
     def unload(self):
         del self.model
         self.model = None

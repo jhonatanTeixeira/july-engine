@@ -197,6 +197,9 @@ class StableDiffusion:
 
         return result.images[0]
     
+    def is_loaded(self):
+        return self.pipe is not None
+
     def unload(self):
         """Limpa 100% da memória de vídeo quando a foto acabar."""
         if self.pipe:

@@ -65,7 +65,6 @@ class OrchestratorContainer:
     def get_orchestrator(self, task_type: str, payload: Dict[str, str]):
         backend, _ = self.resolve_backend(task_type, payload)
         
-        
         if backend not in self.orchestrators:
             raise HTTPException(status_code=400, detail=f"Unknown backend {backend}")
             

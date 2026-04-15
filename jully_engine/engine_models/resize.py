@@ -26,6 +26,9 @@ class ResizerBase:
         self._model = None
         self._device = None # Lazy evaluation
 
+    def is_loaded(self):
+        return self._model is not None
+
     @property
     def device(self):
         """Avaliação preguiçosa (Lazy) da GPU para não importar o Torch à toa."""

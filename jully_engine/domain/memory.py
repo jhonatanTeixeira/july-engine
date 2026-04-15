@@ -308,3 +308,20 @@ class Memory:
             return bridge.process_openai_chat(structured_payload, headers)
 
         return final_results
+
+    def is_loaded(self):
+        return hasattr(self._strategy, "is_loaded") and self._strategy.is_loaded()
+
+    def load(self):
+        if hasattr(self._strategy, "load"):
+            self._strategy.load()
+
+    def unload(self):
+        """Libera os recursos da estratégia (VLM, GGUF, etc)."""
+        if hasattr(self._strategy, "unload"):
+            self._strategy.unload(self.model_tag)
+            logger.info(f"Memory: Strategy {self.model_tag} unloaded.")
+
+        elif hasattr(self._strategy, "clear"):
+            self._strategy.clear()
+            logger.info(f"Memory: Strategy {self.model_tag} cleared.")

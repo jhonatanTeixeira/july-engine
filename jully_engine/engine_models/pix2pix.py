@@ -19,6 +19,9 @@ class Pix2Pix:
         self.pipeline = None
         self.model_id = "timbrooks/instruct-pix2pix"
 
+    def is_loaded(self):
+        return self.pipeline is not None
+
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o Pix2Pix (SD1.5 based)."""
         if self.device == "cpu":

@@ -49,6 +49,9 @@ class LCMVideoPipeline:
         self.pipe = None
         self._loaded = False
 
+    def is_loaded(self):
+        return self._loaded and self.pipe is not None
+
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o motor de vídeo (AnimateDiff + LCM)."""
         if self.device == "cpu":

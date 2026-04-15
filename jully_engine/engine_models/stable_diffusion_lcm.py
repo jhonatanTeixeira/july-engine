@@ -122,6 +122,9 @@ class LCMFaceIDPipeline:
         self.ip_model = None
         self._loaded  = False
 
+    def is_loaded(self) -> bool:
+        return self._loaded and self.pipe is not None
+
     def _resolve_image_encoder(self) -> str:
         local = Path(self.DEFAULT_IMAGE_ENCODER)
         if local.is_dir() and (local / "config.json").exists():

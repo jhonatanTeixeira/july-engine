@@ -40,6 +40,13 @@ class Brain:
         else:
             raise ValueError(f"Brain: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
+    def is_loaded(self):
+        return hasattr(self._strategy, "is_loaded") and self._strategy.is_loaded()
+
+    def load(self):
+        if hasattr(self._strategy, "load"):
+            self._strategy.load()
+
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         if hasattr(self._strategy, "get_required_vram"):

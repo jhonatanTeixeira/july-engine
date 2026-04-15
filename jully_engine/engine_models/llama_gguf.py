@@ -12,85 +12,6 @@ logger = logging.getLogger("JulyEngine.Models.GGUF")
 
 import re
 
-def guess_num_layers(combined_name: str, params: float) -> int:
-    """Adivinha o número de layers baseado no tamanho e arquitetura do modelo."""
-    if not params or params == -1:
-        return -1 # -1 significa "auto" para o llama.cpp
-        
-    combined_name = combined_name.lower()
-    
-    # ---------------------------------------------------------
-    # DETECÇÃO DE MoE (Assinatura explícita ou notação oculta -aXb)
-    # ---------------------------------------------------------
-    is_moe = "mixtral" in combined_name or "moe" in combined_name or bool(re.search(r'-a(\d+(?:\.\d+)?)b', combined_name))
-    
-    if is_moe:
-        # Mixtral 8x22B (~141B)
-        if "mixtral" in combined_name and params >= 100:
-            return 56 
-        
-        # Mixtral 8x7B (~47B)
-        if "mixtral" in combined_name:
-            return 32
-
-        # Família Qwen MoE
-        if "qwen" in combined_name:
-            if params < 20: 
-                return 24 # Ex: Qwen1.5-MoE-A2.7B (14.3B Total)
-            if 25 <= params <= 35:
-                return 32 # Ex: Qwen3-30B-A3B (Arquitetura otimizada)
-            if 50 <= params <= 65:
-                return 64 # Ex: Qwen2-57B-A14B
-            return 32 # Fallback para MoEs desconhecidos
-
-        # Família DeepSeek MoE
-        if "deepseek" in combined_name:
-            if params < 20:
-                return 27 # DeepSeek-Coder-V2-Lite
-            return 60     # DeepSeek-V2/V3 (Modelos gigantes)
-
-        return 32 # Fallback genérico para MoE (arquitetura padrão tipo Mixtral)
-
-    # ---------------------------------------------------------
-    # MODELOS DENSOS (Sem MoE)
-    # ---------------------------------------------------------
-    
-    # Família 7B - 9B
-    if 7 <= params <= 9:
-        if "gemma" in combined_name and params >= 9:
-            return 42 # Gemma 2 9B
-        return 32
-        
-    # Família 0.5B - 3B
-    if params < 3:
-        if "qwen" in combined_name:
-            if params < 1: return 24 # Qwen 0.5B
-            if 1 <= params <= 2: return 28 # Qwen 1.5B
-            if 2 <= params <= 3: return 32 # Qwen 2.5/3B
-        if "gemma" in combined_name:
-            return 18 # Gemma 2B
-        if "phi" in combined_name:
-            return 32 # Phi-2 / Phi-3 Mini
-        return 24
-        
-    # Família 13B - 14B
-    if 12 <= params <= 15:
-        if "qwen" in combined_name:
-            return 48
-        return 40
-        
-    # Família 32B - 35B
-    if 30 <= params <= 35:
-        # Se chegou aqui, não é MoE (is_moe foi False)
-        # Modelos densos nessa faixa (ex: Qwen2.5-32B) são muito profundos
-        return 64 
-        
-    # Família 70B+
-    if params >= 70:
-        return 80
-
-    return -1
-
 
 def detect_model_type(repo_id_or_filename: str) -> str:
     name = repo_id_or_filename.lower()
@@ -102,43 +23,38 @@ def detect_model_type(repo_id_or_filename: str) -> str:
         return "llava-v1.6"
     return "llava"
 
+
 class GGUF:
     def __init__(self, backend, model):
+        from huggingface_hub import hf_hub_download
+
         self.backend = backend
         self.meta = model
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.model = None
+        self.model_path = hf_hub_download(repo_id=model["model_id"], filename=model["filename"])
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        if self.backend == "cpu": return 0
+        if self.backend == "cpu": 
+            return 0
             
         meta = self.meta
-        params_b = meta.get("num_params", 0)
-        quant = meta.get("quantization", "Q4_K_M")
-        combined_name = meta.get("model_id", "") + meta.get("filename", "")
         
         headers = payload.get("headers", {})
         effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
-        
-        # 1. Resolve deterministic metadata (Local or Remote)
-        from ..services.gguf_scanner import GGUFMetadataScanner
-        resolved_meta = await GGUFMetadataScanner.resolve_metadata(meta.get("model_id"), meta.get("filename"))
         
         # 2. Get layers config
         layers_to_offload = payload.get("num_layers") or meta.get("num_layers") or -1
         
         # 3. Calculate with precision
         estimates = estimate_vram_ram(
-            combined_name,
-            params_b, 
-            quant, 
-            effective_n_ctx, 
-            layers=layers_to_offload,
-            metadata=resolved_meta,
-            kv_cache_quantization=meta.get("kv_cache_quantization", "FP16")
+            self.model_path,
+            context_window=effective_n_ctx,
+            kv_cache_quantization=meta.get("kv_cache_quantization", "FP16"),
+            gpu_layers=layers_to_offload
         )
         
-        return int(estimates["estimated_vram_gb"] * 1024)
+        return estimates["total_vram_mb"]
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         meta = self.meta
@@ -155,8 +71,7 @@ class GGUF:
                 logger.debug(f"GGUF: Modelo {self.meta['model_alias']} já carregado. Reaproveitando!")
                 return
         
-        from huggingface_hub import hf_hub_download
-        model_path = hf_hub_download(repo_id=meta["model_id"], filename=meta["filename"])
+        model_path = self.model_path
 
         try:
             from llama_cpp import Llama

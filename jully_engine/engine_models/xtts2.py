@@ -72,3 +72,18 @@ class XTTS2:
                 os.remove(output_path)
             logger.error(f"XTTS2: Execution failed: {e}")
             raise e
+    def is_loaded(self):
+        return self.model is not None
+
+    def unload(self):
+        """Libera os recursos da estratégia (XTTS2, Piper, etc)."""
+        if self.model:
+            del self.model
+            self.model = None
+            
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info("XTTS2: Model unloaded.")

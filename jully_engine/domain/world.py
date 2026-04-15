@@ -63,3 +63,13 @@ class World:
                 headers["authorization"] = f"Bearer {config['api_key']}"
                 
         return await self.github.search(query)
+
+    def is_loaded(self):
+        """World engines are API-based and don't occupy VRAM/RAM residency here."""
+        return True
+
+    def load(self):
+        pass
+
+    def unload(self):
+        pass
