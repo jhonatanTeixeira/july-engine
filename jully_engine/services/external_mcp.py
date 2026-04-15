@@ -58,7 +58,13 @@ class ExternalMCPManager:
                 
             elif mcp_type == "sse":
                 url = conf.get("url")
-                read, write = await self.exit_stack.enter_async_context(sse_client(url))
+                # For SSE, we treat the 'env' dict as HTTP headers
+                headers = conf.get("env", {})
+                if not isinstance(headers, dict):
+                    headers = {}
+                
+                logger.info(f"Connecting to SSE MCP: {url} with {len(headers)} headers")
+                read, write = await self.exit_stack.enter_async_context(sse_client(url, headers=headers))
                 session = await self.exit_stack.enter_async_context(ClientSession(read, write))
             else:
                 return

@@ -18,12 +18,12 @@ class Tool:
 
 class Chunk:
     def __init__(self, raw_chunk: dict):
-        self.raw_chunk = raw_chunk
+        self.raw_chunk = dict(raw_chunk)
         
         delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
         
         self.content = delta.get("content", "") or ""
-        self.reasoning_content = delta.get("reasoning_content", "")
+        self.reasoning_content = delta.get("reasoning_content", "") or ""
         self.is_reasoning = True if self.reasoning_content else False
         
     @classmethod
@@ -33,7 +33,7 @@ class Chunk:
     @property
     def delta(self):
         """Reconstrói o objeto delta no formato OpenAI-Compatible"""
-        return dict(self.raw_chunk)
+        return self.raw_chunk
 
 
 class XMLStreamParser:
@@ -44,14 +44,13 @@ class XMLStreamParser:
     def __init__(self, stream: AsyncGenerator):
         self.stream = stream
         self.buffer = ""
-        self.full_tag = re.compile(r"<([a-zA-Z_]+)>(.*?)</\1>", re.DOTALL)
-        self.open_tag = re.compile(r"<([a-zA-Z_]+)>")
-        self.suspect_tag = re.compile(r"<[a-zA-Z_]*$")
+        self.open_tag = re.compile(r"<([a-zA-Z0-9_-]+)>")
 
     async def __aiter__(self):
         buffer: str = ''
         tag_opened: str = None
         arguments: str = None
+        is_buffering = False
         
         async for chunk in self.stream:
             delta = Chunk(chunk)
@@ -60,37 +59,42 @@ class XMLStreamParser:
                 yield delta
                 continue
             
-            buffer += delta.content
+            if '<' in delta.content and not is_buffering:
+                is_buffering = True
+
+            if is_buffering:
+                buffer += delta.content
+            else:
+                yield delta
             
-            if '<' in buffer and re.match(r'(.*?)?<$|<\w+$', buffer) and not tag_opened:
-                continue
-            
-            if (match := re.search(r'<(\w+)>', buffer)) and not tag_opened:
+            if is_buffering and not tag_opened and (match := self.open_tag.search(buffer)):
                 tag_opened = match.group(1)
-                before, after = buffer.split(f'<{tag_opened}>')
-                
-                yield Chunk.from_str(before)
-                
-                buffer = after
-            
-            if not tag_opened:
+                before, after = buffer.split(f'<{tag_opened}>', 1)
+
+                if before:
+                    yield Chunk.from_str(before)
+
+                # buffer = after
+
+            if is_buffering and not tag_opened and re.search(r'<\s+', buffer):
                 yield Chunk.from_str(buffer)
+                is_buffering = False
                 buffer = ''
-            
-            if tag_opened and (match := re.search(fr'<\/{tag_opened}>', buffer)):
-                split = buffer.split(match.group(0), maxsplit=1)
-                arguments = split[0]
+
+            if is_buffering and tag_opened and re.search(rf'<\/{tag_opened}>', buffer):
+                is_buffering = False
+
+                before, after = buffer.split(f'</{tag_opened}>', 1)
+
+                if after:
+                    yield Chunk.from_str(after)
                 
-                if len(split) > 1:
-                    buffer = split[1]
-                else:
-                    buffer = ''
-                
-                yield Tool(tag_opened, arguments)
-            
+                match = re.search(rf"<{tag_opened}>([\s\S\n]*?)<\/{tag_opened}>", buffer, re.MULTILINE)
+                yield Tool(name=tag_opened, arguments=match.group(1))
+
                 tag_opened = None
-                arguments = None
-            
+                buffer = ''
+                        
             await asyncio.sleep(0)
         
         if buffer:

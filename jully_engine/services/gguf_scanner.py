@@ -2,6 +2,7 @@ import httpx
 import logging
 import io
 import os
+import json
 import tempfile
 from typing import Dict, Any, Optional
 from gguf import GGUFReader
@@ -13,12 +14,37 @@ class GGUFMetadataScanner:
     Scanner to extract metadata from GGUF files remotely using HTTP Range Requests.
     Reads only the first 1MB of the file to extract the header.
     """
+    CACHE_FILE = os.path.join("storage", "cache", "gguf_metadata.json")
+
+    @classmethod
+    def _load_cache(cls) -> Dict[str, Any]:
+        if os.path.exists(cls.CACHE_FILE):
+            try:
+                with open(cls.CACHE_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                logger.error(f"Error loading GGUF cache: {e}")
+        return {}
+
+    @classmethod
+    def _save_cache(cls, cache: Dict[str, Any]):
+        os.makedirs(os.path.dirname(cls.CACHE_FILE), exist_ok=True)
+        try:
+            with open(cls.CACHE_FILE, "w", encoding="utf-8") as f:
+                json.dump(cache, f, indent=4)
+        except Exception as e:
+            logger.error(f"Error saving GGUF cache: {e}")
     
     @staticmethod
     async def scan_remote_metadata(url: str) -> Dict[str, Any]:
         """
         Scans a remote GGUF file and returns architectural metadata.
         """
+        cache = GGUFMetadataScanner._load_cache()
+        if url in cache:
+            logger.info(f"Loaded remote GGUF metadata from cache: {url}")
+            return cache[url]
+
         logger.info(f"Scanning remote GGUF metadata: {url}")
         
         try:
@@ -42,6 +68,11 @@ class GGUFMetadataScanner:
                     reader = GGUFReader(tmp_path)
                     metadata = GGUFMetadataScanner._parse_reader(reader)
                     logger.info(f"Scanned metadata successfully: {metadata}")
+                    
+                    if metadata:
+                        cache[url] = metadata
+                        GGUFMetadataScanner._save_cache(cache)
+                        
                     return metadata
                     
                 finally:
@@ -86,11 +117,22 @@ class GGUFMetadataScanner:
     @staticmethod
     def scan_local_file(path: str) -> Dict[str, Any]:
         """Scans a local GGUF file and returns architectural metadata."""
+        cache = GGUFMetadataScanner._load_cache()
+        cache_key = f"{path}_{os.path.getsize(path)}" if os.path.exists(path) else path
+        if cache_key in cache:
+            logger.info(f"Loaded local GGUF metadata from cache: {path}")
+            return cache[cache_key]
+
         logger.info(f"Scanning local GGUF metadata: {path}")
         try:
             reader = GGUFReader(path)
             metadata = GGUFMetadataScanner._parse_reader(reader)
             logger.info(f"Local metadata scanned successfully: {metadata}")
+            
+            if metadata:
+                cache[cache_key] = metadata
+                GGUFMetadataScanner._save_cache(cache)
+                
             return metadata
         except Exception as e:
             logger.error(f"Error scanning local GGUF: {e}")

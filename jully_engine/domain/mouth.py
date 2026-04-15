@@ -54,15 +54,20 @@ class Mouth:
             return self._strategy.get_required_vram(payload)
         return 0
 
-    async def speak(self, payload: Dict[str, Any]) -> Optional[bytes]:
+    async def speak(self, payload: Dict[str, Any]) -> Union[bytes, AsyncGenerator[bytes, None]]:
         from ..engine_models.replicate_api import Replicate
         from ..engine_models.xtts2 import XTTS2
         from ..engine_models.piper import Piper
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.kokoro_tts import KokoroTTS
+        import re
 
-        # For local strategies, unpack payload
-        text = payload.get("input", payload.get("text", ""))
+        # 1. Extração e Limpeza de Texto
+        raw_text = payload.get("input", payload.get("text", ""))
+        
+        # Remove caracteres especiais que podem quebrar o TTS ou soar estranho
+        # Mantém pontuação básica para o split
+        clean_text = re.sub(r'[*_`#~\[\]()\\<>+=\-|{}]', '', raw_text)
         
         headers: dict = payload.get("headers", {})
         stream: bool = payload.get("stream", False)
@@ -78,25 +83,55 @@ class Mouth:
             headers.setdefault("x-api-key", config.get('api_key', None))
             headers.setdefault("authorization", f"Bearer {config.get('api_key', None)}")
 
-        if isinstance(self._strategy, (LLMApi, Replicate)):
-            model = payload.pop("model", self.model_tag)
-            text = payload.pop("input", payload.pop("text", ""))
-            voice_id = payload.pop("voice", voice_id)
-            headers = payload.pop("headers", headers)
+        # 2. Lógica de Streaming por Sentença
+        if stream:
+            # Divide o texto em frases baseadas no ponto final
+            # Filtra strings vazias
+            sentences = [s.strip() + "." for s in clean_text.split('.') if s.strip()]
+            
+            async def sentence_streamer():
+                for sentence in sentences:
+                    logger.info(f"Mouth: Streaming sentence: {sentence[:50]}...")
+                    
+                    audio_chunk = None
+                    if isinstance(self._strategy, (LLMApi, Replicate)):
+                        # Para APIs externas, fazemos chamadas sequenciais por frase se quiser stream real
+                        # Ou deixamos a API lidar. Aqui vamos forçar por frase para o design solicitado.
+                        audio_chunk = await self._strategy.run_tts(self.model_tag, sentence, voice_id, headers=headers)
+                    
+                    elif isinstance(self._strategy, XTTS2):
+                        audio_chunk = self._strategy.run(sentence, voice_id, language)
+                    
+                    elif isinstance(self._strategy, Piper):
+                        audio_chunk = self._strategy.run(sentence, voice_id)
+                    
+                    elif isinstance(self._strategy, KokoroTTS):
+                        # O Kokoro já tem um gerador interno, mas vamos seguir o padrão de sentenças
+                        # para consistência entre as engines se o usuário pediu split por ponto.
+                        audio_chunk = await self._strategy.run(sentence, voice_id, language, stream=False)
 
-            audio_content = self._strategy.run_tts(model, text, voice_id, headers=headers, **payload)
+                    if audio_chunk:
+                        if inspect.iscoroutine(audio_chunk):
+                            audio_chunk = await audio_chunk
+                        yield audio_chunk
+            
+            return sentence_streamer()
+
+        # 3. Lógica Não-Streaming (Legado/Full)
+        if isinstance(self._strategy, (LLMApi, Replicate)):
+            audio_content = self._strategy.run_tts(self.model_tag, clean_text, voice_id, headers=headers, **payload)
             if inspect.iscoroutine(audio_content):
                 audio_content = await audio_content
             return audio_content
 
         if isinstance(self._strategy, XTTS2):
-            return self._strategy.run(text, voice_id, language)
+            return self._strategy.run(clean_text, voice_id, language)
 
         elif isinstance(self._strategy, Piper):
-            return self._strategy.run(text, voice_id)
+            return self._strategy.run(clean_text, voice_id)
 
         elif isinstance(self._strategy, KokoroTTS):
-            return await self._strategy.run(text, voice_id, language, stream=stream)
+            return await self._strategy.run(clean_text, voice_id, language, stream=False)
 
         return None
 

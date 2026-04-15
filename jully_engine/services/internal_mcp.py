@@ -172,6 +172,19 @@ class InternalMCP:
         
         all_tools = internal_tools + external_tools
         
+        # Injetamos metadados dos servidores para as ferramentas externas
+        # para que o frontend possa exibir os detalhes de conexão
+        mcps = self.backend_db.get_all_mcps()
+        mcp_map = {mcp['id']: mcp for mcp in mcps}
+
+        for tool in all_tools:
+            name = tool.get("function", {}).get("name", "")
+            if "__" in name:
+                mcp_id = name.split("__")[0]
+                if mcp_id in mcp_map:
+                    # Inclui variáveis de ambiente e config no retorno da tool
+                    tool["mcp_server"] = mcp_map[mcp_id]
+
         if whitelist is not None and len(whitelist) > 0:
             all_tools = [t for t in all_tools if t["function"]["name"] in whitelist]
             
