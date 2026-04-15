@@ -25,7 +25,7 @@ class StableDiffusion:
         self.model_path = model_path
         self.lora_path = lora_path
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o SD 1.5 + IP-Adapter."""
         if self.device == "cpu":
             return 0

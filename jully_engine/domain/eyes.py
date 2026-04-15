@@ -4,6 +4,7 @@ import logging
 import base64
 import io
 import json
+import inspect
 from PIL import Image
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
@@ -32,6 +33,7 @@ class Eyes:
         self.face_service = FaceService()
 
     def _get_strategy(self):
+        logger.debug(f"Eyes: Resolving strategy for backend='{self.backend}', model_tag='{self.model_tag}'")
         if self.backend == "api":
             from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
@@ -53,14 +55,20 @@ class Eyes:
 
         if self.backend in ["gpu", "cpu"]:
             from ..engine_models.llama_gguf import GGUF
-            return GGUF(backend=self.backend, model=model)
+            strategy = GGUF(backend=self.backend, model=model)
+            logger.info(f"Eyes: Using GGUF strategy for {self.model_tag}")
+            return strategy
         else:
+            logger.error(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
             raise ValueError(f"Eyes: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         if hasattr(self._strategy, "get_required_vram"):
-            return self._strategy.get_required_vram(payload)
+            res = self._strategy.get_required_vram(payload)
+            if inspect.iscoroutine(res):
+                return await res
+            return res
         return 0
     
     def decode_image(self, image_data: str) -> Image.Image:
@@ -90,6 +98,7 @@ class Eyes:
             # 1. Decodifica o base64
             img_data = base64.b64decode(base64_str)
             img = Image.open(io.BytesIO(img_data))
+            orig_size = img.size
             
             # Remove o canal Alpha (Transparência) se for PNG, pois VLMs preferem RGB puro
             if img.mode in ('RGBA', 'P'):
@@ -100,11 +109,13 @@ class Eyes:
             # 2. Downscale super rápido e seguro
             # Se a imagem for menor que max_size, o thumbnail não faz nada!
             img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            new_size = img.size
             
             # 3. Re-encoda para JPEG com compressão leve
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=85)
             
+            logger.debug(f"Eyes: Image sanitized from {orig_size} to {new_size}")
             return base64.b64encode(buffer.getvalue()).decode("utf-8")
         except Exception as e:
             # Se falhar (ex: string malformada), devolve o original e reza para a Engine aguentar
@@ -119,6 +130,7 @@ class Eyes:
         from ..engine_models.fastvlm import FastVLM
         from ..engine_models.moondream import MoondreamVLM
 
+        logger.info(f"Eyes: Starting analysis with strategy {type(self._strategy).__name__}")
         headers = payload.get("headers", {})
         
         from ..persistence import get_backend
@@ -139,6 +151,7 @@ class Eyes:
 
         # 1. Rotas Nativas OpenAI (LLMApi e GGUF)
         if isinstance(self._strategy, (LLMApi, GGUF)):
+            logger.debug("Eyes: Using OpenAI-compatible route (LLMApi/GGUF)")
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
             
@@ -160,6 +173,7 @@ class Eyes:
             else:
                 raw_response = await self._strategy.run_chat(messages, stream=stream, **payload)
                 
+            logger.info("Eyes: OpenAI-compatible analysis completed.")
             return [self._extract_text(raw_response)]
 
         # =====================================================================
@@ -191,6 +205,7 @@ class Eyes:
         # 2. Rotas de Modelos Específicos (Garantindo Retorno List[str])
         
         if isinstance(self._strategy, Emotion):
+            logger.info(f"Eyes: Running emotion analysis on {len(extracted_images)} images.")
             results = []
             for img_data in extracted_images:
                 img = self.decode_image(img_data)
@@ -200,6 +215,7 @@ class Eyes:
             return results
 
         elif isinstance(self._strategy, ONNXTagger):
+            logger.info(f"Eyes: Running ONNX Tagger on {len(extracted_images)} images.")
             results = []
             for img_data in extracted_images:
                 tags = self._strategy.tag(self.decode_image(img_data))
@@ -210,6 +226,7 @@ class Eyes:
             return results
 
         elif isinstance(self._strategy, (FastVLM, MoondreamVLM)):
+            logger.info(f"Eyes: Running Local VLM ({type(self._strategy).__name__})")
             if len(extracted_images) > 1:
                 batch_result = self._strategy.run_batch(extracted_images, extracted_prompt)
                 if isinstance(batch_result, list):
@@ -218,6 +235,7 @@ class Eyes:
             
             single_payload = {"image": extracted_images[0], "prompt": extracted_prompt}
             single_result = self._strategy.run(single_payload)
+            logger.info("Eyes: Local VLM analysis completed.")
             return [str(single_result)]
 
     async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]], collection: str = "faces_embeddings") -> List[Dict[str, Any]]:
@@ -225,6 +243,7 @@ class Eyes:
         if not isinstance(images, list):
             images = [images]
 
+        logger.info(f"Eyes: Extracting faces from {len(images)} images.")
         strict_prompt = (
             "Act as a strict facial feature extractor. Describe the person in the image in a single, short sentence. "
             "Focus ONLY on: gender, hair color/style, eye color, and visible accessories. "
@@ -236,8 +255,10 @@ class Eyes:
         batch_crops = []
         batch_embeddings = []
 
-        for img in images:
-            for emb, face_crop, bbox in self.face_service.get_faces_embeddings(img):
+        for idx, img in enumerate(images):
+            faces = list(self.face_service.get_faces_embeddings(img))
+            logger.debug(f"Eyes: Image {idx} contains {len(faces)} faces.")
+            for emb, face_crop, bbox in faces:
                 try:
                     pil_crop = Image.fromarray(face_crop)
                     buffered = io.BytesIO()
@@ -249,7 +270,10 @@ class Eyes:
                     logger.error(f"Erro ao converter crop de rosto: {e}")
 
         if not batch_crops:
+            logger.warning("Eyes: No faces detected in provided images.")
             return []
+
+        logger.info(f"Eyes: Total faces to describe: {len(batch_crops)}")
 
         descriptions = []
         from ..services.helpers import inference_helper
@@ -275,6 +299,7 @@ class Eyes:
         for emb, desc in zip(batch_embeddings, descriptions):
             # Delega para o FaceService a lógica de match, EMA e inserção
             person_id, emb = self.face_service.match_or_add_face(emb, pic_id="api_request", collection=collection)
+            logger.debug(f"Eyes: Matched/Added person_id='{person_id}'")
 
             results.append({
                 "person_id": person_id,
@@ -282,6 +307,7 @@ class Eyes:
                 "description": desc
             })
             
+        logger.info(f"Eyes: Face extraction completed. Found {len(results)} people.")
         return results
 
     async def sync_faces_batch(self, images: List[Image.Image], pic_ids: List[str], collection: str = "faces_embeddings") -> List[List[Dict[str, Any]]]:
@@ -310,6 +336,7 @@ class Eyes:
             raise ValueError(f"Eyes: Video path is invalid or missing: {video_path}")
 
         # 1. Roda a análise multimodal pesada (Grids Visuais + STT em paralelo)
+        logger.info(f"Eyes.describe_video: processing video {video_path} (interval={interval_sec}s, grid={frames_per_grid})")
         aggregate = await multimodal_video_analysis.execute(
             video_path=video_path,
             interval_sec=interval_sec,
@@ -357,8 +384,10 @@ class Eyes:
 
         # 5. Extrai a string pura do retorno padrão da OpenAI
         if isinstance(synthesis_result, dict) and "choices" in synthesis_result:
+            logger.info("Eyes.describe_video: synthesis completed successfully.")
             return synthesis_result["choices"][0]["message"].get("content", "")
 
+        logger.info("Eyes.describe_video: synthesis completed (raw format).")
         return str(synthesis_result)
 
     def is_loaded(self):
@@ -366,6 +395,7 @@ class Eyes:
 
     def load(self):
         if hasattr(self._strategy, "load"):
+            logger.info(f"Eyes: Loading state for model {self.model_tag}")
             self._strategy.load()
 
     def unload(self):

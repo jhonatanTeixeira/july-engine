@@ -22,7 +22,7 @@ class Pix2Pix:
     def is_loaded(self):
         return self.pipeline is not None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o Pix2Pix (SD1.5 based)."""
         if self.device == "cpu":
             return 0

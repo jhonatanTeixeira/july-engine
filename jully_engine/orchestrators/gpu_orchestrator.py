@@ -62,8 +62,8 @@ class Runner:
         self.model_loader = model_loader
         self.is_running = True
         self.unload_priority = [
-            'stt', 'tts', 'embedding', 'rag_add', 'rag_batch_add', 
-            'rag_search', 'rag_update', 'pix2pix', 'image_generation', 'text_chat'
+            'stt', 'tts', 'embeddings', 'rag_add', 'rag_batch_add', 
+            'rag_search', 'rag_update', 'pix2pix', 'image_generation', 'image_resize', 'vision_chat', 'text_chat'
         ]
 
     def get_domain(self, backend, model_tag):
@@ -75,6 +75,10 @@ class Runner:
             return self.model_loader.get_mouth(backend, model_tag)
         if self.task_type == "stt": 
             return self.model_loader.get_ears(backend, model_tag)
+        if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
+            return self.model_loader.get_presence(backend, model_tag)
+        if self.task_type in ["search_web", "search_code"]:
+            return self.model_loader.get_world(backend, model_tag)
 
         return self.model_loader.get_memory(backend, model_tag)
 
@@ -89,7 +93,7 @@ class Runner:
             result = domain.speak(payload)
         elif task_type == "stt": 
             result = domain.listen(payload.get('audio'), payload.get('language'), payload)
-        elif task_type == "embedding": 
+        elif task_type in ["embedding", "embeddings"]: 
             result = domain.embed(payload)
         elif task_type == "rag_add": 
             result = domain.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"))
@@ -111,10 +115,16 @@ class Runner:
             result = domain.list_rag_metadata(payload.get("collection", "july_memory"))
         elif task_type == "rag_smart_search": 
             result = domain.smart_search(payload)
-        elif task_type in ["pix2pix", "image_generation"]: 
+        elif task_type == "image_generation": 
             result = domain.generate(payload)
+        elif task_type == "pix2pix": 
+            result = domain.edit(payload)
         elif task_type == "image_resize": 
             result = domain.resize(payload)
+        elif task_type == "search_web": 
+            result = domain.search_web(payload)
+        elif task_type == "search_code": 
+            result = domain.search_code(payload)
 
         if inspect.iscoroutine(result):
             result = await result

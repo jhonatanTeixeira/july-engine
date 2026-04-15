@@ -17,7 +17,7 @@ class FastVLM:
         self.tokenizer = None
         self.IMAGE_TOKEN_INDEX = -200
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o FastVLM (0.5B 4-bit)."""
         if self.backend == "cpu":
             return 0

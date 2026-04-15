@@ -1,4 +1,5 @@
 import logging
+import inspect
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -47,10 +48,13 @@ class Brain:
         if hasattr(self._strategy, "load"):
             self._strategy.load()
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         if hasattr(self._strategy, "get_required_vram"):
-            return self._strategy.get_required_vram(payload)
+            res = self._strategy.get_required_vram(payload)
+            if inspect.iscoroutine(res):
+                return await res
+            return res
         return 0
 
     async def chat(self, payload: Dict[str, Any]):

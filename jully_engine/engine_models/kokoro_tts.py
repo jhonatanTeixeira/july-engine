@@ -29,7 +29,7 @@ class KokoroTTS:
             except ImportError:
                 pass
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         if self.device == "cpu":
             return 0
         return 500

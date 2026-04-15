@@ -4,6 +4,7 @@ import base64
 import io
 import os
 from PIL import Image
+import inspect
 from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -63,10 +64,13 @@ class Presence:
             from ..engine_models.llm_api import LLMApi
             return LLMApi(backend=self.backend)
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         if hasattr(self._strategy, "get_required_vram"):
-            return self._strategy.get_required_vram(payload)
+            res = self._strategy.get_required_vram(payload)
+            if inspect.iscoroutine(res):
+                return await res
+            return res
         return 0
 
     def _find_last_image(self, messages: List[Dict[str, Any]]) -> Optional[str]:

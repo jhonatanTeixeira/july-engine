@@ -137,8 +137,9 @@ class LCMFaceIDPipeline:
     # Carregamento
     # ------------------------------------------------------------------
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM necessária baseado na configuração de offload."""
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o SD LCM (~3GB)."""
+        return 3000 # ~3.0GB (float16)
         if self.device == "cpu":
             return 0
         

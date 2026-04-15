@@ -33,14 +33,17 @@ class Memory:
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         # Se for uma tarefa de manutenção (sem input de texto), o custo é 0
         if "input" not in payload and "documents" not in payload:
             return 0
             
         if hasattr(self._strategy, "get_required_vram"):
-            return self._strategy.get_required_vram(payload)
+            res = self._strategy.get_required_vram(payload)
+            if inspect.iscoroutine(res):
+                return await res
+            return res
         return 0
 
     async def embed(self, payload: Dict[str, Any], emb_type: str = "passage"):

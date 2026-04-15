@@ -14,12 +14,11 @@ class FasterWhisper:
         self.model = None
         self.model_size = os.environ.get("STT_MODEL", "medium")
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM necessária para rodar o FasterWhisper."""
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o FasterWhisper (~1GB Turbo)."""
         if self.backend == "cpu":
             return 0
-            
-        # Estimativas médias baseadas no tamanho do modelo
+        return 1000 # ~1GB para o 'turbo' v3-small
         sizes_mb = {
             "tiny": 250,
             "base": 400,

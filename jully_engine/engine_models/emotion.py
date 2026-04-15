@@ -18,7 +18,7 @@ class Emotion:
         self.session = None
         self.face_detector = face_detector
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Emotion roda na CPU (ONNX)."""
         return 0
 

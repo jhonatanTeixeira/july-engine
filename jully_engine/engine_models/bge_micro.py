@@ -20,7 +20,7 @@ class BgeMicro:
     def is_loaded(self):
         return self.model is not None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """BgeMicro roda na CPU (ONNX)."""
         return 0
 

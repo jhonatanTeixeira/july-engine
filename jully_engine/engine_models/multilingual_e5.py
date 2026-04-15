@@ -14,7 +14,7 @@ class MultilingualE5:
     def is_loaded(self):
         return self.model is not None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o MultilingualE5."""
         if self.backend == "cpu":
             return 0

@@ -48,10 +48,13 @@ class Mouth:
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Delega a estimativa de VRAM para a estratégia atual."""
         if hasattr(self._strategy, "get_required_vram"):
-            return self._strategy.get_required_vram(payload)
+            res = self._strategy.get_required_vram(payload)
+            if inspect.iscoroutine(res):
+                return await res
+            return res
         return 0
 
     async def speak(self, payload: Dict[str, Any]) -> Union[bytes, AsyncGenerator[bytes, None]]:

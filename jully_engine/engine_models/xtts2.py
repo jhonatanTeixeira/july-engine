@@ -14,11 +14,11 @@ class XTTS2:
         self.device = "cpu" # Default until load()
         self.model = None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM para o XTTS2."""
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        """Calcula a VRAM para o XTTS2 (~2.2GB)."""
         if self.backend == "cpu":
             return 0
-        return 2200 # ~2.2GB
+        return 2200 # ~2.2GB para este modelo (XTTS2)
 
     def load(self):
         if self.model is None:
@@ -72,6 +72,7 @@ class XTTS2:
                 os.remove(output_path)
             logger.error(f"XTTS2: Execution failed: {e}")
             raise e
+
     def is_loaded(self):
         return self.model is not None
 
