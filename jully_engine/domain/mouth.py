@@ -80,6 +80,8 @@ class Mouth:
         
         voice_id = payload.get("voice", None) or config.get('voice', 'af_heart')
         language = payload.get("language", None) or config.get('language', 'a')
+        temperature = payload.get("temperature", None) or config.get('temperature', None) or 0.7
+        semitones = payload.get("semitones", None) or config.get('semitones', None) or 0.0
 
         if config:
             headers.setdefault('x-base-url', config.get('base_url', None))
@@ -103,7 +105,7 @@ class Mouth:
                         audio_chunk = await self._strategy.run_tts(self.model_tag, sentence, voice_id, headers=headers)
                     
                     elif isinstance(self._strategy, XTTS2):
-                        audio_chunk = self._strategy.run(sentence, voice_id, language)
+                        audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
                     
                     elif isinstance(self._strategy, Piper):
                         audio_chunk = self._strategy.run(sentence, voice_id)
@@ -111,7 +113,7 @@ class Mouth:
                     elif isinstance(self._strategy, KokoroTTS):
                         # O Kokoro já tem um gerador interno, mas vamos seguir o padrão de sentenças
                         # para consistência entre as engines se o usuário pediu split por ponto.
-                        audio_chunk = await self._strategy.run(sentence, voice_id, language, stream=False)
+                        audio_chunk = await self._strategy.run(sentence, voice_id, language, stream=False, semitones=semitones)
 
                     if audio_chunk:
                         if inspect.iscoroutine(audio_chunk):
@@ -128,13 +130,13 @@ class Mouth:
             return audio_content
 
         if isinstance(self._strategy, XTTS2):
-            return self._strategy.run(clean_text, voice_id, language)
+            return self._strategy.run(clean_text, voice_id, language, temperature=temperature)
 
         elif isinstance(self._strategy, Piper):
             return self._strategy.run(clean_text, voice_id)
 
         elif isinstance(self._strategy, KokoroTTS):
-            return await self._strategy.run(clean_text, voice_id, language, stream=False)
+            return await self._strategy.run(clean_text, voice_id, language, stream=False, semitones=semitones)
 
         return None
 

@@ -39,6 +39,10 @@ class PersistenceBackend(ABC):
         pass
 
     @abstractmethod
+    def delete_uploaded_voice(self, voice_id: str) -> bool:
+        pass
+
+    @abstractmethod
     def get_all_mcps(self) -> List[Dict[str, Any]]:
         pass
 

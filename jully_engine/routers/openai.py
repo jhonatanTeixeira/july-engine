@@ -62,6 +62,8 @@ class SpeechRequest(BaseModel):
     input: str
     voice: Optional[str] = None
     stream: Optional[bool] = False
+    temperature: Optional[float] = None
+    semitones: Optional[float] = None
 
 class ImageGenerationRequest(BaseModel):
     prompt: str

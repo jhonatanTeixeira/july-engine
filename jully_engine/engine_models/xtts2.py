@@ -33,20 +33,22 @@ class XTTS2:
                 logger.error(f"XTTS2: Failed to load: {e}")
                 raise e
 
-    def run(self, text: str, voice_id: str, language: str) -> bytes:
-        from ..persistence import get_backend
-        uploaded_voices = get_backend().get_uploaded_voices()
-        voice_info = next((v for v in uploaded_voices if v.get("id") == voice_id), {})
-        rel_path = voice_info.get("path")
+    def run(self, text: str, voice_id: str, language: str, temperature: float = 0.7) -> bytes:
+        from ..services.voice_service import voice_service
         
-        voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
-        if rel_path:
-            voice_path = os.path.join(voices_dir, rel_path)
-        else:
-            voice_path = ""
+        voice_res = voice_service.get_voice_path(voice_id)
+        if not voice_res:
+            logger.error(f"XTTS2: Voice {voice_id} not found and no fallback available.")
+            raise ValueError(f"Voice {voice_id} not found")
+            
+        voice_path, voice_lang = voice_res
+        # Prioritize provided language, fallback to voice info language
+        target_lang = language or voice_lang
 
         if self.model is None:
             self.load()
+
+        text = text.replace(".", "").replace('"', '').replace("-", "")
             
         import tempfile
         try:
@@ -58,7 +60,8 @@ class XTTS2:
                 text=text,
                 speaker_wav=voice_path,
                 language=language,
-                file_path=output_path
+                file_path=output_path,
+                temperature=temperature
             )
             
             with open(output_path, "rb") as f:

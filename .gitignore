@@ -2,9 +2,13 @@
 __pycache__
 /models/
 tests/outputs/
-storage/voices/uploaded
-storage/voices/uploaded_voices.json
-storage/temp
-storage/db
+storage
+!storage/voices/*.json
+!storage/voices/*.wav
+!storage/models/*
+# storage/voices/uploaded
+# storage/voices/uploaded_voices.json
+# storage/temp
+# storage/db
 temp_*
 .env

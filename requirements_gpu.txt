@@ -9,13 +9,13 @@ coqui-tts
 nvidia-ml-py
 llama-cpp-python
 diffusers 
-transformers
+transformers==5.0.0
 bitsandbytes
 peft
 safetensors 
 insightface
 xformers
-git+https://github.com/tencent-ailab/IP-Adapter.git
+# git+https://github.com/tencent-ailab/IP-Adapter.git
 basicsr
 realesrgan
 gfpgan

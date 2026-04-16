@@ -3,7 +3,7 @@
 # CPU Models and Utilities
 torch
 torchvision
-torchaudio
+torchaudio<2.9
 scipy
 safetensors
 diffusers

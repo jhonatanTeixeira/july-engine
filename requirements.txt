@@ -20,3 +20,7 @@ piexif
 exif
 numpy
 pyppeteer
+deepfilternet
+fsspec
+s3fs
+gcsfs

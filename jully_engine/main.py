@@ -64,6 +64,7 @@ from .routers.mcps_router import router as mcps_router
 from .routers.webhooks_router import router as webhooks_router
 from .services.external_mcp import external_mcp_manager
 from .events import event_manager
+from fastapi.staticfiles import StaticFiles
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -114,6 +115,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Servir arquivos estáticos do diretório storage/voices
+storage_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage", "voices")
+app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
 app.include_router(openai_router, prefix="/v1/openai")
 app.include_router(anthropic_router, prefix="/v1/anthropic")

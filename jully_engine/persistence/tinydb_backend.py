@@ -65,6 +65,12 @@ class TinyDBBackend(PersistenceBackend):
             self.voices_table.insert(voice_data)
         self._flush()
 
+    def delete_uploaded_voice(self, voice_id: str) -> bool:
+        Q = Query()
+        removed = self.voices_table.remove(Q.id == voice_id)
+        self._flush()
+        return len(removed) > 0
+
     def get_all_mcps(self) -> List[Dict[str, Any]]:
         return self.mcps_table.all()
 
