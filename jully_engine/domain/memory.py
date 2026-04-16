@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from ..engine_models.bge_micro import BgeMicro
     from ..engine_models.multilingual_e5 import MultilingualE5
     from ..engine_models.llm_api import LLMApi
+    from ..engine_models.bert import CodeBERT, CodeGraphBERT
 
 logger = logging.getLogger("JulyEngine.Domain.Memory")
 
@@ -30,6 +31,12 @@ class Memory:
         elif self.model_tag == "multilingual-e5":
             from ..engine_models.multilingual_e5 import MultilingualE5
             return MultilingualE5(backend=self.backend)
+        elif self.model_tag == "codebert":
+            from ..engine_models.bert import CodeBERT
+            return CodeBERT(backend=self.backend)
+        elif self.model_tag == "graphcodebert":
+            from ..engine_models.bert import CodeGraphBERT
+            return CodeGraphBERT(backend=self.backend)
         else:
             raise ValueError(f"Memory: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -62,7 +69,8 @@ class Memory:
             
             return res
             
-        elif isinstance(self._strategy, (BgeMicro, MultilingualE5)):
+        elif hasattr(self._strategy, "run_passage"):
+            # Universal local execution for strategies with run_passage/run_query
             input_text = payload.get("input", "")
             
             if emb_type == 'passage':
