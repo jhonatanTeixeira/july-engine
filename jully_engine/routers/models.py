@@ -7,7 +7,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, list_repo_files
 
 logger = logging.getLogger("JulyEngine.Routers.Models")
 
@@ -97,6 +97,7 @@ class DownloadRequest(BaseModel):
     kv_cache_quantization: Optional[str] = "FP16"
     num_layers: Optional[int] = -1
     force_reasoning: Optional[bool] = None
+    is_vision: Optional[bool] = None
 
 class UpdateMetadataRequest(BaseModel):
     model_type: Optional[str] = None
@@ -109,6 +110,14 @@ class UpdateMetadataRequest(BaseModel):
     kv_cache_quantization: Optional[str] = None
     num_layers: Optional[int] = None
     force_reasoning: Optional[bool] = None
+    is_vision: Optional[bool] = None
+
+class WarmupItem(BaseModel):
+    task_type: str # brain, eyes, mouth, ears, presence, memory, world
+    model: str # model alias/tag
+
+class WarmupRequest(BaseModel):
+    models: List[WarmupItem]
 
 # ==========================================
 # BANCO DE DADOS (PERSISTENCE)
@@ -163,6 +172,12 @@ async def api_detect_metadata(request: DetectRequest):
         metadata["num_layers"] = meta_service.block_count
         metadata["context_length"] = meta_service.context_length
         metadata["file_size_gb"] = meta_service.file_size_gb
+        
+    # Sincroniza model_type com is_vision
+    if metadata.get("model_type") == "vision":
+        metadata["is_vision"] = True
+    elif metadata.get("is_vision") is True:
+        metadata["model_type"] = "vision"
 
     return {
         "status": "success",
@@ -172,24 +187,43 @@ async def api_detect_metadata(request: DetectRequest):
 @router.post("/download")
 async def download_gguf(request: DownloadRequest):
     # Pre-validation for vision models
-    if request.model_type == "vision":
+    if request.model_type == "vision" or (request.is_vision if request.is_vision is not None else False):
         if not request.mmproj_id or not request.mmproj_filename:
-            async def error_gen():
-                yield f"data: {json.dumps({'status': 'error', 'message': 'mmproj_id e mmproj_filename são obrigatórios para modelos de visão'})}\n\n"
-            return StreamingResponse(error_gen(), media_type="text/event-stream")
+            raise HTTPException(status_code=400, detail="mmproj_id e mmproj_filename são obrigatórios para modelos de visão")
+
+    # [ALERTA] Inserção imediata na base antes de iniciar o stream para garantir persistência 
+    auto_meta = detect_model_metadata(request.model_id, request.filename)
+    final_template = request.template if request.template else auto_meta.get("template", "chatml")
+    final_reasoning = request.force_reasoning if request.force_reasoning is not None else auto_meta.get("force_reasoning", False)
+    
+    db = load_models_db()
+    db[request.model_alias] = {
+        "model_alias": request.model_alias,
+        "model_type": request.model_type,
+        "model_id": request.model_id,
+        "filename": request.filename,
+        "mmproj_id": request.mmproj_id,
+        "mmproj_filename": request.mmproj_filename,
+        "template": final_template,
+        "context_window": request.context_window,
+        "kv_cache_quantization": request.kv_cache_quantization or "FP16",
+        "num_layers": request.num_layers,
+        "force_reasoning": final_reasoning,
+        "is_vision": request.is_vision if request.is_vision is not None else (request.model_type == "vision"),
+        "file_path": None, # Pendente download
+        "mmproj_path": None
+    }
+    save_models_db(db)
+    logger.info(f"Model {request.model_alias} registered in DB (pending download)")
 
     async def progress_generator():
+        logger.info(f"Progress generator started for {request.model_alias}")
         try:
+            # Multiplos yields iniciais para garantir que o buffer de proxies/navegador seja liberado
+            yield f"data: {json.dumps({'status': 'initializing', 'message': 'Conectando ao serviço de download...'})}\n\n"
             yield f"data: {json.dumps({'status': 'starting', 'message': f'Iniciando download de {request.model_alias}'})}\n\n"
             
-            # Helper para preencher dinamicamente o que o usuário deixou em branco
-            auto_meta = detect_model_metadata(request.model_id, request.filename)
-            final_template = request.template if request.template else auto_meta["template"]
-            final_reasoning = request.force_reasoning if request.force_reasoning is not None else auto_meta["force_reasoning"]
-
-            yield f"data: {json.dumps({'status': 'downloading', 'message': 'Baixando arquivo principal...'})}\n\n"
-            
-            # Download the main file (blocking call wrapped in thread to not block event loop)
+            # Download the main file
             loop = asyncio.get_event_loop()
             file_path = await loop.run_in_executor(None, lambda: hf_hub_download(
                 repo_id=request.model_id, 
@@ -197,40 +231,53 @@ async def download_gguf(request: DownloadRequest):
                 cache_dir=CACHE_DIR
             ))
             
+            # Atualiza caminho principal no banco
+            curr_db = load_models_db()
+            if request.model_alias in curr_db:
+                curr_db[request.model_alias]["file_path"] = file_path
+                save_models_db(curr_db)
+            
+            yield f"data: {json.dumps({'status': 'downloading', 'message': 'Arquivo principal concluído. Baixando mmproj...'})}\n\n"
+
             mmproj_path = None
-            if request.model_type == "vision":
-                yield f"data: {json.dumps({'status': 'downloading', 'message': 'Baixando componente de visão (mmproj)...'})}\n\n"
+            if request.model_type == "vision" or (request.is_vision if request.is_vision is not None else False):
                 mmproj_path = await loop.run_in_executor(None, lambda: hf_hub_download(
                     repo_id=request.mmproj_id, 
                     filename=request.mmproj_filename,
                     cache_dir=CACHE_DIR
                 ))
+                # Atualiza mmproj no banco
+                curr_db = load_models_db()
+                if request.model_alias in curr_db:
+                    curr_db[request.model_alias]["mmproj_path"] = mmproj_path
+                    save_models_db(curr_db)
 
-            # Update DB
-            db = load_models_db()
-            db[request.model_alias] = {
-                "model_alias": request.model_alias,
-                "model_type": request.model_type,
-                "model_id": request.model_id,
-                "filename": request.filename,
-                "mmproj_id": request.mmproj_id,
-                "mmproj_filename": request.mmproj_filename,
-                "template": final_template,
-                "context_window": request.context_window,
-                "kv_cache_quantization": request.kv_cache_quantization or "FP16",
-                "num_layers": request.num_layers,
-                "force_reasoning": final_reasoning,
-                "file_path": file_path,
-                "mmproj_path": mmproj_path
-            }
-            save_models_db(db)
-
-            yield f"data: {json.dumps({'status': 'success', 'message': 'Download concluído!', 'metadata': db[request.model_alias]})}\n\n"
+            final_data = load_models_db().get(request.model_alias, {})
+            yield f"data: {json.dumps({'status': 'success', 'message': 'Download concluído!', 'metadata': final_data})}\n\n"
         except Exception as e:
             logger.error(f"Download failed: {e}")
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
 
-    return StreamingResponse(progress_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        progress_generator(), 
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@router.get("/files/{repo_id:path}")
+async def list_hf_files(repo_id: str):
+    """Lista todos os arquivos de um repositório no Hugging Face."""
+    try:
+        loop = asyncio.get_event_loop()
+        files = await loop.run_in_executor(None, lambda: list_repo_files(repo_id))
+        return {"status": "success", "repo_id": repo_id, "files": files}
+    except Exception as e:
+        logger.error(f"Error listing files for {repo_id}: {e}")
+        raise HTTPException(status_code=404, detail=f"Erro ao listar arquivos do repositório {repo_id}: {str(e)}")
 
 @router.get("/")
 async def list_gguf_models():
@@ -262,3 +309,63 @@ async def delete_model(model_alias: str):
         save_models_db(db)
         return {"status": "success", "message": f"Model {model_alias} removed from database"}
     raise HTTPException(status_code=404, detail="Model not found")
+
+@router.post("/warmup")
+async def model_warmup(request: WarmupRequest):
+    """Pré-carrega modelos na VRAM/RAM baseado nos tipos de tarefa."""
+    from ..model_loader import model_loader
+    
+    loaded_models = []
+    errors = []
+    
+    loader_mapping = {
+        "brain": model_loader.get_brain,
+        "eyes": model_loader.get_eyes,
+        "mouth": model_loader.get_mouth,
+        "ears": model_loader.get_ears,
+        "presence": model_loader.get_presence,
+        "memory": model_loader.get_memory,
+        "world": model_loader.get_world
+    }
+    
+    for item in request.models:
+        try:
+            task = item.task_type.lower()
+            model_alias = item.model
+            
+            if task not in loader_mapping:
+                errors.append(f"Tipo de tarefa desconhecido: {task}")
+                continue
+            
+            # 1. Resolve configurações do modelo
+            config = models_service.get(model_alias) or models_service.resolve_by_settings(model_alias)
+            
+            # 2. Heurística de Backend
+            backend = "gpu" # Default para modelos locais (warmup faz sentido aqui)
+            
+            if config:
+                if config.get("model_type") == "api" or config.get("backend") == "api":
+                    backend = "api"
+                elif config.get("num_layers") == 0:
+                    backend = "cpu"
+                elif config.get("backend"):
+                    backend = config.get("backend")
+            
+            # 3. Chama o loader e o load()
+            loader_func = loader_mapping[task]
+            domain_instance = loader_func(backend, model_alias)
+            
+            if hasattr(domain_instance, "load"):
+                domain_instance.load()
+                loaded_models.append({"task": task, "model": model_alias, "backend": backend})
+                logger.info(f"Warmup: model '{model_alias}' loaded for task '{task}' on backend '{backend}'")
+            
+        except Exception as e:
+            logger.error(f"Warmup: Error loading {item.model} for {item.task_type}: {e}")
+            errors.append(f"Erro ao carregar {model_alias}: {str(e)}")
+            
+    return {
+        "status": "success" if not errors else "partial_success",
+        "loaded": loaded_models,
+        "errors": errors
+    }

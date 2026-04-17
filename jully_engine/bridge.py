@@ -12,6 +12,7 @@ from .events import event_manager
 from .services.helpers import inference_helper, MultiModalHelper
 from .services.scraper_service import scraper_service
 from .model_loader import model_loader
+from .services.models_service import ModelsService
 
 logger = logging.getLogger("JulyEngine.Bridge")
 
@@ -88,7 +89,14 @@ class Bridge:
         try:
             helper = MultiModalHelper(payload=payload)
             await helper.process_transcription()
-            await helper.process_vision()
+            
+            # Detect if model is vision-capable to skip delegation
+            model_service = ModelsService()
+            model_name = payload.get("model", "default")
+            if not model_service.is_vision_model(model_name):
+                await helper.process_vision()
+            else:
+                logger.debug(f"Bridge: Model {model_name} is vision-capable. Skipping delegation.")
             
             messages = payload.get("messages", [])
             input_chars = len(json.dumps(messages)) if messages else 0

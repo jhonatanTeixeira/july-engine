@@ -89,10 +89,15 @@ class Brain:
         import copy
         original_payload = copy.deepcopy(payload)
 
-        # Filtra imagens e áudios pois o Brain é puro texto
+        # Filtra imagens e áudios pois o Brain é puro texto (exceto se for um VLM nativo)
+        is_vision = ModelsService().is_vision_model(self.model_tag)
         for msg in payload.get("messages", []):
             if isinstance(msg.get("content"), list):
-                msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") == "text"]
+                if not is_vision:
+                    msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") == "text"]
+                else:
+                    # Remove apenas áudio se for Vision
+                    msg["content"] = [item for item in msg["content"] if isinstance(item, dict) and item.get("type") != "audio_url" and item.get("type") != "input_audio"]
 
         if isinstance(self._strategy, LLMApi):
             response = await self._strategy.run_chat(payload)

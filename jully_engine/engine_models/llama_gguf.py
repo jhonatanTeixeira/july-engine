@@ -21,6 +21,9 @@ def detect_model_type(repo_id_or_filename: str) -> str:
         return "nanollava"
     if "llava-v1.6" in name or "mistral-7b-instruct-v0.2" in name:
         return "llava-v1.6"
+    if "gemma" in name or "paligemma" in name:
+        return "paligemma"
+
     return "llava"
 
 
@@ -57,6 +60,8 @@ class GGUF:
         return estimates["total_vram_mb"]
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
+        from huggingface_hub import hf_hub_download
+
         meta = self.meta
         
         effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 2048))
@@ -70,6 +75,9 @@ class GGUF:
             if self.model.n_ctx() == effective_n_ctx:
                 logger.debug(f"GGUF: Modelo {self.meta['model_alias']} já carregado. Reaproveitando!")
                 return
+            else:
+                logger.info(f"GGUF: Reloading model {self.meta['model_alias']} because n_ctx changed ({self.model.n_ctx()} -> {effective_n_ctx})")
+                self.unload(self.meta['model_alias'])
         
         model_path = self.model_path
 
@@ -85,6 +93,7 @@ class GGUF:
                 "n_ctx": effective_n_ctx,
                 "verbose": False,
             }
+            logger.info(f"GGUF: Final params for Llama: {params}")
 
             if os.environ.get("FLASH_ATTN", "false").lower() == "true":
                 params["flash_attn"] = True
@@ -120,9 +129,12 @@ class GGUF:
                 if vision_type == "moondream":
                     from llama_cpp.llama_chat_format import MoondreamChatHandler
                     params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
-                elif vision_type == "nanollava":
+                elif vision_type == "nanollava" or vision_type == "paligemma":
                     from llama_cpp.llama_chat_format import NanoLlavaChatHandler
                     params["chat_handler"] = NanoLlavaChatHandler(clip_model_path=mmproj_path)
+                # elif vision_type == "paligemma":
+                #     from llama_cpp.llama_chat_format import PaliGemmaChatHandler
+                #     params["chat_handler"] = PaliGemmaChatHandler(clip_model_path=mmproj_path)
                 else:
                     from llama_cpp.llama_chat_format import Llava15ChatHandler
                     params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
