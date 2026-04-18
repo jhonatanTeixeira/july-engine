@@ -172,7 +172,7 @@ class ExternalMCPManager:
 
     async def orchestrate(self, response: Any, brain, original_payload: Dict[str, Any]) -> Any:
         from typing import AsyncGenerator
-        if isinstance(response, AsyncGenerator):
+        if isinstance(response, AsyncGenerator) or original_payload.get('stream'):
             return self.stream_orchestrate(response, brain, original_payload)
         else:
             choice = response.get("choices", [{}])[0]

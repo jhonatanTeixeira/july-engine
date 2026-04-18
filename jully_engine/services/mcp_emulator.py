@@ -99,6 +99,7 @@ class XMLStreamParser:
         
         if buffer:
             yield Chunk.from_str(buffer)
+            await asyncio.sleep(0)
 
 
 # ==========================================
@@ -370,13 +371,11 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         
                         # Yield start status
                         yield {"status_update": display_name}
-                        await asyncio.sleep(0)
                         
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
                         # Yield end status
                         yield {"status_update": ""} # Empty string to clear status
-                        await asyncio.sleep(0)
                         
                         is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
                         
@@ -395,11 +394,14 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                 "role": "user", 
                                 "content": f"[SYSTEM MESSAGE: TOOL {item.name} CALLED]: {llm}"
                             })
+
+                    await asyncio.sleep(0)
                 
                 if tools_executed and requires_second_call:
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):
                         yield dict(second_chunk)
+                        await asyncio.sleep(0)
 
             return stream_orchestrator()
 

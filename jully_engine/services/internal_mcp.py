@@ -475,7 +475,7 @@ class InternalMCP:
         
     # --- UTILITÁRIO ---
     async def orchestrate(self, response: Union[Dict[str, Any], AsyncGenerator], brain, original_payload: Dict[str, Any]) -> Union[Dict[str, Any], AsyncGenerator]:
-        if isinstance(response, AsyncGenerator) or hasattr(response, '__aiter__'):
+        if isinstance(response, AsyncGenerator) or hasattr(response, '__aiter__') or original_payload.get('stream'):
             return self.stream_orchestrate(response, brain, original_payload)
         else:
             choice = response.get("choices", [{}])[0]

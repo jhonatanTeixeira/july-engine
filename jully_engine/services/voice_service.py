@@ -101,5 +101,38 @@ class VoiceService:
             return True
         return False
 
+    def delete_voice(self, voice_id: str) -> bool:
+        voice_info = self.get_voice_info(voice_id)
+        if not voice_info:
+            return False
+            
+        # Delete from backend
+        deleted = self.backend.delete_uploaded_voice(voice_id)
+        
+        # Delete files if they exist
+        if "path" in voice_info and voice_info["path"]:
+            full_path = f"{self.base_path}/{voice_info['path']}"
+            try:
+                cp = CloudPath(full_path)
+                cp.unlink(missing_ok=True)
+            except Exception:
+                pass
+                
+        return deleted
+
+    def update_voice(self, voice_id: str, name: Optional[str] = None, language: Optional[str] = None, metadata: Optional[Dict] = None) -> Optional[Dict[str, Any]]:
+        voice_info = self.get_voice_info(voice_id)
+        if not voice_info:
+            return None
+            
+        if name is not None:
+            voice_info["name"] = name
+        if language is not None:
+            voice_info["language"] = language
+        if metadata is not None:
+            voice_info["metadata"] = metadata
+            
+        self.backend.add_uploaded_voice(voice_info)
+        return voice_info
 
 voice_service = VoiceService()

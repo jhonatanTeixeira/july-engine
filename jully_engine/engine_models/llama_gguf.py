@@ -132,9 +132,6 @@ class GGUF:
                 elif vision_type == "nanollava" or vision_type == "paligemma":
                     from llama_cpp.llama_chat_format import NanoLlavaChatHandler
                     params["chat_handler"] = NanoLlavaChatHandler(clip_model_path=mmproj_path)
-                # elif vision_type == "paligemma":
-                #     from llama_cpp.llama_chat_format import PaliGemmaChatHandler
-                #     params["chat_handler"] = PaliGemmaChatHandler(clip_model_path=mmproj_path)
                 else:
                     from llama_cpp.llama_chat_format import Llava15ChatHandler
                     params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)

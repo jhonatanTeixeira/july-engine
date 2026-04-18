@@ -109,6 +109,11 @@ class PostgresBackend(PersistenceBackend):
         with self.engine.begin() as conn:
             conn.execute(stmt)
 
+    def delete_uploaded_voice(self, voice_id: str) -> bool:
+        with self.engine.begin() as conn:
+            result = conn.execute(voices_table.delete().where(voices_table.c.id == voice_id))
+            return result.rowcount > 0
+
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         from sqlalchemy.dialects.postgresql import insert
         stmt = insert(history_table).values(id=event_data["id"], data=event_data)
