@@ -1,6 +1,9 @@
 import os
+import io
 import logging
 from typing import Any, Dict, Optional
+import numpy as np
+import soundfile as sf
 
 logger = logging.getLogger("JulyEngine.Models.XTTS2")
 
@@ -13,21 +16,61 @@ class XTTS2:
         self.backend = backend
         self.device = "cpu" # Default until load()
         self.model = None
+        
+        # OFF-LOAD AND IDLE CONFIGS
+        self.idle_timeout = 120  # 2 minutos ocioso para offload
+        self._idle_timer = None
+        self._is_offloaded = False
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM para o XTTS2 (~2.2GB)."""
+        """Calcula a VRAM para o XTTS2."""
         if self.backend == "cpu":
             return 0
-        return 2200 # ~2.2GB para este modelo (XTTS2)
+        # Com quantização (half precision), a VRAM exigida cai para ~1.2GB
+        return 1200 
+
+    def _reset_idle_timer(self):
+        if self.device == "cpu":
+            return
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        import threading
+        self._idle_timer = threading.Timer(self.idle_timeout, self._perform_idle_offload)
+        self._idle_timer.start()
+
+    def _perform_idle_offload(self):
+        if self.model is not None and not self._is_offloaded:
+            logger.info("XTTS2: Timeout ocioso atingido. Aplicando Idle Offload (GPU -> CPU)...")
+            self.model = self.model.to("cpu")
+            self._is_offloaded = True
+            import torch
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
 
     def load(self):
         if self.model is None:
             import torch
-            self.device = "cuda" if self.backend == "gpu" and torch.cuda.is_available() else "cpu"
             from TTS.api import TTS
+            
+            self.device = "cuda" if self.backend == "gpu" and torch.cuda.is_available() else "cpu"
+            
             try:
                 logger.info(f"XTTS2: Loading model on {self.device}")
-                self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
+                # Otimização: Adicionado carregamento padrão otimizado do XTTS
+                self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+                
+                # QUANTIZAÇÃO: Usar FP16 para reduzir uso de memória na GPU
+                if self.device == "cuda":
+                    try:
+                        # Convertendo todos os sub-módulos do XTTS para FP16
+                        for name, module in self.model.synthesizer.tts_model.named_modules():
+                            module.half()
+                        logger.info("XTTS2: Modelo quantizado para FP16 (Metade da VRAM).")
+                    except Exception as e:
+                        logger.warning(f"XTTS2: Falha ao aplicar FP16: {e}")
+                        
+                self.model = self.model.to(self.device)
+                self._is_offloaded = False
                 logger.info("XTTS2 loaded successfully.")
             except Exception as e:
                 logger.error(f"XTTS2: Failed to load: {e}")
@@ -42,37 +85,49 @@ class XTTS2:
             raise ValueError(f"Voice {voice_id} not found")
             
         voice_path, voice_lang = voice_res
-        # Prioritize provided language, fallback to voice info language
+        
+        # Correção do Bug: Usando a variável target_lang corretamente
         target_lang = language or voice_lang
 
         if self.model is None:
             self.load()
-
-        text = text.replace(".", "").replace('"', '').replace("-", "")
+        elif self._is_offloaded and self.device == "cuda":
+            logger.info("XTTS2: Acordando modelo. Movendo da CPU para GPU (Memory Offload)...")
+            self.model = self.model.to(self.device)
+            self._is_offloaded = False
             
-        import tempfile
+        self._reset_idle_timer()
+
+        # OTIMIZAÇÃO DE QUALIDADE (Prosódia)
+        # Limpeza leve, mas MANTENDO pontuações vitais.
+        text = text.replace('"', '').replace("-", " ").replace(".", "\n")
+        text = text.strip()
+        # Dica de Ouro XTTS: Sempre force um caractere de encerramento no final 
+        # para evitar alucinações ("babbling") da IA.
+        if not text.endswith((".", "!", "?")):
+            text += "."
+            
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
-                output_path = tmp_file.name
-                
-            logger.info(f"XTTS2: Synthesizing to {output_path} using speaker {voice_path}")
-            self.model.tts_to_file(
+            logger.info(f"XTTS2: Synthesizing (in-memory) using speaker {voice_path}")
+            
+            # OTIMIZAÇÃO DE I/O: Gerar direto na memória (numpy array) em vez de disco
+            wav_array = self.model.tts(
                 text=text,
                 speaker_wav=voice_path,
-                language=language,
-                file_path=output_path,
+                language=target_lang,
                 temperature=temperature
             )
             
-            with open(output_path, "rb") as f:
-                audio_bytes = f.read()
-                
-            os.remove(output_path)
-            logger.info(f"Engine XTTS2 executed successfully on {self.backend} with XTTS2")
+            # Converte o array para bytes WAV na memória RAM (Zero I/O de disco)
+            # XTTS v2 tem a taxa de amostragem (sample rate) de 24000 nativa
+            buffer = io.BytesIO()
+            sf.write(buffer, np.array(wav_array), 24000, format='WAV')
+            audio_bytes = buffer.getvalue()
+            
+            logger.info(f"Engine XTTS2 executed successfully on {self.backend}")
             return audio_bytes
+            
         except Exception as e:
-            if 'output_path' in locals() and os.path.exists(output_path):
-                os.remove(output_path)
             logger.error(f"XTTS2: Execution failed: {e}")
             raise e
 
@@ -80,7 +135,11 @@ class XTTS2:
         return self.model is not None
 
     def unload(self):
-        """Libera os recursos da estratégia (XTTS2, Piper, etc)."""
+        """Libera os recursos da estratégia."""
+        if hasattr(self, '_idle_timer') and self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+            
         if self.model:
             del self.model
             self.model = None
@@ -90,4 +149,5 @@ class XTTS2:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect() # Limpeza mais agressiva de VRAM
         logger.info("XTTS2: Model unloaded.")

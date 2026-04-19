@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from ..engine_models.piper import Piper
     from ..engine_models.llm_api import LLMApi
     from ..engine_models.kokoro_tts import KokoroTTS
+    from ..engine_models.chatterbox import ChatterboxTTS
 
 from ..persistence import get_backend
 
@@ -45,6 +46,9 @@ class Mouth:
         elif self.model_tag.startswith("kokoro"):
             from ..engine_models.kokoro_tts import KokoroTTS
             return KokoroTTS(backend=self.backend, model_tag=self.model_tag)
+        elif self.model_tag.startswith("chatterbox"):
+            from ..engine_models.chatterbox import ChatterboxTTS
+            return ChatterboxTTS(backend=self.backend, model_tag=self.model_tag)
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -63,13 +67,9 @@ class Mouth:
         from ..engine_models.piper import Piper
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.kokoro_tts import KokoroTTS
-        import re
-
+        
         # 1. Extração e Limpeza de Texto
         raw_text = payload.get("input", payload.get("text", ""))
-        
-        # Remove caracteres especiais que podem quebrar o TTS ou soar estranho
-        # Mantém pontuação básica para o split
         clean_text = re.sub(r'[*_`#~\[\]()\\<>+=\-|{}]', '', raw_text)
         
         headers: dict = payload.get("headers", {})
@@ -88,32 +88,38 @@ class Mouth:
             headers.setdefault("x-api-key", config.get('api_key', None))
             headers.setdefault("authorization", f"Bearer {config.get('api_key', None)}")
 
-        # 2. Lógica de Streaming por Sentença
+        # ==========================================
+        # 2. LÓGICA INTELIGENTE DE STREAMING
+        # ==========================================
         if stream:
-            # Divide o texto em frases baseadas no ponto final
-            # Filtra strings vazias
+            
+            # --- Rota A: Modelos com Streaming NATIVO (Zero latência) ---
+            if isinstance(self._strategy, KokoroTTS):
+                # O Kokoro foi construído para devolver os bytes quase instantaneamente
+                # Passamos o texto inteiro e deixamos a engine lidar com os buffers de yield
+                return await self._strategy.run(
+                    clean_text, voice_id, language, stream=True, semitones=semitones
+                )
+            
+            # (Adicione aqui o Chatterbox se for usar o generator dele)
+            # elif isinstance(self._strategy, ChatterboxTTS):
+            #     return await self._strategy.run(clean_text, voice_id, language, stream=True, ...)
+
+            # --- Rota B: Fallback Chunking (Para XTTS2, Piper e APIs engessadas) ---
+            # Aqui mantemos a sua lógica brilhante de poupar RAM cortando a frase!
             sentences = [s.strip() + "." for s in clean_text.split('.') if s.strip()]
             
             async def sentence_streamer():
                 for sentence in sentences:
-                    logger.info(f"Mouth: Streaming sentence: {sentence[:50]}...")
+                    logger.info(f"Mouth: Streaming fallback chunk: {sentence[:50]}...")
                     
                     audio_chunk = None
                     if isinstance(self._strategy, (LLMApi, Replicate)):
-                        # Para APIs externas, fazemos chamadas sequenciais por frase se quiser stream real
-                        # Ou deixamos a API lidar. Aqui vamos forçar por frase para o design solicitado.
                         audio_chunk = await self._strategy.run_tts(self.model_tag, sentence, voice_id, headers=headers)
-                    
                     elif isinstance(self._strategy, XTTS2):
                         audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
-                    
                     elif isinstance(self._strategy, Piper):
                         audio_chunk = self._strategy.run(sentence, voice_id)
-                    
-                    elif isinstance(self._strategy, KokoroTTS):
-                        # O Kokoro já tem um gerador interno, mas vamos seguir o padrão de sentenças
-                        # para consistência entre as engines se o usuário pediu split por ponto.
-                        audio_chunk = await self._strategy.run(sentence, voice_id, language, stream=False, semitones=semitones)
 
                     if audio_chunk:
                         if inspect.iscoroutine(audio_chunk):
@@ -122,7 +128,9 @@ class Mouth:
             
             return sentence_streamer()
 
-        # 3. Lógica Não-Streaming (Legado/Full)
+        # ==========================================
+        # 3. Lógica Não-Streaming (Frase inteira de uma vez)
+        # ==========================================
         if isinstance(self._strategy, (LLMApi, Replicate)):
             audio_content = self._strategy.run_tts(self.model_tag, clean_text, voice_id, headers=headers, **payload)
             if inspect.iscoroutine(audio_content):

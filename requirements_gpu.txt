@@ -2,17 +2,20 @@
 
 -r requirements_cpu.txt
 
+# llama-cpp-python compilado localmente (gerado pelo setup_gpu.sh)
+--find-links ./vendor/llama-cpp-python/dist
+llama-cpp-python
+
 # GPU specific
 torchcodec
 accelerate
 coqui-tts
 nvidia-ml-py
-llama-cpp-python
-diffusers 
+diffusers
 transformers==5.0.0
 bitsandbytes
 peft
-safetensors 
+safetensors
 insightface
 xformers
 # git+https://github.com/tencent-ailab/IP-Adapter.git

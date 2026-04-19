@@ -20,7 +20,6 @@ class KokoroTTS:
         self.device = "cuda" if backend == "gpu" else "cpu"
         self.lang_code = None
 
-        # 1. A MORDAÇA DE THREADS: Restringe o PyTorch a usar poucos núcleos.
         if self.device == "cpu":
             try:
                 import torch
@@ -54,16 +53,23 @@ class KokoroTTS:
             logger.info("KokoroTTS: Unloading model")
             del self.pipeline
             self.pipeline = None
+            
+            # OTIMIZAÇÃO: Limpeza profunda (RAM e VRAM)
             gc.collect()
+            if self.device == "cuda":
+                try:
+                    import torch
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+                except ImportError:
+                    pass
 
-    # Adicionado 'semitones': -2.0 para vilões graves, +2.0 para fadinhas agudas
     async def run(self, text: str, voice_id: str, lang_code: str, stream: bool = False, semitones: float = 0.0):
         self.load(lang_code)
             
         try:
             generator = self.pipeline(text, voice=voice_id, speed=1.0, split_pattern=r'\n+')
             
-            # 2. INICIALIZA A GAMBIARRA LIMPA (Zero overhead no loop)
             board = None
             if semitones != 0.0:
                 try:
@@ -75,18 +81,26 @@ class KokoroTTS:
             
             if stream:
                 async def audio_streamer():
+                    # OTIMIZAÇÃO: Import fora do loop `while`
                     import soundfile as sf
+                    import numpy as np
+                    
                     while True:
                         try:
+                            # O generator do Kokoro devolve (graphemes, phonemes, audio)
                             _, _, audio = await asyncio.to_thread(next, generator)
                             
-                            # Aplica o efeito no pedaço de áudio em tempo real
                             if board:
                                 audio = board(audio, 24000)
                                 
                             buffer = BytesIO()
                             sf.write(buffer, audio, 24000, format='WAV')
+                            
+                            # AVISO ARQUITETONICO: O ideal para streams contínuos seria usar raw PCM:
+                            # yield audio.tobytes()
+                            # Mantive o WAV para não quebrar a tua integração atual, mas fica o alerta.
                             yield buffer.getvalue()
+                            
                         except StopIteration:
                             break
                 return audio_streamer()
@@ -97,7 +111,6 @@ class KokoroTTS:
 
             final_audio = await asyncio.to_thread(generate_all_sync)
             
-            # Aplica o efeito no áudio inteiro de uma vez
             if board:
                 final_audio = board(final_audio, 24000)
             

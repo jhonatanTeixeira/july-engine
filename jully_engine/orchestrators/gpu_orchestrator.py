@@ -178,8 +178,14 @@ class Runner:
                     unloaded = await self.unload_next(required)
                     
                     if not unloaded:
-                        # Se nada pode sair, espera alguém terminar de usar (mark_idle)
-                        await self.wait_for_free_vram(required)
+                        if hasattr(domain._strategy, "decrement_layers"):
+                            domain._strategy.decrement_layers()
+                            
+                            while await domain.get_required_vram(payload) > self.context.get_free_vram():
+                                domain._strategy.decrement_layers()
+                        else:
+                            # Se nada pode sair, espera alguém terminar de usar (mark_idle)
+                            await self.wait_for_free_vram(required)
                 
                 domain.load()
 
@@ -228,5 +234,6 @@ class GpuOrchestrator:
         except Exception as e:
             print(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")
             raise e
+
 
 gpu_orchestrator = GpuOrchestrator()

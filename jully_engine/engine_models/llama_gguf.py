@@ -6,26 +6,54 @@ import logging
 import time
 import uuid
 from typing import Any, Dict, List, Optional
-from ..services.resource_calculator import estimate_vram_ram
+from ..services.resource_calculator import estimate_vram_ram, ModelMetadata
 
 logger = logging.getLogger("JulyEngine.Models.GGUF")
 
 import re
 
 
-def detect_model_type(repo_id_or_filename: str) -> str:
+def detect_model_capabilities(repo_id_or_filename: str) -> dict:
+    """
+    Usa RegEx para mapear o modelo para os Handlers específicos do fork JamePeng.
+    """
     name = repo_id_or_filename.lower()
-    if "moondream" in name:
-        return "moondream"
-    if "nanollava" in name:
-        return "nanollava"
-    if "llava-v1.6" in name or "mistral-7b-instruct-v0.2" in name:
-        return "llava-v1.6"
-    if "gemma" in name or "paligemma" in name:
-        return "paligemma"
+    capabilities = {
+        "vision_handler": None,
+        "chat_format": "jinja"
+    }
 
-    return "llava"
+    # ==========================================
+    # 1. DETECÇÃO DO CHAT FORMAT FALLBACK
+    # ==========================================
+    if re.search(r"qwen[_\-\.]?(?:2\.5|3|4)", name):
+        capabilities["chat_format"] = "chatml" 
+    elif re.search(r"gemma[_\-\.]?[2-4]", name):
+        capabilities["chat_format"] = "gemma"
+    elif re.search(r"llama[_\-\.]?3|hermes", name):
+        capabilities["chat_format"] = "llama-3"
+    elif re.search(r"mistral|mixtral|pixtral|ministral", name):
+        capabilities["chat_format"] = "mistral-instruct"
 
+    # ==========================================
+    # 2. DETECÇÃO DE VISÃO (JAMEPENG HANDLERS)
+    # ==========================================
+    if re.search(r"gemma[_\-\.]?4", name):
+        capabilities["vision_handler"] = "gemma4"
+    elif re.search(r"gemma[_\-\.]?3", name):
+        capabilities["vision_handler"] = "gemma3"
+    elif re.search(r"qwen[_\-\.]?(?:2\.5|3|4|vl)", name):
+        capabilities["vision_handler"] = "qwen35"
+    elif re.search(r"pixtral|ministral", name):
+        capabilities["vision_handler"] = "pixtral"
+    elif re.search(r"moondream", name):
+        capabilities["vision_handler"] = "moondream"
+    elif re.search(r"llava[_\-\.]?v?1\.6", name):
+        capabilities["vision_handler"] = "llava-v1.6"
+    elif re.search(r"llava", name):
+        capabilities["vision_handler"] = "llava"
+
+    return capabilities
 
 class GGUF:
     def __init__(self, backend, model):
@@ -36,6 +64,22 @@ class GGUF:
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.model = None
         self.model_path = hf_hub_download(repo_id=model["model_id"], filename=model["filename"])
+        self.model_metadata = ModelMetadata(self.model_path)
+
+    def max_layers(self):
+        return self.model_metadata.block_count
+
+    def decrement_layers(self):
+        max_layers = self.meta.get("num_layers")
+
+        if max_layers == -1:
+            max_layers = self.max_layers()
+
+        self.meta["num_layers"] = max_layers - 1
+        logger.debug(f"GGUF: Decrementing layers. New value: {self.meta['num_layers']}")
+
+        if self.model['num_layers'] <= 0:
+            raise ValueError("GGUF: Layers cannot be decremented further.")
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         if self.backend == "cpu": 
@@ -47,7 +91,7 @@ class GGUF:
         effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
         
         # 2. Get layers config
-        layers_to_offload = payload.get("num_layers") or meta.get("num_layers") or -1
+        layers_to_offload = meta.get("num_layers") or -1
         
         # 3. Calculate with precision
         estimates = estimate_vram_ram(
@@ -104,38 +148,71 @@ class GGUF:
             if kv_quant:
                 kv_quant = str(kv_quant).upper()
                 if "8" in kv_quant or "Q8_0" in kv_quant:
-                    params["type_k"] = llama_cpp.GGML_TYPE_Q8_0
-                    params["type_v"] = llama_cpp.GGML_TYPE_Q8_0
+                    params["type_k"] = 8
+                    params["type_v"] = 8
                     logger.info("GGUF: Using Q8_0 for KV Cache")
                 elif "4" in kv_quant or "Q4_0" in kv_quant:
-                    params["type_k"] = llama_cpp.GGML_TYPE_Q4_0
-                    params["type_v"] = llama_cpp.GGML_TYPE_Q4_0
+                    params["type_k"] = 4
+                    params["type_v"] = 4
                     logger.info("GGUF: Using Q4_0 for KV Cache")
                 else:
                     logger.info("GGUF: Using default FP16 for KV Cache")
+            
+            # Extração de Capacidades
+            model_identifier = meta["model_id"] + meta["filename"]
+            caps = detect_model_capabilities(model_identifier)
 
             if meta.get("template"):
                 params["chat_format"] = meta["template"]
-
-            if meta.get("model_type") == "vision":
+            else:
+                params["chat_format"] = "jinja" if "jinja" in llama_cpp.llama_chat_format.CHAT_FORMATS else caps["chat_format"]
+            
+            if meta.get("model_type") == "vision" or caps["vision_handler"]:
+                
+                # Prepara o caminho do projetor se existir (modelos integrados como Qwen podem não usar)
+                mmproj_path = None
                 mmproj_id = meta.get("mmproj_id")
                 mmproj_filename = meta.get("mmproj_filename")
-                if not mmproj_id or not mmproj_filename:
-                    raise ValueError(f"GGUF: Vision model {self.meta['model_alias']} missing mmproj.")
-                mmproj_path = hf_hub_download(mmproj_id, mmproj_filename)
                 
-                vision_type = detect_model_type(meta["model_id"] + meta["filename"])
-                
-                if vision_type == "moondream":
-                    from llama_cpp.llama_chat_format import MoondreamChatHandler
-                    params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
-                elif vision_type == "nanollava" or vision_type == "paligemma":
-                    from llama_cpp.llama_chat_format import NanoLlavaChatHandler
-                    params["chat_handler"] = NanoLlavaChatHandler(clip_model_path=mmproj_path)
-                else:
-                    from llama_cpp.llama_chat_format import Llava15ChatHandler
-                    params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                if mmproj_id and mmproj_filename:
+                    mmproj_path = hf_hub_download(mmproj_id, mmproj_filename)
 
+                v_handler = caps["vision_handler"]
+                
+                # Importa as classes avançadas do MTMDChatHandler
+                try:
+                    if v_handler == "gemma4":
+                        from llama_cpp.llama_chat_format import Gemma4ChatHandler
+                        # Nota: o JamePeng permite inicializar sem clip_model_path se o modelo for integrado
+                        params["chat_handler"] = Gemma4ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma4ChatHandler()
+                        
+                    elif v_handler == "gemma3":
+                        from llama_cpp.llama_chat_format import Gemma3ChatHandler
+                        params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma3ChatHandler()
+                        
+                    elif v_handler == "qwen35":
+                        from llama_cpp.llama_chat_format import Qwen35ChatHandler
+                        params["chat_handler"] = Qwen35ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen35ChatHandler()
+                        
+                    elif v_handler == "moondream":
+                        from llama_cpp.llama_chat_format import MoondreamChatHandler
+                        params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
+                        
+                    elif v_handler == "llava-v1.6" or v_handler == "pixtral":
+                        from llama_cpp.llama_chat_format import Llava16ChatHandler
+                        params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path)
+                        
+                    elif v_handler == "llava":
+                        from llama_cpp.llama_chat_format import Llava15ChatHandler
+                        params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                        
+                except ImportError as exc:
+                    logger.warning(f"GGUF: Handler {v_handler} não encontrado no teu llama-cpp-python. Fallback para Llava15. Erro: {exc}")
+                    if mmproj_path:
+                        from llama_cpp.llama_chat_format import Llava15ChatHandler
+                        params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+
+            logger.info(f"GGUF: Final params for Llama: {params}")
             self.model = Llama(**params)
             
         except Exception as e:
