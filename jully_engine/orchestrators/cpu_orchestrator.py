@@ -78,7 +78,8 @@ class CpuOrchestrator:
                 return eyes.analyze(payload)
             elif task_type == "tts":
                 mouth = model_loader.get_mouth(backend, model_tag)
-                return mouth.speak(payload)
+                result = asyncio.run(mouth.speak(payload))
+                return result
             elif task_type == "stt":
                 ears = model_loader.get_ears(backend, model_tag)
                 return ears.listen(payload.get('audio'), payload.get('language'), payload)

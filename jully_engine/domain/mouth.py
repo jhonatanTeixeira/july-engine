@@ -2,8 +2,9 @@ from __future__ import annotations
 import logging
 import os
 import json
+import re
 import inspect
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, Union, AsyncGenerator, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..engine_models.replicate_api import Replicate
@@ -47,7 +48,7 @@ class Mouth:
             from ..engine_models.kokoro_tts import KokoroTTS
             return KokoroTTS(backend=self.backend, model_tag=self.model_tag)
         elif self.model_tag.startswith("chatterbox"):
-            from ..engine_models.chatterbox import ChatterboxTTS
+            from ..engine_models.chatterbox_tts import ChatterboxTTS
             return ChatterboxTTS(backend=self.backend, model_tag=self.model_tag)
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
@@ -107,7 +108,8 @@ class Mouth:
 
             # --- Rota B: Fallback Chunking (Para XTTS2, Piper e APIs engessadas) ---
             # Aqui mantemos a sua lógica brilhante de poupar RAM cortando a frase!
-            sentences = [s.strip() + "." for s in clean_text.split('.') if s.strip()]
+            sentences = [s.strip() + "." for s in re.split(r'[.\n]+', clean_text) if s.strip()]
+            logger.debug(f"Mouth: Chunking text into {len(sentences)} sentences.")
             
             async def sentence_streamer():
                 for sentence in sentences:

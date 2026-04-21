@@ -26,8 +26,7 @@ class XTTS2:
         """Calcula a VRAM para o XTTS2."""
         if self.backend == "cpu":
             return 0
-        # Com quantização (half precision), a VRAM exigida cai para ~1.2GB
-        return 1200 
+        return 2500
 
     def _reset_idle_timer(self):
         if self.device == "cpu":
@@ -58,17 +57,6 @@ class XTTS2:
                 logger.info(f"XTTS2: Loading model on {self.device}")
                 # Otimização: Adicionado carregamento padrão otimizado do XTTS
                 self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-                
-                # QUANTIZAÇÃO: Usar FP16 para reduzir uso de memória na GPU
-                if self.device == "cuda":
-                    try:
-                        # Convertendo todos os sub-módulos do XTTS para FP16
-                        for name, module in self.model.synthesizer.tts_model.named_modules():
-                            module.half()
-                        logger.info("XTTS2: Modelo quantizado para FP16 (Metade da VRAM).")
-                    except Exception as e:
-                        logger.warning(f"XTTS2: Falha ao aplicar FP16: {e}")
-                        
                 self.model = self.model.to(self.device)
                 self._is_offloaded = False
                 logger.info("XTTS2 loaded successfully.")
@@ -110,7 +98,6 @@ class XTTS2:
         try:
             logger.info(f"XTTS2: Synthesizing (in-memory) using speaker {voice_path}")
             
-            # OTIMIZAÇÃO DE I/O: Gerar direto na memória (numpy array) em vez de disco
             wav_array = self.model.tts(
                 text=text,
                 speaker_wav=voice_path,

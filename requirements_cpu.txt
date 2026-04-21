@@ -30,3 +30,4 @@ retina-face
 tensorflow
 tf-keras
 pedalboard
+chatterbox-tts
