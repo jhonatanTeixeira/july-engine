@@ -44,11 +44,11 @@ def detect_model_capabilities(repo_id_or_filename: str) -> dict:
         capabilities["vision_handler"] = "gemma3"
     elif 'qwen' in name:
         if '2.5' in name and 'vl' in name:
-            capabilities["chat_format"] = "qwen25vl"
+            capabilities["vision_handler"] = "qwen25vl"
         if '3' in name and 'vl' in name:
-            capabilities["chat_format"] = "qwen3vl"
+            capabilities["vision_handler"] = "qwen3vl"
         if '3.5' in name:
-            capabilities["chat_format"] = "qwen35"
+            capabilities["vision_handler"] = "qwen35"
     elif re.search(r"pixtral|ministral", name):
         capabilities["vision_handler"] = "pixtral"
     elif re.search(r"moondream", name):

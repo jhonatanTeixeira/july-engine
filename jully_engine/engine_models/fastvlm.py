@@ -160,7 +160,7 @@ class FastVLM:
     def is_loaded(self) -> bool:
         return self.vlm is not None
 
-    def unload(self):
+    def unload(self, model_name: str = None):
         """Limpa a memória RAM e a VRAM ativamente."""
         if self.vlm:
             del self.vlm
