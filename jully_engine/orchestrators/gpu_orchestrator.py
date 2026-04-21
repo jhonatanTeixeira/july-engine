@@ -18,6 +18,16 @@ class GpuContext:
         self.condition = asyncio.Condition() 
         self.resource_manager = resource_manager
 
+    def get_runner(self, task_type: str) -> 'Runner':
+        return self.state.get(task_type, {}).get("runner")
+
+    def release_task(self, task_type: str):
+        with self.state_lock:
+            if task_type in self.state:
+                self.state[task_type]['status'] = 'idle'
+                self.state[task_type]['usage_count'] = 0
+                self.state[task_type]['runner'] = None
+
     def mark_busy(self, task_type: str, runner: 'Runner'):
         with self.state_lock:
             if task_type not in self.state:
@@ -44,8 +54,7 @@ class GpuContext:
 
     def is_loaded(self, task_type: str):
         with self.state_lock:
-            data = self.state.get(task_type)
-            return data and data['status'] == 'busy'
+            return task_type in self.state
 
     def get_free_vram(self):
         return self.resource_manager.get_available_vram_mb()
@@ -54,36 +63,36 @@ class GpuContext:
         self.resource_manager.clear_memory()
 
 class Runner:
-    def __init__(self, task_type: str, payload: dict, context: GpuContext):
+    def __init__(self, task_type: str, model: dict, context: GpuContext):
         from ..model_loader import model_loader # Import interno para evitar circularidade
         self.task_type = task_type
-        self.payload = payload
+        self.model = model
         self.context = context
         self.model_loader = model_loader
         self.is_running = True
+        self.state_lock = threading.Lock()
         self.unload_priority = [
             'stt', 'tts', 'embeddings', 'rag_add', 'rag_batch_add', 
             'rag_search', 'rag_update', 'pix2pix', 'image_generation', 'image_resize', 'vision_chat', 'text_chat'
         ]
 
-    def get_domain(self, backend, model_tag):
+    def get_domain(self):
         if self.task_type == "text_chat": 
-            return self.model_loader.get_brain(backend, model_tag)
+            return self.model_loader.get_brain('gpu', self.model)
         if self.task_type == "vision_chat": 
-            return self.model_loader.get_eyes(backend, model_tag)
+            return self.model_loader.get_eyes('gpu', self.model)
         if self.task_type == "tts": 
-            return self.model_loader.get_mouth(backend, model_tag)
+            return self.model_loader.get_mouth('gpu', self.model)
         if self.task_type == "stt": 
-            return self.model_loader.get_ears(backend, model_tag)
+            return self.model_loader.get_ears('gpu', self.model)
         if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
-            return self.model_loader.get_presence(backend, model_tag)
-        if self.task_type in ["search_web", "search_code"]:
-            return self.model_loader.get_world(backend, model_tag)
+            return self.model_loader.get_presence('gpu', self.model)
 
-        return self.model_loader.get_memory(backend, model_tag)
+        return self.model_loader.get_memory('gpu', self.model)
 
-    async def run_task(self, domain, payload):
+    async def run_task(self, payload):
         task_type = self.task_type
+        domain = self.get_domain()
 
         if task_type == "text_chat": 
             result = domain.chat(payload)
@@ -121,29 +130,39 @@ class Runner:
             result = domain.edit(payload)
         elif task_type == "image_resize": 
             result = domain.resize(payload)
-        elif task_type == "search_web": 
-            result = domain.search_web(payload)
-        elif task_type == "search_code": 
-            result = domain.search_code(payload)
 
         if inspect.iscoroutine(result):
             result = await result
 
         return result
 
-    async def unload_next(self, required_vram: int):
+    def unload_next(self, required_vram: int):
         """Busca o próximo modelo idle na prioridade e descarrega."""
         for task in self.unload_priority:
-            if self.context.is_truly_idle(task):
-                print(f"📦 [Orchestrator] Descarregando {task} para liberar espaço...")
-                # Aqui chamamos o unload real do domínio
-                domain = self.get_domain("gpu", self.payload.get("model"))
-                domain.unload()
-                self.context.garbage_collection()
+            if self.context.is_loaded(task) and self.context.is_truly_idle(task):
+                logger.info(f"📦 [Orchestrator] Descarregando {task} para liberar espaço...")
+                runner = self.context.get_runner(task)
+                runner.unload()
                 
                 if self.context.get_free_vram() >= required_vram:
                     return True
+
         return False
+
+    def unload(self, timeout=60):
+        with self.state_lock:
+            time = 0
+
+            while not self.context.is_truly_idle(self.task_type) and time <= timeout:
+                time += 1
+                time.sleep(1)
+
+            if time >= timeout:
+                raise Exception(f"Timeout na GPU: {self.task_type} não está idle após {timeout}s.")
+
+            self.get_domain().unload()
+            self.context.garbage_collection()
+            self.context.release_task(self.task_type)
 
     async def wait_for_free_vram(self, required_vram: int, timeout: int = 60):
         start_time = time.time()
@@ -164,13 +183,16 @@ class Runner:
                     raise TimeoutError("Timeout na fila da GPU.")
 
     async def run(self, payload: dict):
-        model_tag = payload.get("model")
-        domain = self.get_domain("gpu", model_tag)
-
         async with self.context.orchestrator_lock:
             self.context.garbage_collection()
-            
-            if not domain.is_loaded():
+
+            domain = self.get_domain()
+            runner = self.context.get_runner(self.task_type)
+
+            if self.context.is_loaded(self.task_type) and runner.model != self.model:
+                runner.unload()
+
+            elif not domain.is_loaded():
                 required = await domain.get_required_vram(payload)
 
                 while self.context.get_free_vram() < required:
@@ -190,9 +212,9 @@ class Runner:
                 domain.load()
 
             self.context.mark_busy(self.task_type, self)
-
+        
         try:
-            return await self.run_task(domain, payload)
+            return await self.run_task(payload)
         finally:
             # Libera o contador mas MANTÉM o modelo carregado ("quente")
             await self.context.mark_idle(self.task_type)
@@ -203,6 +225,7 @@ class GpuOrchestrator:
     def __init__(self):
         # Passamos o resource_manager para o contexto gerenciar VRAM
         self.context = GpuContext()
+        self.slots: Dict[str, Runner] = {}
 
     async def start(self):
         """Inicialização de serviços globais da GPU se necessário."""
@@ -218,18 +241,16 @@ class GpuOrchestrator:
         Interface principal chamada pelo InferenceHelper.
         Cria um Runner temporário para orquestrar a memória e executar a tarefa.
         """
-        # Criamos o Runner. O Runner já possui a lógica de:
-        # 1. Verificar VRAM
-        # 2. Dar Unload em modelos idle se necessário
-        # 3. Esperar se a VRAM estiver ocupada por processos busy
-        # 4. Carregar o modelo
-        # 5. Executar
-        runner = Runner(task_type, payload, self.context)
-        
-        # Chamamos o runner.run que gerencia as Fases 1, 2 e 3
-        # O retorno de runner.run é o que run_task devolve (pode ser valor ou gerador)
+        from ..services.models_service import model_service
+
+        model = payload.get("model") or model_service.resolve_by_task_type(task_type)
+        slot = f"{task_type}_{model}"
+
+        if slot not in self.slots:
+            self.slots[slot] = Runner(task_type, model, self.context)
+
         try:
-            result = await runner.run(payload)
+            result = await self.slots[slot].run(payload)
             return result
         except Exception as e:
             print(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")

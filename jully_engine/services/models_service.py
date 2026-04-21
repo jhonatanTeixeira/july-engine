@@ -19,9 +19,43 @@ class ModelsService:
     
     def resolve_by_settings(self, model_alias: str):
         return self.backend.get_model_by_settings(model_alias)
+
+    def resolve_by_task_type(self, task_type: str):
+        """Resolve o modelo padrão para um tipo de tarefa específico"""
+
+        task_mapping = {
+            "tts": "TTS",
+            "stt": "STT",
+            "vision_chat": "VISION",
+            "embeddings": "EMBEDDINGS",
+            "pix2pix": "IMAGE_EDIT",
+            "image_resize": "RESIZE",
+            "image_generation": "IMAGE_CREATE",
+            "search_web": "WEB_SEARCH",
+            "search_code": "REPOSITORY_SEARCH",
+            # RAG / Memory Tasks
+            "rag_add": "EMBEDDINGS",
+            "rag_batch_add": "EMBEDDINGS",
+            "rag_search": "EMBEDDINGS",
+            "rag_vector_add": "EMBEDDINGS",
+            "rag_search_details": "EMBEDDINGS",
+            "rag_update": "EMBEDDINGS",
+            "rag_delete": "EMBEDDINGS",
+            "rag_list": "EMBEDDINGS",
+            "rag_smart_search": "EMBEDDINGS"
+        }
+
+        if task_type == "text_chat":
+            return self.get_default_text_model()
+
+        return self.backend.get_setting(task_mapping[task_type])
     
     def get_default_text_model(self):
         presets = self.backend.get_setting("TEXT_PRESETS") or []
+
+        for preset in presets:
+            if preset.get("is_default", False):
+                return preset
         
         return presets[0] if len(presets) > 0 else {}
 
@@ -51,3 +85,6 @@ class ModelsService:
             
         name = config.get("model", "").lower()
         return any(k in name for k in ["vision", "vl", "llava", "qwen-vl", "fuyu", "moondream"])
+
+
+model_service = ModelsService()
