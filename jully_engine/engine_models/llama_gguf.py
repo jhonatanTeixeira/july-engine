@@ -345,7 +345,7 @@ class GGUF:
             
         else:
             # MODO NÃO-STREAM: Limpa a tag e separa tudo na raiz do JSON
-            raw_content = response["choices"][0]["message"].get("content", "")
+            raw_content = response["choices"][0]["message"].get("content", "") or ""
             
             # Parser robusto para tags <think> mesmo não fechadas
             think_pattern = re.compile(r"<think>(.*?)(?:</think>|$)", re.DOTALL)
