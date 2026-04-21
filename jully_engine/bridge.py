@@ -163,6 +163,7 @@ class Bridge:
                             if "thought" in delta and "reasoning_content" not in delta:
                                 delta["reasoning_content"] = delta.pop("thought")
                                 
+                    normalized["__debug_uuid__"] = str(uuid.uuid4())
                     yield normalized
                     await asyncio.sleep(0)
             finally:

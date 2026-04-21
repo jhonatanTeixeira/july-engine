@@ -367,12 +367,12 @@ class InternalMCP:
             if chunk.get('choices')[0].get('delta', {}).get('reasoning_content', None):
                 yield chunk
                 await asyncio.sleep(0)
+                continue
              
             if tool_calls := chunk.get('choices')[0].get('delta', {}).get('tool_calls', None):
                 is_calling = True
                 
                 for tool_call in tool_calls:
-                    print(tool_call)
                     idx = tool_call.get("index")
                     if idx not in tools:
                         tools[idx] = {"name": "", "arguments": "", "response": [], "id": None}
@@ -388,7 +388,6 @@ class InternalMCP:
                 continue
             
             if is_calling:
-                print(tools)
                 for idx, tool in tools.items():
                     name = tool.get("name")
                     if not name: continue

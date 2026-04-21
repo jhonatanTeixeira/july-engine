@@ -10,8 +10,6 @@ class Gemma4Handler(Gemma4ChatHandler):
     def __call__(self, **kwargs):
         response = super().__call__(**kwargs)
 
-        print('stream', kwargs.get('stream'))
-        
         if kwargs.get("stream"):
             channel = None
             tools_calls = ""

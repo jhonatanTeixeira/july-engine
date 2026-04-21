@@ -253,7 +253,7 @@ class GpuOrchestrator:
             result = await self.slots[slot].run(payload)
             return result
         except Exception as e:
-            print(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")
+            logger.error(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")
             raise e
 
 
