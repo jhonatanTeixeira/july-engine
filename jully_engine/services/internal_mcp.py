@@ -372,6 +372,7 @@ class InternalMCP:
                 is_calling = True
                 
                 for tool_call in tool_calls:
+                    print(tool_call)
                     idx = tool_call.get("index")
                     if idx not in tools:
                         tools[idx] = {"name": "", "arguments": "", "response": [], "id": None}
@@ -387,6 +388,7 @@ class InternalMCP:
                 continue
             
             if is_calling:
+                print(tools)
                 for idx, tool in tools.items():
                     name = tool.get("name")
                     if not name: continue

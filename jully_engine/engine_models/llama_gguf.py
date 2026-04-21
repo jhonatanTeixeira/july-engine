@@ -42,8 +42,13 @@ def detect_model_capabilities(repo_id_or_filename: str) -> dict:
         capabilities["vision_handler"] = "gemma4"
     elif re.search(r"gemma[_\-\.]?3", name):
         capabilities["vision_handler"] = "gemma3"
-    elif re.search(r"qwen[_\-\.]?(?:2\.5|3|4|vl)", name):
-        capabilities["vision_handler"] = "qwen35"
+    elif 'qwen' in name:
+        if '2.5' in name and 'vl' in name:
+            capabilities["chat_format"] = "qwen25vl"
+        if '3' in name and 'vl' in name:
+            capabilities["chat_format"] = "qwen3vl"
+        if '3.5' in name:
+            capabilities["chat_format"] = "qwen35"
     elif re.search(r"pixtral|ministral", name):
         capabilities["vision_handler"] = "pixtral"
     elif re.search(r"moondream", name):
@@ -182,14 +187,19 @@ class GGUF:
                 # Importa as classes avançadas do MTMDChatHandler
                 try:
                     if v_handler == "gemma4":
-                        from llama_cpp.llama_chat_format import Gemma4ChatHandler
-                        # Nota: o JamePeng permite inicializar sem clip_model_path se o modelo for integrado
-                        params["chat_handler"] = Gemma4ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma4ChatHandler()
+                        from .chat_handlers import Gemma4Handler
+                        params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path) if mmproj_path else Gemma4Handler()
                         
                     elif v_handler == "gemma3":
                         from llama_cpp.llama_chat_format import Gemma3ChatHandler
                         params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma3ChatHandler()
                         
+                    elif v_handler == "qwen3vl":
+                        from llama_cpp.llama_chat_format import Qwen3VLChatHandler
+                        params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen3VLChatHandler()
+                    elif v_handler == "qwen25vl":
+                        from llama_cpp.llama_chat_format import Qwen25VLChatHandler
+                        params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen25VLChatHandler()
                     elif v_handler == "qwen35":
                         from llama_cpp.llama_chat_format import Qwen35ChatHandler
                         params["chat_handler"] = Qwen35ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen35ChatHandler()
