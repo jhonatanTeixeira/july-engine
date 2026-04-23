@@ -85,10 +85,20 @@ class KokoroTTS:
                     import soundfile as sf
                     import numpy as np
                     
+                    def get_next_chunk():
+                        try:
+                            return next(generator)
+                        except StopIteration:
+                            return None
+
                     while True:
                         try:
                             # O generator do Kokoro devolve (graphemes, phonemes, audio)
-                            _, _, audio = await asyncio.to_thread(next, generator)
+                            res = await asyncio.to_thread(get_next_chunk)
+                            if res is None:
+                                break
+                            
+                            _, _, audio = res
                             
                             if board:
                                 audio = board(audio, 24000)
@@ -96,12 +106,10 @@ class KokoroTTS:
                             buffer = BytesIO()
                             sf.write(buffer, audio, 24000, format='WAV')
                             
-                            # AVISO ARQUITETONICO: O ideal para streams contínuos seria usar raw PCM:
-                            # yield audio.tobytes()
-                            # Mantive o WAV para não quebrar a tua integração atual, mas fica o alerta.
                             yield buffer.getvalue()
                             
-                        except StopIteration:
+                        except Exception as e:
+                            logger.error(f"KokoroTTS: Error in streamer: {e}")
                             break
                 return audio_streamer()
 

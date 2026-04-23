@@ -71,12 +71,32 @@ class Eyes:
             return res
         return 0
     
-    def decode_image(self, image_data: str) -> Image.Image:
+    def decode_image(self, image_data: Union[str, bytes, Image.Image]) -> Image.Image:
+        import re
+        if isinstance(image_data, Image.Image):
+            return image_data.convert("RGB")
+            
         if isinstance(image_data, str):
-            if image_data.startswith("data:image"):
-                image_data = image_data.split(",")[1]
-            img_bytes = base64.b64decode(image_data)
-            return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            # Procura o início real dos dados base64 (pula data:image/xxx;base64,)
+            if "base64," in image_data:
+                image_data = image_data.split("base64,", 1)[1]
+            elif image_data.startswith("data:"): # Caso especial onde tem data: mas não tem base64,
+                image_data = image_data.split(",", 1)[-1]
+            
+            # Limpeza agressiva: remove espaços e caracteres inválidos
+            image_data = re.sub(r'[^a-zA-Z0-9+/=]', '', image_data)
+            
+            # Correção de padding
+            missing_padding = len(image_data) % 4
+            if missing_padding:
+                image_data += '=' * (4 - missing_padding)
+                
+            try:
+                img_bytes = base64.b64decode(image_data)
+                return Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            except Exception as e:
+                logger.error(f"Eyes: Erro fatal no decode final: {e}")
+                raise
         return Image.open(io.BytesIO(image_data)).convert("RGB")
 
     def _extract_text(self, response: Any) -> str:

@@ -61,6 +61,7 @@ class SpeechRequest(BaseModel):
     model: Optional[str] = None
     input: str
     voice: Optional[str] = None
+    language: Optional[str] = None
     stream: Optional[bool] = False
     temperature: Optional[float] = None
     semitones: Optional[float] = None

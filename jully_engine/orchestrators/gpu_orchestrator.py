@@ -54,7 +54,8 @@ class GpuContext:
 
     def is_loaded(self, task_type: str):
         with self.state_lock:
-            return task_type in self.state
+            data = self.state.get(task_type)
+            return data is not None and data.get("runner") is not None
 
     def get_free_vram(self):
         return self.resource_manager.get_available_vram_mb()
@@ -189,7 +190,7 @@ class Runner:
             domain = self.get_domain()
             runner = self.context.get_runner(self.task_type)
 
-            if self.context.is_loaded(self.task_type) and runner.model != self.model:
+            if self.context.is_loaded(self.task_type) and runner and runner.model != self.model:
                 runner.unload()
 
             elif not domain.is_loaded():
@@ -197,7 +198,7 @@ class Runner:
 
                 while self.context.get_free_vram() < required:
                     # Tenta descarregar o que já está parado
-                    unloaded = await self.unload_next(required)
+                    unloaded = self.unload_next(required)
                     
                     if not unloaded:
                         if hasattr(domain._strategy, "decrement_layers"):
@@ -213,12 +214,29 @@ class Runner:
 
             self.context.mark_busy(self.task_type, self)
         
+        result = None
+        is_stream = False
         try:
-            return await self.run_task(payload)
+            result = await self.run_task(payload)
+            if hasattr(result, '__aiter__'):
+                is_stream = True
+                
+                async def generator_wrapper(gen, context, task_type):
+                    try:
+                        async for chunk in gen:
+                            yield chunk
+                    finally:
+                        await context.mark_idle(task_type)
+                        context.garbage_collection()
+                
+                return generator_wrapper(result, self.context, self.task_type)
+            
+            return result
         finally:
-            # Libera o contador mas MANTÉM o modelo carregado ("quente")
-            await self.context.mark_idle(self.task_type)
-            self.context.garbage_collection()
+            if not is_stream:
+                # Libera o contador mas MANTÉM o modelo carregado ("quente")
+                await self.context.mark_idle(self.task_type)
+                self.context.garbage_collection()
 
 
 class GpuOrchestrator:

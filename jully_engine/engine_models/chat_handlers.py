@@ -1,9 +1,12 @@
 import re
 import uuid
+import logging
 
 from copy import deepcopy
 from typing import Any, Dict, List
 from llama_cpp.llama_chat_format import Gemma4ChatHandler
+
+logger = logging.getLogger(__name__)
 
 
 class Gemma4Handler(Gemma4ChatHandler):
@@ -24,14 +27,14 @@ class Gemma4Handler(Gemma4ChatHandler):
 
         # 1. Extract thinking blocks: <|channel>thought\n...<channel|>
         thinking_pattern = re.compile(
-            r'<\|channel>thought\n(.*?)<channel\|>', re.DOTALL
+            r'<\|channel>thought([\s\S]+)<channel\|>', re.DOTALL
         )
         think_match = thinking_pattern.search(content)
         reasoning = None
 
         if think_match:
             reasoning = think_match.group(1).strip()
-            content = content[:think_match.start()] + content[think_match.end():]
+            content = content.replace(think_match.group(0), "")
 
         # 2. Extract tool calls: <|tool_call>call:name{args}<tool_call|>
         tool_call_pattern = re.compile(
@@ -52,6 +55,8 @@ class Gemma4Handler(Gemma4ChatHandler):
 
                 name = fn_match.group(1)
                 args = fn_match.group(2)
+                
+                # Fix missing quotes around keys (relaxed JSON)
                 args = re.sub(r'([{,])\s*([a-zA-Z0-9_-]+)\s*:', r'\1"\2":', args)
 
                 unique_id = uuid.uuid4().hex
@@ -130,14 +135,19 @@ class Gemma4Handler(Gemma4ChatHandler):
                     if not tool_call:
                         continue
 
-                    matches = re.match(r'(\w+)(\{.*?\})', tool_call)
+                    matches = re.match(r'(\w+)(\{.*\})', tool_call, re.DOTALL)
 
-                    name = matches.group(1)
-                    args = matches.group(2)
-                    args = re.sub(r'([{,])\s*([a-zA-Z0-9_-]+)\s*:', r'\1"\2":', args)
-
-                    yield self.parse_tool_calls(self.parse_tool_call(unique_id, name=name))
-                    yield self.parse_tool_calls(self.parse_tool_call(unique_id, args=args))
+                    if matches:
+                        name = matches.group(1)
+                        args = matches.group(2)
+                        
+                        # Fix missing quotes around keys (relaxed JSON)
+                        args = re.sub(r'([{,])\s*([a-zA-Z0-9_-]+)\s*:', r'\1"\2":', args)
+                        
+                        yield self.parse_tool_calls(self.parse_tool_call(unique_id, name=name))
+                        yield self.parse_tool_calls(self.parse_tool_call(unique_id, args=args))
+                    else:
+                        logger.warning(f"Gemma4Handler: Failed to match tool call pattern in: {tool_call}")
 
                 tools_calls = ""
 

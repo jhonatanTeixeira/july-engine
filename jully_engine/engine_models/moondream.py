@@ -23,6 +23,8 @@ class MoondreamVLM:
         return 2048 # ~2GB fixo para este modelo 4-bit lightweight
 
     def load_transformers(self):
+        raise Exception("Moondream2 is not implemented yet on this engine version")
+
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
         

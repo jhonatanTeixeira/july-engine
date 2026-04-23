@@ -147,6 +147,12 @@ class MultiModalHelper:
             if part.get("type", "text") == "image_url"
         ]
         
+    def get_texts(self, messages: Optional[List[Dict]] = None) -> List[Dict]:
+        return [
+            part for part in self._get_multimodal_content(messages) 
+            if part.get("type", "text") == "text"
+        ]
+
     def get_last_image(self) -> Optional[Dict]:
         images = self.get_images()
         return images[-1] if images else None
@@ -181,6 +187,9 @@ class MultiModalHelper:
     def last_message_images(self) -> List[Dict]:
         return self.get_images([self.messages[-1]]) if self.messages else []
         
+    def last_message_text(self) -> str:
+        return '\n'.join([t['text'] for t in self.get_texts([self.messages[-1]])]) if self.messages else ""
+
     def last_message_audios(self) -> List[Dict]:
         return self.get_audios([self.messages[-1]]) if self.messages else []
 
@@ -200,7 +209,7 @@ class MultiModalHelper:
             vision_content = deepcopy(last_images) 
             vision_content.append({
                 "type": "text", 
-                "text": "Describe this image in detail."
+                "text": self.last_message_text()
             })
 
             vision_payload = {

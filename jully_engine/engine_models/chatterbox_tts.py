@@ -161,10 +161,18 @@ class ChatterboxTTS:
                         temperature=temperature
                     )
                     
+                    def get_next_chunk():
+                        try:
+                            return next(generator)
+                        except StopIteration:
+                            return None
+
                     while True:
                         try:
                             # Puxa o pedaço de áudio gerado
-                            audio_chunk = await asyncio.to_thread(next, generator)
+                            audio_chunk = await asyncio.to_thread(get_next_chunk)
+                            if audio_chunk is None:
+                                break
                             
                             # Opcional: Garante que o áudio é um numpy array flat no CPU
                             if hasattr(audio_chunk, 'cpu'):
@@ -174,11 +182,14 @@ class ChatterboxTTS:
                                 # O Chatterbox gera em 24000Hz por defeito
                                 audio_chunk = board(audio_chunk, 24000)
                                 
-                            # RETORNO EM BYTES CRUS (PCM): Retira o overhead de ler um ficheiro WAV cortado
-                            # Se o teu Frontend aceitar, isto é instantâneo:
-                            yield audio_chunk.tobytes()
+                            # Convert to WAV format in memory
+                            import soundfile as sf
+                            buffer = BytesIO()
+                            sf.write(buffer, audio_chunk, 24000, format='WAV')
+                            yield buffer.getvalue()
                             
-                        except StopIteration:
+                        except Exception as e:
+                            logger.error(f"ChatterboxTTS: Error in streamer: {e}")
                             break
                 return audio_streamer()
 

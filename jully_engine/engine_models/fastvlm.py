@@ -148,11 +148,29 @@ class FastVLM:
         return results
 
     def decode_image(self, image_data):
+        from PIL import Image
         import base64
         import io
+        import re
+        
+        # Se já for uma imagem PIL, não faz nada
+        if isinstance(image_data, Image.Image):
+            return image_data.convert("RGB")
+            
         if isinstance(image_data, str):
-            if image_data.startswith("data:image"):
-                image_data = image_data.split(",")[1]
+            # Procura o início real dos dados base64
+            if "base64," in image_data:
+                image_data = image_data.split("base64,", 1)[1]
+            elif image_data.startswith("data:"):
+                image_data = image_data.split(",", 1)[-1]
+            
+            # Limpeza agressiva para evitar "Incorrect padding" e caracteres inválidos
+            image_data = re.sub(r'[^a-zA-Z0-9+/=]', '', image_data)
+            
+            missing_padding = len(image_data) % 4
+            if missing_padding:
+                image_data += '=' * (4 - missing_padding)
+                
             img_bytes = base64.b64decode(image_data)
             return Image.open(io.BytesIO(img_bytes)).convert("RGB")
         return Image.open(io.BytesIO(image_data)).convert("RGB")
@@ -161,6 +179,8 @@ class FastVLM:
         return self.vlm is not None
 
     def unload(self, model_name: str = None):
+        import torch
+        
         """Limpa a memória RAM e a VRAM ativamente."""
         if self.vlm:
             del self.vlm
