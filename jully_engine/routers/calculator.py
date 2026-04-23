@@ -24,18 +24,14 @@ def check_resources(req: ResourceCheckRequest):
     Unified entry point for VRAM/RAM estimation. 
     Supports local paths, HF cache, or remote scan.
     """
-    try:
-        return estimate_vram_ram(
-            model_path=req.model_path,
-            context_window=req.context_window,
-            kv_cache_quantization=req.kv_cache_quantization,
-            gpu_layers=req.gpu_layers if req.gpu_layers != -1 else None,
-            repo_id=req.model_id,
-            filename=req.filename,
-            mmproj_path=req.mmproj_path,
-            mmproj_repo_id=req.mmproj_id,
-            mmproj_filename=req.mmproj_filename
-        )
-    except Exception as e:
-        logger.error(f"Error in check_resources: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return estimate_vram_ram(
+        model_path=req.model_path,
+        context_window=req.context_window,
+        kv_cache_quantization=req.kv_cache_quantization,
+        gpu_layers=req.gpu_layers if req.gpu_layers != -1 else None,
+        repo_id=req.model_id,
+        filename=req.filename,
+        mmproj_path=req.mmproj_path,
+        mmproj_repo_id=req.mmproj_id,
+        mmproj_filename=req.mmproj_filename
+    )
