@@ -119,10 +119,11 @@ class ModelMetadata:
         from gguf import GGUFReader
 
         if not os.path.exists(self.model_path) and self.repo_id and self.filename:
-            self._resolve()
+            # Resolve será chamado explicitamente pelo estimate_vram_ram (é async)
             return
 
         try:
+            logger.info(f"📂 Opening GGUF file: {self.model_path} ({self.file_size_gb:.2f} GB)")
             reader = GGUFReader(self.model_path)
         except Exception as e:
             logger.error(f"❌ Erro ao abrir arquivo GGUF: {str(e)}")
@@ -130,43 +131,43 @@ class ModelMetadata:
 
         for field in reader.fields.values():
             try:
-                # 1. Detecta o tamanho dos dados do campo
+                # Detecta o tamanho dos dados do campo
                 data_len = field.data.shape[0] if hasattr(field.data, 'shape') else len(field.data)
-                
-                # 2. Se for uma lista grande (> 128 elementos), guardamos apenas o tamanho
+
+                # Se for uma lista grande (> 128 elementos), guardamos apenas o tamanho
                 if data_len > 128:
                     self._raw_metadata[f"{field.name}.length"] = int(data_len)
-                    logger.debug(f"📦 Field {field.name} is a large list ({data_len} items). Stored as length.")
                     continue
 
                 if data_len == 0:
                     continue
 
                 parts = field.parts[field.data[0]]
-                
+
                 # Lógica de decodificação de tipos simples
                 if hasattr(parts, "__len__") and not isinstance(parts, (str, bytes)):
                     val = parts[0] if len(parts) > 0 else 0
                 elif isinstance(parts, bytes):
-                    try: val = parts.decode('utf-8').strip('\x00')
-                    except: val = list(parts)
+                    try:
+                        val = parts.decode('utf-8').strip('\x00')
+                    except:
+                        val = list(parts)
                 else:
                     val = parts
 
-                if hasattr(val, "item"): val = val.item()
-                elif isinstance(val, (int, float, str, bool, list, dict)) or val is None:
-                    pass
-                else:
-                    try: val = int(val)
-                    except: val = str(val)
-                
+                if hasattr(val, "item"):
+                    val = val.item()
+
+                # Garante que o valor seja serializável em JSON
+                if not isinstance(val, (int, float, str, bool, list, dict)) and val is not None:
+                    val = str(val)
+
                 self._raw_metadata[field.name] = val
-                logger.debug(f"✅ Processed field: {field.name}")
 
             except Exception as e:
                 logger.warning(f"⚠️ Could not process field {field.name}: {str(e)}")
                 continue
-        
+
         logger.info(f"✅ GGUF Metadata Extracted: {len(self._raw_metadata)} fields captured.")
 
         temp_file = self.cache_file + ".tmp"
@@ -174,12 +175,19 @@ class ModelMetadata:
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(self._raw_metadata, f, indent=4)
             os.replace(temp_file, self.cache_file)
-            logger.debug(f"✅ Metadados guardados em cache para futuras leituras.")
+            logger.info(f"✅ Cache generated: {self.cache_file}")
         except Exception as e:
             logger.error(f"❌ Erro ao gravar cache: {str(e)}")
+            for k, v in self._raw_metadata.items():
+                try:
+                    json.dumps({k: v})
+                except:
+                    logger.error(f"   - Problematic key: {k} (Type: {type(v)})")
             if os.path.exists(temp_file):
-                try: os.remove(temp_file)
-                except: pass
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
 
     def _get_fuzzy(self, suffix, default=0):
         """Busca interna por sufixo (Fuzzy Search)."""
@@ -216,14 +224,17 @@ class ModelMetadata:
 
     @property
     def expert_count(self):
+        """Número total de experts no modelo MoE. 0 = modelo denso."""
         return int(self._get_fuzzy("expert_count", 0))
 
     @property
     def expert_used_count(self):
+        """Quantos experts são ativados por token."""
         return int(self._get_fuzzy("expert_used_count", 0))
 
     @property
     def is_moe(self):
+        """True se o modelo usa arquitetura Mixture of Experts."""
         return self.expert_count > 1
 
     @property
@@ -240,13 +251,56 @@ class ModelMetadata:
 
     @property
     def sliding_window(self) -> int:
-        """Tamanho da janela deslizante (0 = sem SWA)."""
+        """Tamanho da janela deslizante em tokens. 0 = sem SWA."""
         return int(self._get_fuzzy("attention.sliding_window", 0))
 
     @property
     def shared_kv_layers(self) -> int:
-        """Layers que reutilizam o KV Cache de outra layer (Cross-Layer KV Sharing)."""
+        """Layers que reutilizam KV Cache de outra layer (Cross-Layer KV Sharing)."""
         return int(self._get_fuzzy("attention.shared_kv_layers", 0))
+
+    def _effective_model_size_gb(self) -> float:
+        """
+        Retorna o tamanho efetivo do modelo para fins de cálculo de VRAM.
+
+        Para modelos DENSOS: retorna file_size_gb sem alteração.
+        O peso do arquivo corresponde diretamente ao peso que precisa estar
+        na VRAM (proporcional às layers offloadas).
+
+        Para modelos MoE: apenas os experts ATIVOS precisam estar "quentes"
+        na VRAM a qualquer momento. Os experts inativos ficam na RAM e são
+        carregados sob demanda pelo llama.cpp.
+
+        O modelo é dividido conceitualmente em duas partes:
+          - Densa  (~35% do arquivo): attention, embeddings, layer norms.
+            Sempre precisa estar na VRAM para as layers offloadas.
+          - MoE    (~65% do arquivo): os FFN experts.
+            Apenas a fração ativa (expert_used / expert_count) precisa
+            estar na VRAM simultaneamente.
+
+        A proporção dense_fraction=0.35 é uma heurística calibrada
+        empiricamente para arquiteturas MoE comuns (Mixtral, Qwen MoE,
+        DeepSeek MoE). Modelos densos nunca chegam a este método.
+        """
+        if not self.is_moe or self.expert_count <= 0 or self.expert_used_count <= 0:
+            # Modelo denso: sem ajuste — retorna tamanho real do arquivo
+            return self.file_size_gb
+
+        active_ratio = self.expert_used_count / self.expert_count
+
+        # Fração do arquivo que corresponde a pesos densos (attention, embed, norms)
+        dense_fraction = 0.35
+        moe_fraction   = 1.0 - dense_fraction
+
+        effective_size = self.file_size_gb * (dense_fraction + moe_fraction * active_ratio)
+
+        logger.debug(
+            f"🧮 MoE effective size: {self.file_size_gb:.2f} GB → {effective_size:.2f} GB "
+            f"(experts {self.expert_used_count}/{self.expert_count}, "
+            f"active_ratio={active_ratio:.4f})"
+        )
+
+        return effective_size
 
     def _estimate_kv_cache_gb(self, ctx: int, kv_cache_quantization: str, gpu_layers: int) -> float:
         """
@@ -254,56 +308,74 @@ class ModelMetadata:
           - key_length / value_length explícitos no GGUF
           - Sliding Window Attention (SWA) vs Global Attention
           - Cross-Layer KV Sharing (shared_kv_layers)
+
+        NOTA IMPORTANTE: MoE NÃO afeta o KV Cache.
+        A atenção é sempre densa em arquiteturas MoE — apenas o FFN é esparso.
+        Por isso este método não faz nenhum ajuste para MoE.
         """
-        quant_map = {'FP16': 2.0, 'Q8_0': 1.0, 'Q4_0': 0.5, 'Q5_0': 0.625, 'Q5_K_M': 0.625}
+        quant_map = {
+            'FP16':   2.0,
+            'Q8_0':   1.0,
+            'Q4_0':   0.5,
+            'Q4_1':   0.5625,
+            'Q5_0':   0.625,
+            'Q5_1':   0.6875,
+            'Q5_K_M': 0.625,
+        }
         bytes_per_element = quant_map.get(kv_cache_quantization.upper(), 2.0)
         total_layers = self.block_count
 
-        # --- Dimensões de K/V (lê do GGUF se disponível) ---
+        # --- Dimensões explícitas de K/V do GGUF ---
+        # Mais confiáveis que derivar de embedding_length / head_count,
+        # especialmente em arquiteturas com GQA ou dimensões não-padrão.
         head_dim_fallback = self.embedding_length // self.head_count if self.head_count > 0 else 128
 
-        key_len_global = int(self._get_fuzzy("attention.key_length",     head_dim_fallback))
-        val_len_global = int(self._get_fuzzy("attention.value_length",   head_dim_fallback))
-        key_len_swa    = int(self._get_fuzzy("attention.key_length_swa", key_len_global))
+        key_len_global = int(self._get_fuzzy("attention.key_length",       head_dim_fallback))
+        val_len_global = int(self._get_fuzzy("attention.value_length",     head_dim_fallback))
+        key_len_swa    = int(self._get_fuzzy("attention.key_length_swa",   key_len_global))
         val_len_swa    = int(self._get_fuzzy("attention.value_length_swa", val_len_global))
 
-        # --- Sliding Window ---
-        swa_ctx   = self.sliding_window          # 0 = sem SWA
-        has_swa   = swa_ctx > 0
+        # --- Sliding Window Attention ---
+        swa_ctx     = self.sliding_window   # 0 = sem SWA
+        has_swa     = swa_ctx > 0
         swa_pattern = bool(self._get_fuzzy("attention.sliding_window_pattern", False))
 
         # --- Cross-Layer KV Sharing ---
-        # Layers com KV compartilhado NÃO alocam buffer próprio
-        shared = self.shared_kv_layers
+        # Layers com KV compartilhado não alocam buffer próprio.
+        shared             = self.shared_kv_layers
         layers_with_own_kv = max(total_layers - shared, 1)
 
-        # Proporção das layers com KV próprio que caem na GPU
+        # Proporção das layers com KV próprio que estão na GPU
         gpu_kv_layers = round(layers_with_own_kv * (gpu_layers / max(total_layers, 1)))
 
-        # --- Divisão Global vs SWA ---
+        # --- Proporção de layers Global vs SWA ---
         if has_swa and swa_pattern:
-            # Heurística genérica conservadora: ~20% global, ~80% SWA
-            # (Para Gemma 4 o padrão real é 1 global a cada 6 layers)
+            # Heurística conservadora para padrão alternado:
+            # ~20% global, ~80% SWA. Calibrado para Gemma 4 (1 global a cada 6).
+            # Para outros modelos com padrão alternado diferente, ainda é
+            # uma estimativa razoável (tende a subestimar levemente).
             global_ratio = 0.20
         elif has_swa:
+            # SWA presente mas sem padrão explícito: assume 50/50
             global_ratio = 0.50
         else:
+            # Modelo sem SWA (LLaMA, Qwen, Mistral denso, etc): 100% global
             global_ratio = 1.0
 
         global_layers_gpu = round(gpu_kv_layers * global_ratio)
         swa_layers_gpu    = gpu_kv_layers - global_layers_gpu
 
-        # --- KV Cache Global (ctx completo) ---
+        # --- KV Cache para layers de atenção global (ctx completo) ---
         kv_global = (
-            2                                       # K + V
-            * self.head_count_kv
-            * ((key_len_global + val_len_global) / 2)  # média dim K/V
-            * ctx
+            2                                           # K + V
+            * self.head_count_kv                        # cabeças KV (GQA)
+            * ((key_len_global + val_len_global) / 2)   # média das dimensões K e V
+            * ctx                                       # tokens no contexto
             * bytes_per_element
             * global_layers_gpu
         )
 
-        # --- KV Cache SWA (limitado pela janela deslizante) ---
+        # --- KV Cache para layers SWA (ctx limitado pela janela deslizante) ---
         effective_swa_ctx = min(ctx, swa_ctx) if swa_ctx > 0 else ctx
         kv_swa = (
             2
@@ -318,35 +390,65 @@ class ModelMetadata:
 
     def estimate_vram_gb(self, context_window=None, kv_cache_quantization='FP16', gpu_layers=None):
         """
-        Estima a VRAM necessária para rodar o modelo.
+        Estima a VRAM necessária para rodar o modelo no llama.cpp.
+
+        Args:
+            context_window (int | str): Janela de contexto. Ex: 4096, "4k", "128k".
+            kv_cache_quantization (str): Quantização do KV Cache. Ex: 'FP16', 'Q8_0', 'Q4_0'.
+            gpu_layers (int): Layers a colocar na GPU. None = todas as layers.
+
+        Returns:
+            dict: Breakdown detalhado do uso de VRAM em GB e MB.
         """
         total_layers = self.block_count
         if total_layers <= 0:
-            total_layers = 1 # Proteção contra ZeroDivisionError
-            
+            total_layers = 1  # Proteção contra ZeroDivisionError
+
         if gpu_layers is None or gpu_layers > total_layers:
             gpu_layers = total_layers
 
-        ctx = parse_context_window(context_window) if isinstance(context_window, str) else (context_window or self.context_length)
+        ctx = (
+            parse_context_window(context_window)
+            if isinstance(context_window, str)
+            else (context_window or self.context_length)
+        )
 
-        # 1. Peso do modelo na GPU
-        fixed_weights_ratio = 0.10
+        # ── 1. Peso do modelo na GPU ─────────────────────────────────────────
+        # Para MoE: usa tamanho efetivo (só experts ativos).
+        # Para densos: usa file_size_gb diretamente.
+        # A proporção gpu_layers/total_layers determina quanto vai pra VRAM.
+        effective_file_size = self._effective_model_size_gb()
+        fixed_weights_ratio = 0.10   # ~10% do peso é fixo (embeddings, norms)
         layer_weights_ratio = 1.0 - fixed_weights_ratio
-        model_vram = self.file_size_gb * (fixed_weights_ratio + (layer_weights_ratio * (gpu_layers / total_layers)))
+        model_vram = effective_file_size * (
+            fixed_weights_ratio + layer_weights_ratio * (gpu_layers / total_layers)
+        )
 
-        # 2. KV Cache (com suporte a SWA, shared KV e key_length explícito)
+        # ── 2. KV Cache ──────────────────────────────────────────────────────
+        # Suporta SWA, Cross-Layer KV Sharing e dimensões K/V explícitas.
+        # MoE não afeta o KV Cache (atenção é sempre densa).
         kv_cache_gb = self._estimate_kv_cache_gb(ctx, kv_cache_quantization, gpu_layers)
 
-        # 3. Compute buffer do grafo CUDA
+        # ── 3. Compute buffer do grafo CUDA ──────────────────────────────────
+        # Alocação estática do llama.cpp para buffers intermediários de
+        # computação (ativações temporárias, workspace da operação GEMM, etc).
+        # Escala com embedding_length e batch_size.
         batch_size = 512  # n_batch default do llama.cpp
         compute_buffer_gb = (4 * batch_size * self.embedding_length * 4) / (1024**3)
 
-        # 4. Logits buffer: vocab_size * batch_size * float32
-        # CRÍTICO para modelos com vocabulário grande (ex: Gemma 4 tem 256k tokens)
+        # ── 4. Logits buffer ─────────────────────────────────────────────────
+        # Buffer de saída para os logits de todo o vocabulário por token do batch.
+        # CRÍTICO para modelos com vocabulário grande:
+        #   Gemma 4: 256k tokens → ~0.49 GB
+        #   Qwen3:   152k tokens → ~0.29 GB
+        #   LLaMA 3:  128k tokens → ~0.25 GB
+        #   LLaMA 2:   32k tokens → ~0.06 GB
         vocab_size = self.vocab_size
         logits_buffer_gb = (vocab_size * batch_size * 4) / (1024**3)
 
-        # 5. Overhead fixo CUDA (contexto, streams, alocador CUDA)
+        # ── 5. Overhead fixo CUDA ────────────────────────────────────────────
+        # Contexto CUDA, streams, alocador de memória.
+        # Relativamente constante independente do modelo (~100-150 MB).
         cuda_overhead_gb = 0.12
 
         total = (
@@ -359,26 +461,34 @@ class ModelMetadata:
         )
 
         return {
-            "model_vram_gb":      model_vram,
-            "model_vram_mb":      model_vram * 1024,
-            "kv_cache_vram_gb":   kv_cache_gb,
-            "kv_cache_vram_mb":   kv_cache_gb * 1024,
-            "compute_buffer_gb":  compute_buffer_gb,
-            "compute_buffer_mb":  compute_buffer_gb * 1024,
-            "logits_buffer_gb":   logits_buffer_gb,
-            "logits_buffer_mb":   logits_buffer_gb * 1024,
-            "cuda_overhead_gb":   cuda_overhead_gb,
-            "cuda_overhead_mb":   cuda_overhead_gb * 1024,
-            "mmproj_size_gb":     self.mmproj_size_gb,
-            "total_vram_gb":      total,
-            "total_vram_mb":      total * 1024,
-            "offloaded_layers":   gpu_layers,
-            "total_layers":       total_layers,
-            "percent_on_gpu":     (gpu_layers / total_layers) * 100,
-            "vocab_size":         vocab_size,
-            "has_swa":            self.sliding_window > 0,
-            "shared_kv_layers":   self.shared_kv_layers,
-            "is_rough_estimate":  self.is_rough_estimate,
+            # Breakdown por componente
+            "model_vram_gb":           model_vram,
+            "model_vram_mb":           model_vram * 1024,
+            "kv_cache_vram_gb":        kv_cache_gb,
+            "kv_cache_vram_mb":        kv_cache_gb * 1024,
+            "compute_buffer_gb":       compute_buffer_gb,
+            "compute_buffer_mb":       compute_buffer_gb * 1024,
+            "logits_buffer_gb":        logits_buffer_gb,
+            "logits_buffer_mb":        logits_buffer_gb * 1024,
+            "cuda_overhead_gb":        cuda_overhead_gb,
+            "cuda_overhead_mb":        cuda_overhead_gb * 1024,
+            "mmproj_size_gb":          self.mmproj_size_gb,
+            # Total
+            "total_vram_gb":           total,
+            "total_vram_mb":           total * 1024,
+            # Info de layers
+            "offloaded_layers":        gpu_layers,
+            "total_layers":            total_layers,
+            "percent_on_gpu":          (gpu_layers / total_layers) * 100,
+            # Info de arquitetura (para debug / UI)
+            "vocab_size":              vocab_size,
+            "has_swa":                 self.sliding_window > 0,
+            "shared_kv_layers":        self.shared_kv_layers,
+            "is_moe":                  self.is_moe,
+            "expert_count":            self.expert_count,
+            "expert_used_count":       self.expert_used_count,
+            "effective_model_size_gb": effective_file_size,
+            "is_rough_estimate":       self.is_rough_estimate,
         }
 
 
@@ -401,7 +511,7 @@ def parse_context_window(ctx_str: str) -> int:
     return int(ctx_str)
 
 
-def estimate_vram_ram(
+async def estimate_vram_ram(
     model_path: str,
     context_window: str | int = "2k",
     kv_cache_quantization: str = "FP16",
@@ -412,6 +522,37 @@ def estimate_vram_ram(
     mmproj_repo_id: str = None,
     mmproj_filename: str = None
 ):
+    logger.info(f"🔍 Checking if model exists: {model_path}")
+
+    exists_locally = os.path.exists(model_path) if model_path and model_path != "model" else False
+
+    if not exists_locally and filename:
+        # 1. Busca recursiva em models/
+        found_path = None
+        models_dir = "models"
+        if os.path.exists(models_dir):
+            for root, dirs, files in os.walk(models_dir):
+                if filename in files:
+                    found_path = os.path.join(root, filename)
+                    break
+
+        if found_path:
+            logger.info(f"📍 Model found in local fallback: {found_path}")
+            model_path = found_path
+            exists_locally = True
+
+        # 2. Busca no cache do Hugging Face Hub
+        if not exists_locally and repo_id:
+            try:
+                from huggingface_hub import hf_hub_download
+                hf_path = hf_hub_download(repo_id=repo_id, filename=filename, local_files_only=True)
+                if hf_path and os.path.exists(hf_path):
+                    logger.info(f"📍 Model found in HF Hub Cache: {hf_path}")
+                    model_path = hf_path
+                    exists_locally = True
+            except Exception as e:
+                logger.debug(f"HF Hub Cache check skipped: {e}")
+
     metadata = ModelMetadata(
         model_path,
         repo_id=repo_id,
@@ -420,6 +561,11 @@ def estimate_vram_ram(
         mmproj_repo_id=mmproj_repo_id,
         mmproj_filename=mmproj_filename
     )
+
+    # Resolve remotamente se o modelo não existe localmente
+    if not exists_locally and repo_id and filename:
+        logger.info(f"🌐 Model not found locally. Proceeding with remote resolution for: {filename}")
+        await metadata._resolve()
 
     ctx_int = context_window
     if isinstance(context_window, str):

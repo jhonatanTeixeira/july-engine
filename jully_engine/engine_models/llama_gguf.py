@@ -74,17 +74,21 @@ class GGUF:
     def max_layers(self):
         return self.model_metadata.block_count
 
-    def decrement_layers(self):
-        max_layers = self.meta.get("num_layers")
+    def decrement_layers(self) -> bool:
+        curr_layers = self.meta.get("num_layers")
+        
+        # Se for -1, resolvemos o total antes de decrementar
+        if curr_layers == -1:
+            curr_layers = self.max_layers()
+        
+        if curr_layers <= 0:
+            logger.warning(f"GGUF: Model {self.meta['model_alias']} already at 0 layers. Cannot decrement further.")
+            self.meta["num_layers"] = 0
+            return False
 
-        if max_layers == -1:
-            max_layers = self.max_layers()
-
-        self.meta["num_layers"] = max_layers - 1
-        logger.debug(f"GGUF: Decrementing layers. New value: {self.meta['num_layers']}")
-
-        if self.model['num_layers'] <= 0:
-            raise ValueError("GGUF: Layers cannot be decremented further.")
+        self.meta["num_layers"] = curr_layers - 1
+        logger.info(f"GGUF: Decrementing layers for {self.meta['model_alias']}. New value: {self.meta['num_layers']}")
+        return True
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         if self.backend == "cpu": 
@@ -99,7 +103,7 @@ class GGUF:
         layers_to_offload = meta.get("num_layers") or -1
         
         # 3. Calculate with precision
-        estimates = estimate_vram_ram(
+        estimates = await estimate_vram_ram(
             self.model_path,
             context_window=effective_n_ctx,
             kv_cache_quantization=meta.get("kv_cache_quantization", "FP16"),

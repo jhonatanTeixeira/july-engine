@@ -19,12 +19,12 @@ class ResourceCheckRequest(BaseModel):
     mmproj_filename: Optional[str] = None
 
 @router.post("/check-resources")
-def check_resources(req: ResourceCheckRequest):
+async def check_resources(req: ResourceCheckRequest):
     """
     Unified entry point for VRAM/RAM estimation. 
     Supports local paths, HF cache, or remote scan.
     """
-    return estimate_vram_ram(
+    return await estimate_vram_ram(
         model_path=req.model_path,
         context_window=req.context_window,
         kv_cache_quantization=req.kv_cache_quantization,

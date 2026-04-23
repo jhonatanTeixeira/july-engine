@@ -111,6 +111,8 @@ class UpdateMetadataRequest(BaseModel):
     num_layers: Optional[int] = None
     force_reasoning: Optional[bool] = None
     is_vision: Optional[bool] = None
+    file_path: Optional[str] = None
+    mmproj_path: Optional[str] = None
 
 class WarmupItem(BaseModel):
     task_type: str # brain, eyes, mouth, ears, presence, memory, world
@@ -282,6 +284,38 @@ async def list_hf_files(repo_id: str):
 @router.get("/")
 async def list_gguf_models():
     db = load_models_db()
+    updated = False
+    
+    # Auto-repair paths from HF cache if missing
+    for alias, model in db.items():
+        if alias in ['xtts', 'faster-whisper']: continue
+        
+        # 1. Checa arquivo principal
+        if not model.get("file_path") and model.get("model_id") and model.get("filename"):
+            try:
+                # local_files_only=True apenas consulta o cache
+                path = hf_hub_download(repo_id=model["model_id"], filename=model["filename"], local_files_only=True)
+                if path and os.path.exists(path):
+                    model["file_path"] = path
+                    updated = True
+                    logger.info(f"Auto-repaired path for {alias}: {path}")
+            except:
+                pass
+        
+        # 2. Checa mmproj (visão)
+        if model.get("is_vision") and not model.get("mmproj_path") and model.get("mmproj_id") and model.get("mmproj_filename"):
+            try:
+                path = hf_hub_download(repo_id=model["mmproj_id"], filename=model["mmproj_filename"], local_files_only=True)
+                if path and os.path.exists(path):
+                    model["mmproj_path"] = path
+                    updated = True
+                    logger.info(f"Auto-repaired mmproj path for {alias}: {path}")
+            except:
+                pass
+                
+    if updated:
+        save_models_db(db)
+        
     return {"models": list(db.values())}
 
 @router.put("/{model_alias}")

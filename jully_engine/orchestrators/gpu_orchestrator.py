@@ -201,13 +201,20 @@ class Runner:
                     unloaded = self.unload_next(required)
                     
                     if not unloaded:
+                        # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo
                         if hasattr(domain._strategy, "decrement_layers"):
-                            domain._strategy.decrement_layers()
+                            success = domain._strategy.decrement_layers()
+                            if not success:
+                                # Se chegou em 0 camadas e ainda não cabe, esperamos ou falhamos
+                                await self.wait_for_free_vram(required, timeout=10)
+                                # Se após o wait ainda não cabe, damos erro definitivo
+                                if self.context.get_free_vram() < required:
+                                    raise MemoryError(f"VRAM insuficiente para carregar {self.task_type} ({self.model}). Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
                             
-                            while await domain.get_required_vram(payload) > self.context.get_free_vram():
-                                domain._strategy.decrement_layers()
+                            # Atualiza o valor 'required' após o decremento
+                            required = await domain.get_required_vram(payload)
                         else:
-                            # Se nada pode sair, espera alguém terminar de usar (mark_idle)
+                            # Se o modelo não suporta decremento, apenas espera
                             await self.wait_for_free_vram(required)
                 
                 domain.load()
