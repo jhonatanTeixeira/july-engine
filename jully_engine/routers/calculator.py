@@ -14,6 +14,9 @@ class ResourceCheckRequest(BaseModel):
     context_window: str | int = "2k"
     gpu_layers: Optional[int] = -1
     kv_cache_quantization: Optional[str] = "FP16"
+    mmproj_path: Optional[str] = None
+    mmproj_id: Optional[str] = None
+    mmproj_filename: Optional[str] = None
 
 @router.post("/check-resources")
 def check_resources(req: ResourceCheckRequest):
@@ -28,7 +31,10 @@ def check_resources(req: ResourceCheckRequest):
             kv_cache_quantization=req.kv_cache_quantization,
             gpu_layers=req.gpu_layers if req.gpu_layers != -1 else None,
             repo_id=req.model_id,
-            filename=req.filename
+            filename=req.filename,
+            mmproj_path=req.mmproj_path,
+            mmproj_repo_id=req.mmproj_id,
+            mmproj_filename=req.mmproj_filename
         )
     except Exception as e:
         logger.error(f"Error in check_resources: {e}")

@@ -2,17 +2,29 @@ import os
 import json
 import hashlib
 import logging
+import httpx
+import io
 
 logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
 
 
 class ModelMetadata:
-    def __init__(self, model_path, cache_dir="storage/cache", repo_id=None, filename=None):
+    def __init__(self, model_path, cache_dir="storage/cache", repo_id=None, filename=None, mmproj_path=None, mmproj_repo_id=None, mmproj_filename=None):
         self.model_path = model_path
         self.cache_dir = cache_dir
         self.repo_id = repo_id
         self.filename = filename
-        self.file_size_gb = os.path.getsize(model_path) / (1024**3)
+        
+        # Arquivo principal
+        self.file_size_gb = os.path.getsize(model_path) / (1024**3) if os.path.exists(model_path) else 0
+        
+        # mmproj (Visão)
+        self.mmproj_path = mmproj_path
+        self.mmproj_repo_id = mmproj_repo_id
+        self.mmproj_filename = mmproj_filename
+        self.mmproj_size_gb = 0
+        if mmproj_path and os.path.exists(mmproj_path):
+            self.mmproj_size_gb = os.path.getsize(mmproj_path) / (1024**3)
         
         # Criar pasta de cache se não existir
         os.makedirs(self.cache_dir, exist_ok=True)
@@ -23,6 +35,7 @@ class ModelMetadata:
         self.cache_file = os.path.join(self.cache_dir, f"{self.cache_id}.json")
         
         self._raw_metadata = {}
+        self.is_rough_estimate = False
         self._load_metadata()
 
     async def _resolve(self):
@@ -41,6 +54,11 @@ class ModelMetadata:
             # Fetch remote size if we don't have it
             if self._raw_metadata and not self.file_size_gb:
                 self.file_size_gb = await self._get_remote_size(url)
+        
+        # Resolva mmproj remotamente se necessário
+        if self.mmproj_repo_id and self.mmproj_filename and not self.mmproj_size_gb:
+            mmproj_url = f"https://huggingface.co/{self.mmproj_repo_id}/resolve/main/{self.mmproj_filename}"
+            self.mmproj_size_gb = await self._get_remote_size(mmproj_url)
 
     async def _scan_remote(self, url: str) -> dict:
         """
@@ -93,7 +111,47 @@ class ModelMetadata:
 
         except Exception as e:
             logger.error(f"❌ Erro no scan remoto: {str(e)}")
+            self.is_rough_estimate = True
+            self._estimate_from_filename()
             return {}
+    
+    def _estimate_from_filename(self):
+        """
+        Tenta inferir metadados básicos pelo nome do arquivo como fallback.
+        """
+        import re
+        name = (self.filename or self.model_path).lower()
+        
+        # 1. Tenta pegar a contagem de parâmetros (ex: 8b, 70b, 3.5b)
+        params_match = re.search(r'([0-9.]+)b', name)
+        params = float(params_match.group(1)) if params_match else 7.0 # Default 7B
+        
+        # 2. Tenta pegar a quantização
+        quant = "q4_k_m" # Default equilibrado
+        if "q8_0" in name: quant = "q8_0"
+        elif "q4_0" in name: quant = "q4_0"
+        elif "q5_k_m" in name: quant = "q5_k_m"
+        elif "f16" in name: quant = "f16"
+        
+        # 3. Estima camadas (Regras de bolso)
+        layers = 32
+        if params > 50: layers = 80
+        elif params > 20: layers = 60
+        elif params < 4: layers = 24
+        
+        # 4. Estima Embedding Length
+        embd = 4096
+        if params > 50: embd = 8192
+        elif params < 4: embd = 2048
+        
+        logger.info(f"⚠️ Metadata Resolver: Usando estimativa grosseira para {params}B ({layers} layers)")
+        self._raw_metadata["general.architecture"] = "fuzzy_estimation"
+        self._raw_metadata["general.parameter_count"] = params * 1e9
+        self._raw_metadata["llama.block_count"] = layers
+        self._raw_metadata["llama.embedding_length"] = embd
+        self._raw_metadata["llama.attention.head_count"] = 32 if params < 50 else 64
+        self._raw_metadata["llama.attention.head_count_kv"] = 8 # GQA padrão
+        self.is_rough_estimate = True
     
     async def _get_remote_size(self, url: str) -> float:
         try:
@@ -274,11 +332,13 @@ class ModelMetadata:
             "model_vram_mb": model_vram * 1024,
             "kv_cache_vram_gb": kv_cache_gb,
             "kv_cache_vram_mb": kv_cache_gb * 1024,
-            "total_vram_gb": model_vram + kv_cache_gb,
-            "total_vram_mb": model_vram + kv_cache_gb * 1024,
+            "total_vram_gb": model_vram + kv_cache_gb + self.mmproj_size_gb,
+            "total_vram_mb": (model_vram + kv_cache_gb + self.mmproj_size_gb) * 1024,
+            "mmproj_size_gb": self.mmproj_size_gb,
             "offloaded_layers": gpu_layers,
             "total_layers": total_layers,
-            "percent_on_gpu": (gpu_layers / total_layers) * 100
+            "percent_on_gpu": (gpu_layers / total_layers) * 100,
+            "is_rough_estimate": self.is_rough_estimate
         }
 
 
@@ -312,9 +372,19 @@ def estimate_vram_ram(
     kv_cache_quantization: str = "FP16",
     gpu_layers: int = None,
     repo_id: str = None,
-    filename: str = None
+    filename: str = None,
+    mmproj_path: str = None,
+    mmproj_repo_id: str = None,
+    mmproj_filename: str = None
 ):
-    metadata = ModelMetadata(model_path, repo_id=repo_id, filename=filename)
+    metadata = ModelMetadata(
+        model_path, 
+        repo_id=repo_id, 
+        filename=filename,
+        mmproj_path=mmproj_path,
+        mmproj_repo_id=mmproj_repo_id,
+        mmproj_filename=mmproj_filename
+    )
 
     ctx_int = context_window
 
