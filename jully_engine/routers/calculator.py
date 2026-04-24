@@ -17,6 +17,7 @@ class ResourceCheckRequest(BaseModel):
     mmproj_path: Optional[str] = None
     mmproj_id: Optional[str] = None
     mmproj_filename: Optional[str] = None
+    flash_attn: Optional[bool] = True
 
 @router.post("/check-resources")
 async def check_resources(req: ResourceCheckRequest):

@@ -1,9 +1,9 @@
 --extra-index-url https://download.pytorch.org/whl/cu126
 
--r requirements_cpu.txt
+# -r requirements_cpu.txt
 
 # llama-cpp-python compilado localmente (gerado pelo setup_gpu.sh)
---find-links ./vendor/llama-cpp-python/dist
+--find-links ./jully_engine/vendor/llama-cpp-python/dist
 llama-cpp-python
 
 # GPU specific
@@ -18,10 +18,11 @@ peft
 safetensors
 insightface
 xformers
-# git+https://github.com/tencent-ailab/IP-Adapter.git
+-e ./jully_engine/vendor/IP-Adapter
 basicsr
 realesrgan
 gfpgan
 facexlib
 gguf
 sdnq
+onnxruntime-gpu>=1.24.4

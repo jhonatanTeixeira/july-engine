@@ -3,10 +3,10 @@ uvicorn
 httpx
 python-multipart
 python-dotenv
-litellm
-replicate
+litellm>=1.83.12
+replicate>1
 requests
-tavily-python
+tavily-python==0.7.23
 pytest
 pytest-asyncio
 psutil
@@ -14,7 +14,7 @@ tinydb
 sqlalchemy
 psycopg2-binary
 chromadb
-pgvector
+pgvector==0.4.2
 mcp
 piexif
 exif
@@ -25,3 +25,4 @@ fsspec
 s3fs
 gcsfs
 imageio-ffmpeg
+pyinstaller>=6.19.0

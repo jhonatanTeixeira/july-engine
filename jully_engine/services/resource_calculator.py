@@ -4,6 +4,8 @@ import hashlib
 import logging
 import httpx
 
+from typing import Optional
+
 logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
 
 
@@ -73,13 +75,40 @@ class ModelMetadata:
         if params > 50: embd = 8192
         elif params < 4: embd = 2048
 
-        logger.info(f"⚠️ Metadata Resolver: Usando estimativa grosseira para {params}B ({layers} layers)")
+        # Detecção de MoE (Mixture of Experts)
+        # Suporta padrão comum "moe" ou padrão Qwen "30B-A3B" (total-active)
+        is_moe = "moe" in name
+        expert_count = 0
+        expert_used = 0
+        
+        qwen_moe_match = re.search(r'([0-9.]+)b-a([0-9.]+)b', name)
+        
+        if qwen_moe_match:
+            total_p = float(qwen_moe_match.group(1))
+            active_p = float(qwen_moe_match.group(2))
+            is_moe = True
+            expert_count = 64 # Valor base comum para Qwen MoE
+            # Calcula experts ativos proporcionalmente ao ratio de parâmetros ativos
+            expert_used = max(1, int((active_p / total_p) * expert_count))
+            logger.info(f"✨ Qwen MoE Detectado: {total_p}B total, {active_p}B ativo. Ratio aplicado: {expert_used}/{expert_count} experts.")
+        elif is_moe:
+            # Heurística para outros modelos MoE (Mixtral, etc)
+            expert_count = 16 if params < 30 else 64
+            expert_used = 2 if params < 30 else 8
+            logger.info(f"✨ MoE Genérico Detectado: {expert_used}/{expert_count} experts ativos.")
+
+        logger.info(f"⚠️ Metadata Resolver: Usando estimativa grosseira para {params}B ({layers} layers, MoE={is_moe})")
         self._raw_metadata["general.architecture"] = "fuzzy_estimation"
         self._raw_metadata["general.parameter_count"] = params * 1e9
         self._raw_metadata["llama.block_count"] = layers
         self._raw_metadata["llama.embedding_length"] = embd
         self._raw_metadata["llama.attention.head_count"] = 32 if params < 50 else 64
         self._raw_metadata["llama.attention.head_count_kv"] = 8
+        
+        if is_moe:
+            self._raw_metadata["llama.expert_count"] = expert_count
+            self._raw_metadata["llama.expert_used_count"] = expert_used
+
         self.is_rough_estimate = True
 
     async def _get_remote_size(self, url: str) -> float:
@@ -134,8 +163,9 @@ class ModelMetadata:
                 # Detecta o tamanho dos dados do campo
                 data_len = field.data.shape[0] if hasattr(field.data, 'shape') else len(field.data)
 
-                # Se for uma lista grande (> 128 elementos), guardamos apenas o tamanho
-                if data_len > 128:
+                # Se for uma lista grande (> 128 elementos) e NÃO for uma string/bytes, guardamos apenas o tamanho
+                # Strings (templates) podem ser longas e são essenciais
+                if data_len > 128 and not isinstance(field.parts[field.data[0]], (str, bytes)):
                     self._raw_metadata[f"{field.name}.length"] = int(data_len)
                     continue
 
@@ -145,7 +175,16 @@ class ModelMetadata:
                 parts = field.parts[field.data[0]]
 
                 # Lógica de decodificação de tipos simples
-                if hasattr(parts, "__len__") and not isinstance(parts, (str, bytes)):
+                import numpy as np
+                if isinstance(parts, (np.ndarray, np.memmap)):
+                    if parts.dtype == np.uint8:
+                        try:
+                            val = bytes(parts).decode('utf-8').strip('\x00')
+                        except:
+                            val = parts.tolist()
+                    else:
+                        val = parts.item() if parts.size == 1 else parts.tolist()
+                elif hasattr(parts, "__len__") and not isinstance(parts, (str, bytes)):
                     val = parts[0] if len(parts) > 0 else 0
                 elif isinstance(parts, bytes):
                     try:
@@ -258,6 +297,18 @@ class ModelMetadata:
     def shared_kv_layers(self) -> int:
         """Layers que reutilizam KV Cache de outra layer (Cross-Layer KV Sharing)."""
         return int(self._get_fuzzy("attention.shared_kv_layers", 0))
+
+    @property
+    def tokenizer_template(self) -> Optional[str]:
+        """Retorna o template Jinja de chat do tokenizer."""
+        val = self._get_fuzzy("tokenizer.chat_template", None)
+        if isinstance(val, list):
+            try:
+                # Se for lista de ints (bytes), tenta converter
+                return bytes(val).decode('utf-8').strip('\x00')
+            except:
+                return str(val)
+        return val if isinstance(val, str) else None
 
     def _effective_model_size_gb(self) -> float:
         """

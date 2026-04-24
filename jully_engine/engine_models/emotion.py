@@ -44,20 +44,38 @@ class Emotion:
 
     def _run_single(self, image: Image.Image) -> str:
         import numpy as np
+        import cv2
+        
         img_rgb = np.array(image.convert('RGB'))
-        input_data = self.face_detector.detect_faces(img_rgb)
+        faces = self.face_detector.detect_faces(img_rgb) if self.face_detector else []
 
-        if input_data is None:
-            return "No face detected"
+        if not faces:
+            # Se não detectou nada (ou não tem detector), assume que a imagem já é o recorte da face
+            face_crop = img_rgb
+        else:
+            # Usamos a primeira face detectada para análise de emoção
+            x1, y1, x2, y2 = faces[0]
+            face_crop = img_rgb[y1:y2, x1:x2]
+        
+        if face_crop.size == 0:
+            return "Empty face crop"
             
         try:
+            # O modelo emotion-ferplus-8.onnx espera entrada (1, 1, 64, 64) em escala de cinza
+            face_gray = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY)
+            face_resized = cv2.resize(face_gray, (64, 64))
+            
+            # Normalização e ajuste de shape
+            input_tensor = face_resized.astype(np.float32).reshape(1, 1, 64, 64)
+            
             input_name = self.session.get_inputs()[0].name
-            outputs = self.session.run(None, {input_name: input_data})
+            outputs = self.session.run(None, {input_name: input_tensor})
             
             emotions = ['neutral', 'happiness', 'surprise', 'sadness', 'anger', 'disgust', 'fear', 'contempt']
             scores = outputs[0][0]
             dominant_emotion = emotions[np.argmax(scores)]
-            logger.info(f"Engine Emotion executed successfully on {self.backend} with Emotion")
+            
+            logger.info(f"Emotion detected: {dominant_emotion}")
             return dominant_emotion
         except Exception as e:
             logger.error(f"Emotion execution failed: {e}")

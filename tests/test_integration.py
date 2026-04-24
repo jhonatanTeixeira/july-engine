@@ -46,6 +46,7 @@ async def client():
     text_presets = [
         {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
         {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option":  "emulated",},
+        {"alias": "qwen3-gpu-mcp", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option": "emulated"},
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
@@ -341,7 +342,7 @@ async def test_internal_mcp_image_generation(client):
 @pytest.mark.anyio
 async def test_video_description_strategies(client):
     print("\n[Test] Running Video Description Strategy Integration...")
-    video_path = os.path.join("tests", "test_video.mp4")
+    video_path = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/jully/july_engine/tests/20171231_164112.mp4"
 
     strategies = ["default", "interaction", "emotion"]
     
@@ -358,7 +359,7 @@ async def test_video_description_strategies(client):
             }
             # Headers for the backend
             headers = {
-                "x-backend": "gpu",
+                "x-backend": "cpu",
                 "x-context-window": "32768"
             }
             

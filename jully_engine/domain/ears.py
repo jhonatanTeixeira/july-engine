@@ -16,6 +16,10 @@ class Ears:
     Strategies: FasterWhisper (cpu, gpu), LLMApi (api).
     Contract: listen() ALWAYS returns a pure string (str).
     """
+    def __init__(self, backend: str, model_tag: str):
+        self.backend = backend
+        self.model_tag = model_tag
+        self._strategy = self._get_strategy()
     def _get_strategy(self):
         if self.backend == "api":
             from ..engine_models.llm_api import LLMApi

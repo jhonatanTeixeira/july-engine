@@ -12,3 +12,4 @@ storage
 # storage/db
 temp_*
 .env
+# vendor/

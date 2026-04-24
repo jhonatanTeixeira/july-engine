@@ -39,10 +39,11 @@ history_table = Table(
 
 class PostgresBackend(PersistenceBackend):
     def __init__(self, connection_string: str):
+        from sqlalchemy import text
         self.engine: Engine = create_engine(connection_string)
         # Create schema and tables
         with self.engine.begin() as conn:
-            conn.execute(metadata.schema_translate_map or "CREATE SCHEMA IF NOT EXISTS july_engine")
+            conn.execute(text("CREATE SCHEMA IF NOT EXISTS july_engine"))
             metadata.create_all(conn)
 
     def get_setting(self, key: str) -> Optional[Dict[str, Any]]:
@@ -114,8 +115,84 @@ class PostgresBackend(PersistenceBackend):
             result = conn.execute(voices_table.delete().where(voices_table.c.id == voice_id))
             return result.rowcount > 0
 
+    def get_all_mcps(self) -> List[Dict[str, Any]]:
+        with self.engine.connect() as conn:
+            results = conn.execute(mcps_table.select()).fetchall()
+            return [r.data for r in results]
+
+    def get_mcp(self, mcp_id: str) -> Optional[Dict[str, Any]]:
+        with self.engine.connect() as conn:
+            result = conn.execute(mcps_table.select().where(mcps_table.c.id == mcp_id)).fetchone()
+            return result.data if result else None
+
+    def set_mcp(self, mcp_id: str, data: Dict[str, Any]) -> None:
+        from sqlalchemy.dialects.postgresql import insert
+        data["id"] = mcp_id
+        stmt = insert(mcps_table).values(id=mcp_id, data=data)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=['id'],
+            set_=dict(data=stmt.excluded.data)
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def delete_mcp(self, mcp_id: str) -> bool:
+        with self.engine.begin() as conn:
+            result = conn.execute(mcps_table.delete().where(mcps_table.c.id == mcp_id))
+            return result.rowcount > 0
+
     def add_history_event(self, event_data: Dict[str, Any]) -> None:
         from sqlalchemy.dialects.postgresql import insert
         stmt = insert(history_table).values(id=event_data["id"], data=event_data)
         with self.engine.begin() as conn:
             conn.execute(stmt)
+
+    def _get_table(self, table_name: str) -> Table:
+        table_map = {
+            "settings": settings_table,
+            "models": models_table,
+            "uploaded_voices": voices_table,
+            "mcp_servers": mcps_table,
+            "history": history_table
+        }
+        if table_name in table_map:
+            return table_map[table_name]
+        return Table(table_name, metadata, autoload_with=self.engine)
+
+    def find_one(self, table_name: str, query: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_name)
+        with self.engine.connect() as conn:
+            stmt = table.select()
+            for k, v in query.items():
+                if k == "id" and hasattr(table.c, "id"):
+                    stmt = stmt.where(table.c.id == v)
+                elif k == "model_alias" and hasattr(table.c, "model_alias"):
+                    stmt = stmt.where(table.c.model_alias == v)
+                elif k == "key" and hasattr(table.c, "key"):
+                    stmt = stmt.where(table.c.key == v)
+                else:
+                    if hasattr(table.c, "data"):
+                        stmt = stmt.where(table.c.data[k].astext == str(v))
+                    elif hasattr(table.c, "value"):
+                        stmt = stmt.where(table.c.value[k].astext == str(v))
+            
+            result = conn.execute(stmt).fetchone()
+            if not result: return None
+            
+            if hasattr(result, "data"): return result.data
+            if hasattr(result, "value"): return result.value
+            return dict(result._mapping)
+
+    def insert_many(self, table_name: str, documents: List[Dict[str, Any]]) -> None:
+        table = self._get_table(table_name)
+        with self.engine.begin() as conn:
+            # Postgres insert many needs to handle specific schema
+            for doc in documents:
+                # Basic implementation for data-based tables
+                if hasattr(table.c, "id") and "id" in doc:
+                    from sqlalchemy.dialects.postgresql import insert
+                    stmt = insert(table).values(id=doc["id"], data=doc)
+                    stmt = stmt.on_conflict_do_nothing()
+                    conn.execute(stmt)
+                else:
+                    conn.execute(table.insert().values(data=doc) if hasattr(table.c, "data") else table.insert().values(**doc))

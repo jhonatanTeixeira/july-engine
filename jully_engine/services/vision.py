@@ -11,10 +11,10 @@ from datetime import datetime
 from typing import List, Dict, Any, Tuple, Generator, Optional, Union, TYPE_CHECKING
 from PIL import Image
 
+import numpy as np
+import cv2
+
 if TYPE_CHECKING:
-    import cv2
-    import numpy as np
-    import mediapipe as mp
     from deepface import DeepFace
 
 from ..persistence.vector_store import vector_store
@@ -60,30 +60,32 @@ class ExifService:
         return date_val, lat, lon
 
 class FaceDetector:
-
-    def __init__(self, model_path='storage/models/detector.tflite', min_confidence=0.3):
-        from mediapipe.tasks import python
-        from mediapipe.tasks.python import vision
-
-        base_options = python.BaseOptions(model_asset_path=model_path)
-        options = vision.FaceDetectorOptions(base_options=base_options, min_detection_confidence=min_confidence)
-        self.detector = vision.FaceDetector.create_from_options(options)
+    def __init__(self, model_path='yolo11s.pt', min_confidence=0.3):
+        from ultralytics import YOLO
+        # O usuário solicitou reforçar o uso de yolov11s
+        try:
+            self.model = YOLO(model_path)
+        except Exception as e:
+            logger.error(f"Falha ao carregar YOLOv11s: {e}. Tentando yolo11n.pt como fallback.")
+            self.model = YOLO('yolo11n.pt')
+        self.min_confidence = min_confidence
 
     def detect_faces(self, img_rgb: "np.ndarray") -> List[Tuple[int, int, int, int]]:
-        import mediapipe as mp
-
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=img_rgb)
-        detection_result = self.detector.detect(mp_image)
+        """
+        Detecta bboxes no frame. 
+        Nota: Para faces especificamente, se o yolov11s padrão não for suficiente, 
+        o FaceService já usa o DeepFace com detector_backend='yolov11s'.
+        """
+        results = self.model(img_rgb, conf=self.min_confidence, verbose=False)
         faces = []
-
-        for detection in detection_result.detections:
-            bbox = detection.bounding_box
-            x1, y1 = max(0, bbox.origin_x), max(0, bbox.origin_y)
-            x2, y2 = x1 + bbox.width, y1 + bbox.height
-
-            if (x2 - x1) > 15 and (y2 - y1) > 15:
-                faces.append((x1, y1, x2, y2))
-
+        for r in results:
+            for box in r.boxes:
+                # No YOLO padrão, faces não são uma classe. 
+                # Se o usuário forneceu um modelo de face, pegamos todas as detecções.
+                # Se for o modelo COCO, pegamos 'person' (classe 0).
+                if int(box.cls[0]) == 0 or len(self.model.names) < 10: # heurística para face-model vs coco-model
+                    b = box.xyxy[0].cpu().numpy()
+                    faces.append((int(b[0]), int(b[1]), int(b[2]), int(b[3])))
         return faces
 
 class FaceService:
@@ -93,6 +95,7 @@ class FaceService:
         self.vector_store = vector_store
         self.model_name = "ArcFace"
         self.detector_backend = "yolov11s"
+        self.detector = FaceDetector()
 
     def get_faces_embeddings(self, image: Image.Image) -> Generator[Tuple[List[float], "np.ndarray", Tuple[int, int, int, int]], None, None]:
         """

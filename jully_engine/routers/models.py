@@ -98,6 +98,7 @@ class DownloadRequest(BaseModel):
     num_layers: Optional[int] = -1
     force_reasoning: Optional[bool] = None
     is_vision: Optional[bool] = None
+    flash_attn: Optional[bool] = True
 
 class UpdateMetadataRequest(BaseModel):
     model_type: Optional[str] = None
@@ -111,6 +112,7 @@ class UpdateMetadataRequest(BaseModel):
     num_layers: Optional[int] = None
     force_reasoning: Optional[bool] = None
     is_vision: Optional[bool] = None
+    flash_attn: Optional[bool] = None
     file_path: Optional[str] = None
     mmproj_path: Optional[str] = None
 
@@ -211,6 +213,7 @@ async def download_gguf(request: DownloadRequest):
         "kv_cache_quantization": request.kv_cache_quantization or "FP16",
         "num_layers": request.num_layers,
         "force_reasoning": final_reasoning,
+        "flash_attn": request.flash_attn if request.flash_attn is not None else True,
         "is_vision": request.is_vision if request.is_vision is not None else (request.model_type == "vision"),
         "file_path": None, # Pendente download
         "mmproj_path": None

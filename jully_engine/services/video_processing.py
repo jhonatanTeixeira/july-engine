@@ -6,7 +6,7 @@ import io
 import logging
 import os
 import subprocess
-from typing import Any, Generator, List, Optional
+from typing import Any, Dict, Generator, List, Optional
 import uuid
 from PIL import Image
 import cv2
@@ -391,9 +391,10 @@ class MultimodalVideoAnalysisUseCase:
         self.vlm = vlm
         self.face_service = FaceService()
 
-    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10, strategy: str = "default", detect_changes=False):
+    async def execute(self, video_path: str, interval_sec: float = 2.0, frames_per_grid: int = 4, batch_size: int = 10, strategy: str = "default", detect_changes=False, headers: Optional[Dict] = None):
         logger.info(f"Starting multimodal native batch analysis for: {video_path} with strategy: {strategy}")
         
+        headers = headers or {}
         video_aggregate = VideoAggregate(
             video_id=str(uuid.uuid4()),
             file_path=video_path,
@@ -404,7 +405,7 @@ class MultimodalVideoAnalysisUseCase:
         # =====================================================================
         # DISPARO ASSÍNCRONO DA TRANSCRIÇÃO (Passando o video_path)
         # =====================================================================
-        audio_task = asyncio.create_task(self._process_full_audio(video_path))
+        audio_task = asyncio.create_task(self._process_full_audio(video_path, headers=headers))
 
         # =====================================================================
         # PROCESSAMENTO VISUAL 
@@ -421,7 +422,7 @@ class MultimodalVideoAnalysisUseCase:
             analysis_strategy = EmotionAndAttentionStrategy()
 
         # Passando o video_path para o gerador
-        for ts, frame in self.bifurcator.sample_frames(video_path, interval_sec, detect_changes=detect_changes):
+        for ts, frame in self.bifurcator.sample_frames(video_path, interval_sec, detect_change=detect_changes):
             frame_buffer.append(frame)
             timestamps.append(ts)
             
@@ -435,7 +436,7 @@ class MultimodalVideoAnalysisUseCase:
                 timestamps = []
                 
                 if len(grid_batch) >= batch_size:
-                    await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy)
+                    await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy, headers=headers)
                     grid_batch = []
                     timestamp_batch = []
 
@@ -445,7 +446,7 @@ class MultimodalVideoAnalysisUseCase:
             timestamp_batch.append((timestamps[0], timestamps[-1]))
             
         if grid_batch:
-            await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy)
+            await self._process_batch(video_aggregate, grid_batch, timestamp_batch, analysis_strategy, headers=headers)
 
         # =====================================================================
         # SINCRONIZAÇÃO FINAL
@@ -458,8 +459,9 @@ class MultimodalVideoAnalysisUseCase:
 
         return video_aggregate
 
-    async def _process_batch(self, aggregate: VideoAggregate, grids: List, time_ranges: List[tuple], strategy: Optional[Any] = None):
+    async def _process_batch(self, aggregate: VideoAggregate, grids: List, time_ranges: List[tuple], strategy: Optional[Any] = None, headers: Optional[Dict] = None):
         logger.info("Analyzing Batch")
+        headers = headers or {}
         if strategy:
             segments = await strategy.analyze_batch(grids, time_ranges, self.face_service, self.vlm)
             
@@ -469,27 +471,64 @@ class MultimodalVideoAnalysisUseCase:
                     segment_id=str(uuid.uuid4()),
                     start_offset=seg.time_range[0],
                     end_offset=seg.time_range[1],
-                    narrative=GridNarrative(text=seg.description)
+                    narrative=GridNarrative(
+                        text=seg.description,
+                        visual_vibe="dynamic",
+                        action_summary=seg.description[:100],
+                        tokens_consumed=0
+                    )
                 )
                 aggregate.segments.append(new_seg)
         else:
             prompt = "Describe the sequence of actions, environment and people in this video narrative block."
-            narratives = await self.vlm.describe_grids_batch(grids, prompt)
             
-            for i, narrative in enumerate(narratives):
+            # Montando o payload multimodal com N imagens no mesmo request
+            content_array = [{"type": "text", "text": prompt}]
+            
+            for grid in grids:
+                content_array.append({
+                    "type": "image_url", 
+                    "image_url": {"url": self.vlm._img_to_base64(grid)}
+                })
+
+            payload = {
+                "messages": [
+                    {"role": "user", "content": content_array}
+                ],
+                "headers": headers,
+                "model": "fastvlm"
+            }
+            
+            results = await inference_helper.process('vision_chat', payload)
+            
+            # Se o modelo não devolver lista, force para lista para parear com os grids
+            if isinstance(results, str):
+                results = [results]
+            elif isinstance(results, dict):
+                content = results.get("choices", [{}])[0].get("message", {}).get("content", "")
+                results = [content]
+                
+            for i, description in enumerate(results):
                 start_ts, end_ts = time_ranges[i]
+                desc_text = description.get("text", "") if isinstance(description, dict) else str(description)
                 
                 segment = VideoSegment(
                     segment_id=str(uuid.uuid4()),
                     start_offset=start_ts,
                     end_offset=end_ts,
-                    narrative=narrative
+                    narrative=GridNarrative(
+                        text=desc_text,
+                        visual_vibe="dynamic",
+                        action_summary=desc_text[:100],
+                        tokens_consumed=0
+                    )
                 )
                 
                 aggregate.segments.append(segment)
 
-    async def _process_full_audio(self, video_path: str) -> str:
+    async def _process_full_audio(self, video_path: str, headers: Optional[Dict] = None) -> str:
         """Extrai o .wav do vídeo e manda para o STT local."""
+        headers = headers or {}
         try:
             audio_path = self.bifurcator.extract_audio_stream(video_path)
             
@@ -502,10 +541,10 @@ class MultimodalVideoAnalysisUseCase:
 
             payload = {
                 "audio": audio_bytes,
-                "headers": {} 
+                "headers": headers 
             }
             
-            logger.info("Sending extracted audio to STT engine...")
+            logger.info(f"Sending extracted audio to STT engine (backend: {headers.get('x-backend', 'default')})...")
             
             transcription = await inference_helper.process('stt', payload)
             

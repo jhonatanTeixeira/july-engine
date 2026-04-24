@@ -138,6 +138,14 @@ class GGUF:
             from llama_cpp import Llama
             import llama_cpp
             
+            if self.backend == 'gpu':
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
+
             logger.info(f"GGUF: Loading model {self.meta['model_alias']} on {self.backend} (n_ctx={effective_n_ctx})")
             
             params = {
@@ -148,8 +156,14 @@ class GGUF:
             }
             logger.info(f"GGUF: Final params for Llama: {params}")
 
-            if os.environ.get("FLASH_ATTN", "false").lower() == "true":
+            # Flash Attention: metadata > env var > default True
+            flash_attn = meta.get("flash_attn")
+            if flash_attn is None:
+                flash_attn = os.environ.get("FLASH_ATTN", "true").lower() == "true"
+            
+            if flash_attn:
                 params["flash_attn"] = True
+                logger.info("GGUF: Flash Attention enabled")
 
             # Use KV Cache Quantization from metadata (preferred) or env var
             kv_quant = meta.get("kv_cache_quantization") or os.environ.get('KV_CACHE_QUANTIZATION')
@@ -161,8 +175,8 @@ class GGUF:
                     params["type_v"] = 8
                     logger.info("GGUF: Using Q8_0 for KV Cache")
                 elif "4" in kv_quant or "Q4_0" in kv_quant:
-                    params["type_k"] = 4
-                    params["type_v"] = 4
+                    params["type_k"] = 2
+                    params["type_v"] = 2
                     logger.info("GGUF: Using Q4_0 for KV Cache")
                 else:
                     logger.info("GGUF: Using default FP16 for KV Cache")
@@ -175,6 +189,21 @@ class GGUF:
                 params["chat_format"] = meta["template"]
             else:
                 params["chat_format"] = "jinja" if "jinja" in llama_cpp.llama_chat_format.CHAT_FORMATS else caps["chat_format"]
+
+            # Qwen Tool Calling & Reasoning Support (non-VL)
+            if 'qwen' in model_identifier.lower() and not caps["vision_handler"]:
+                from .chat_handlers import QwenChatHandler
+                template = self.model_metadata.tokenizer_template or meta.get("template")
+                if isinstance(template, str) and template.strip():
+                    logger.info(f"GGUF: Using specialized QwenChatHandler for {meta['model_alias']}")
+                    params["chat_handler"] = QwenChatHandler(
+                        template=template,
+                        eos_token="<|im_end|>",
+                        bos_token="<|im_start|>"
+                    )
+                    # Removemos o chat_format para evitar conflito com o chat_handler customizado
+                    if "chat_format" in params:
+                        del params["chat_format"]
             
             if meta.get("model_type") == "vision" or caps["vision_handler"]:
                 
@@ -205,8 +234,8 @@ class GGUF:
                         from llama_cpp.llama_chat_format import Qwen25VLChatHandler
                         params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen25VLChatHandler()
                     elif v_handler == "qwen35":
-                        from llama_cpp.llama_chat_format import Qwen35ChatHandler
-                        params["chat_handler"] = Qwen35ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen35ChatHandler()
+                        from .chat_handlers import Qwen35Handler
+                        params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path) if mmproj_path else Qwen35Handler()
                         
                     elif v_handler == "moondream":
                         from llama_cpp.llama_chat_format import MoondreamChatHandler
@@ -274,7 +303,14 @@ class GGUF:
                 raw_response = ""
                 
                 for chunk in response:
-                    content = chunk["choices"][0].get("delta", {}).pop("content", "")
+                    delta = chunk["choices"][0].get("delta", {})
+                    
+                    # Pass-through para tool_calls ou outros dados que não sejam texto puro
+                    if "tool_calls" in delta or "audio_url" in delta or "image_url" in delta:
+                        yield chunk
+                        continue
+
+                    content = delta.pop("content", "")
                     buffer += content
                     raw_response += content
 

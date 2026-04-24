@@ -183,7 +183,26 @@ class MultiModalHelper:
         
     def filter_audios(self, messages: Optional[List[Dict]] = None) -> List[Dict]:
         return self._filter_content_by_type(["audio_url", "input_audio"], messages)
-        
+
+    def flatten_messages(self, messages: List[Dict]) -> List[Dict]:
+        """Converte mensagens com conteúdo em lista para string simples, removendo partes não textuais."""
+        new_messages = []
+        for msg in messages:
+            new_msg = deepcopy(msg)
+            content = msg.get("content", "")
+            
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                new_msg["content"] = "\n".join(text_parts)
+            else:
+                new_msg["content"] = str(content)
+            
+            new_messages.append(new_msg)
+        return new_messages
+
     def last_message_images(self) -> List[Dict]:
         return self.get_images([self.messages[-1]]) if self.messages else []
         
@@ -223,13 +242,22 @@ class MultiModalHelper:
             }
 
             response: List[str] = await inference_helper.process('vision_chat', vision_payload)
-            last_content: list = self.messages[-1].setdefault("content", [])
+            
+            # Garante que o conteúdo seja uma lista para podermos adicionar a descrição
+            current_content = self.messages[-1].get("content", "")
+            if isinstance(current_content, str):
+                self.messages[-1]["content"] = [{"type": "text", "text": current_content}]
+            
+            last_content: list = self.messages[-1]["content"]
             
             format_content = lambda content: {"type": "text", "text": f"[User sent an image]: {content}"}
             
             for content in response:
                 last_content.append(format_content(content))
-    
+            
+            # Remove as imagens originais para não confundir modelos de texto puro
+            self.messages[-1]["content"] = [part for part in self.messages[-1]["content"] if part.get("type") != "image_url"]
+
     async def process_transcription(self) -> None:
         if (last_audios := self.last_message_audios()):
             audio_obj = last_audios[0]
@@ -247,6 +275,14 @@ class MultiModalHelper:
             }
 
             response: str = await inference_helper.process('stt', transcription_payload)
-            last_content: list = self.messages[-1].setdefault("content", [])
             
+            # Garante que o conteúdo seja uma lista
+            current_content = self.messages[-1].get("content", "")
+            if isinstance(current_content, str):
+                self.messages[-1]["content"] = [{"type": "text", "text": current_content}]
+            
+            last_content: list = self.messages[-1]["content"]
             last_content.append({"type": "text", "text": f"[User sent audio]: {response}"})
+            
+            # Remove os áudios originais
+            self.messages[-1]["content"] = [part for part in self.messages[-1]["content"] if part.get("type") not in ["audio_url", "input_audio"]]

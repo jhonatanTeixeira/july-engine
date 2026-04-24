@@ -362,10 +362,10 @@ class Eyes:
             interval_sec=interval_sec,
             frames_per_grid=frames_per_grid,
             strategy=strategy,
-            detect_changes=detect_changes
+            detect_changes=detect_changes,
+            headers=payload.get("headers", {})
         )
 
-        # 2. Se não houver description_model, retorna o aggregate bruto para a API
         description_model = payload.get("description_model")
         if not description_model:
             logger.info("Eyes.describe_video: no description_model provided — returning raw VideoAggregate.")
@@ -387,6 +387,7 @@ class Eyes:
             prompt_parts.append(f"[{seg.start_offset:.1f}s to {seg.end_offset:.1f}s]: {desc}")
 
         final_prompt = "\n".join(prompt_parts)
+        logger.info(f"[Eyes] Final prompt length: {len(final_prompt)} chars")
 
         # 4. Repassa para a Inteligência de Texto (O Roteador/Brain)
         llm_payload = {
@@ -394,8 +395,9 @@ class Eyes:
                 {"role": "system", "content": "You are a multimodal video synthesis AI."},
                 {"role": "user", "content": final_prompt}
             ],
-            "headers": {"x-context-window": payload.get("headers", {}).get("x-context-window", None)},
+            "headers": payload.get("headers", {}), # Repassa todos os headers (backend, etc)
             "model": description_model,
+            "num_layers": payload.get("num_layers", None), # Repassa num_layers se houver
             "stream": False
         }
 

@@ -26,7 +26,8 @@ class Brain:
 
     def _get_strategy(self):
         model_service = ModelsService()
-        model = model_service.get(self.model_tag) or model_service.resolve_by_settings(self.model_tag)
+        # Resolve by settings first to ensure presets (like mcp_option, template, etc.) are respected
+        model = model_service.resolve_by_settings(self.model_tag) or model_service.get(self.model_tag)
         self.config = model
 
         logger.debug(f"Brain: Model {self.model_tag} loaded. Config: {self.config}")

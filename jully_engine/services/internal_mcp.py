@@ -96,12 +96,16 @@ class InternalMCP:
                             },
                             "search_depth": {
                                 "type": "string",
-                                "enum": ["basic", "advanced"],
-                                "description": "The depth of the search. Defaults to 'basic'."
+                                "enum": ["basic", "advanced", "ultra-fast", "fast"],
+                                "description": "The depth of the search. Must be 'ultra-fast', 'fast', 'basic' or 'advanced'.Defaults to 'basic'."
                             },
                             "include_answer": {
                                 "type": "boolean",
                                 "description": "Whether to include a direct answer from the search engine. Defaults to true."
+                            },
+                            "include_list": {
+                                "type": "boolean",
+                                "description": "Whether to include a list of results from the search engine. Defaults to false."
                             },
                             "max_results": {
                                 "type": "integer",
@@ -301,6 +305,7 @@ class InternalMCP:
                     "query": query,
                     "search_depth": arguments.get("search_depth", "basic"),
                     "include_answer": arguments.get("include_answer", True),
+                    "include_list": arguments.get("include_list", False),
                     "max_results": arguments.get("max_results", 5)
                 }
                 
@@ -387,89 +392,91 @@ class InternalMCP:
                 
                 continue
             
-            if is_calling:
-                for idx, tool in tools.items():
-                    name = tool.get("name")
-                    if not name: continue
-                    
-                    # Status messages mapping
-                    status_map = {
-                        "search_web": "searching the web",
-                        "search_memory": "searching memory",
-                        "generate_image": "generating image",
-                        "generate_audio": "generating audio",
-                        "save_memory": "saving memory",
-                        "image_edit": "editing image"
-                    }
-                    display_name = status_map.get(name, f"calling {name}")
-                    
-                    # Yield start status
-                    yield {"status_update": display_name}
-                    await asyncio.sleep(0)
-                    
-                    args_json = tool['arguments'] or "{}"
-                    try:
-                        tool["response"] = await self.execute_tool(name, json.loads(args_json))
-                    except json.JSONDecodeError:
-                        logger.error(f"InternalMCP: Erro ao decodificar JSON para tool {name}: {args_json}")
-                        tool["response"] = (f"Error parsing arguments: {args_json}", None)
-                    
-                    # Yield end status
-                    yield {"status_update": ""} # Empty string to clear/finish status
-                    await asyncio.sleep(0)
-                
-                is_calling = False
-            
-            if chunk.get('choices')[0].get('finish_reason') == 'tool_calls':
-                requires_second_call = False
-                all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
-                
-                for idx, tool in tools.items():
-                    name = tool.get("name")
-                    if not name: continue
-                    
-                    llm, user = tool.get("response")
-                    
-                    is_faf = all_indexed_tools.get(name, {}).get("fire-and-forget", False)
-                    if "__" in name and not llm:
-                        is_faf = True
+            if chunk.get('choices')[0].get('finish_reason') in ['tool_calls', 'stop']:
+                if is_calling:
+                    requires_second_call = False
+                    all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
+
+                    for idx, tool in tools.items():
+                        name = tool.get("name")
+                        if not name: continue
                         
-                    if not is_faf:
-                        requires_second_call = True
-                        
-                    tool_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tool.get('id'),
-                        "name": name,
-                        "content": llm if llm else ""
-                    })
-                    
-                    assistant_tool_calls.append({
-                        "id": tool.get('id'),
-                        "type": 'function',
-                        "function": {
-                            "name": name,
-                            "arguments": tool['arguments']
+                        # Status messages mapping
+                        status_map = {
+                            "search_web": "searching the web",
+                            "search_memory": "searching memory",
+                            "generate_image": "generating image",
+                            "generate_audio": "generating audio",
+                            "save_memory": "saving memory",
+                            "image_edit": "editing image"
                         }
-                    })
+                        display_name = status_map.get(name, f"calling {name}")
+                        
+                        # Yield start status
+                        yield {"status_update": display_name}
+                        await asyncio.sleep(0)
+                        
+                        args_json = tool['arguments'] or "{}"
+                        try:
+                            llm, user = await self.execute_tool(name, json.loads(args_json))
+                        except json.JSONDecodeError:
+                            logger.error(f"InternalMCP: Erro ao decodificar JSON para tool {name}: {args_json}")
+                            llm, user = (f"Error parsing arguments: {args_json}", None)
+                        
+                        # Yield end status
+                        yield {"status_update": ""} # Empty string to clear/finish status
+                        await asyncio.sleep(0)
+
+                        if user:
+                            yield user.delta
+                            await asyncio.sleep(0)
+
+                        # Fire and Forget logic
+                        is_faf = all_indexed_tools.get(name, {}).get("fire-and-forget", False)
+                        if "__" in name and not llm:
+                            is_faf = True
+                            
+                        if not is_faf:
+                            requires_second_call = True
+
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tool.get('id'),
+                            "content": str(llm) if llm is not None else "Action completed successfully."
+                        })
+                        
+                        try:
+                            parsed_args = json.loads(tool['arguments']) if tool['arguments'] else {}
+                        except json.JSONDecodeError:
+                            parsed_args = {"error": "Invalid JSON arguments", "raw": tool['arguments']}
+
+                        assistant_tool_calls.append({
+                            "id": tool.get('id'),
+                            "type": 'function',
+                            "function": {
+                                "name": name,
+                                "arguments": parsed_args
+                            }
+                        })
                     
-                    if user:
-                        yield user.delta
-                        await asyncio.sleep(0)
-    
-                original_payload['messages'].append({
-                    "role": "assistant",
-                    "content": assistant_content,
-                    "tool_calls": assistant_tool_calls
-                })
-                
-                original_payload['messages'].extend(tool_messages)
-                
-                if requires_second_call:
-                    async for chunk_2p in await brain_instance.chat(original_payload):
-                        yield chunk_2p
-                        await asyncio.sleep(0)
-                    continue
+                    is_calling = False
+
+                    # Prepare messages for second turn
+                    assistant_msg = {
+                        "role": "assistant",
+                        "content": assistant_content if assistant_content else None,
+                        "tool_calls": assistant_tool_calls
+                    }
+                    original_payload['messages'].append(assistant_msg)
+                    original_payload['messages'].extend(tool_messages)
+                    
+                    logger.debug(f"InternalMCP: Envio para segundo turno: {json.dumps(original_payload['messages'], indent=2)}")
+
+                    if requires_second_call:
+                        async for chunk_2p in await brain_instance.chat(original_payload):
+                            yield chunk_2p
+                            await asyncio.sleep(0)
+                        continue
 
             yield chunk
             await asyncio.sleep(0)
@@ -490,6 +497,13 @@ class InternalMCP:
             messages.append(message)
             
             multimodal_content = []
+            assistant_text = message.get("content", "")
+            if assistant_text:
+                if isinstance(assistant_text, list):
+                    multimodal_content.extend(assistant_text)
+                else:
+                    multimodal_content.append({"type": "text", "text": assistant_text})
+            
             requires_second_call = False
             all_indexed_tools = {t['function']['name']: t for t in self.get_tools()}
             
@@ -514,7 +528,7 @@ class InternalMCP:
                 })
 
                 if user:
-                    multimodal_content.append(user._response)
+                    multimodal_content.append(user.response)
 
             if requires_second_call:
                 second_response = await brain.chat(original_payload)
@@ -522,8 +536,8 @@ class InternalMCP:
                 
                 if isinstance(second_content, list):
                     multimodal_content.extend(second_content)
-                else:
-                    multimodal_content.append(second_content)
+                elif second_content:
+                    multimodal_content.append({"type": "text", "text": str(second_content)})
                     
                 content = multimodal_content if len(multimodal_content) > 1 else multimodal_content[0] if multimodal_content else ""
                 

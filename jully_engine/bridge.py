@@ -95,6 +95,7 @@ class Bridge:
             model_name = payload.get("model", "default")
             if not model_service.is_vision_model(model_name):
                 await helper.process_vision()
+                payload["messages"] = helper.flatten_messages(payload["messages"])
             else:
                 logger.debug(f"Bridge: Model {model_name} is vision-capable. Skipping delegation.")
             

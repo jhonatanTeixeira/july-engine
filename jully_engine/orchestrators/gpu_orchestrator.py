@@ -152,13 +152,13 @@ class Runner:
 
     def unload(self, timeout=60):
         with self.state_lock:
-            time = 0
+            elapsed_wait = 0
 
-            while not self.context.is_truly_idle(self.task_type) and time <= timeout:
-                time += 1
+            while not self.context.is_truly_idle(self.task_type) and elapsed_wait <= timeout:
+                elapsed_wait += 1
                 time.sleep(1)
 
-            if time >= timeout:
+            if elapsed_wait >= timeout:
                 raise Exception(f"Timeout na GPU: {self.task_type} não está idle após {timeout}s.")
 
             self.get_domain().unload()
