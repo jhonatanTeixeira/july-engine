@@ -97,7 +97,7 @@ class GGUF:
         meta = self.meta
         
         headers = payload.get("headers", {})
-        effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 2048)
+        effective_n_ctx = int(headers.get("x-context-window") or payload.get("n_ctx") or meta.get("context_window") or 4096)
         
         # 2. Get layers config
         layers_to_offload = meta.get("num_layers") or -1
@@ -117,7 +117,8 @@ class GGUF:
 
         meta = self.meta
         
-        effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 2048))
+        # Aumentamos o padrão para 4096 para suportar agentes mais complexos
+        effective_n_ctx = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 4096))
         
         if self.backend == 'cpu':
             n_gpu_layers = 0
@@ -386,18 +387,23 @@ class GGUF:
         else:
             # MODO NÃO-STREAM: Limpa a tag e separa tudo na raiz do JSON
             raw_content = response["choices"][0]["message"].get("content", "") or ""
+
+            if force_reasoning:
+                raw_content = "<think>" + raw_content
             
-            # Parser robusto para tags <think> mesmo não fechadas
-            think_pattern = re.compile(r"<think>(.*?)(?:</think>|$)", re.DOTALL)
+            # Parser robusto para tags <think>, <thought> ou <|thought|> mesmo não fechadas
+            think_pattern = re.compile(r"<(?:\|thought\||think|thought)>(.*?)(?:</(?:think|thought)>|(?=<\|)|$)", re.DOTALL)
             match = think_pattern.search(raw_content)
             
             if match:
                 reasoning = match.group(1).strip()
                 # Remove o bloco de pensamento do conteúdo principal
+                # Usamos match.group(0) para remover a tag inteira
                 content = raw_content.replace(match.group(0), "").strip()
                 
-                # Se sobrar uma tag de fechamento solta (devido ao replace parcial do group 0)
-                content = content.replace("</think>", "").strip()
+                # Cleanup de tags de fechamento remanescentes se necessário
+                for close_tag in ["</think>", "</thought>", "<channel|>"]:
+                    content = content.replace(close_tag, "").strip()
                 
                 response["choices"][0]["message"]["reasoning_content"] = reasoning
                 response["choices"][0]["message"]["content"] = content if content else None

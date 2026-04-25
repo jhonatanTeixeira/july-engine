@@ -93,7 +93,7 @@ class DownloadRequest(BaseModel):
     mmproj_id: Optional[str] = None
     mmproj_filename: Optional[str] = None
     template: Optional[str] = None
-    context_window: Optional[int] = 2048
+    context_window: Optional[int] = 4096
     kv_cache_quantization: Optional[str] = "FP16"
     num_layers: Optional[int] = -1
     force_reasoning: Optional[bool] = None

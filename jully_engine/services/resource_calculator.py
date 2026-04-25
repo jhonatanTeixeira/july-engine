@@ -564,7 +564,7 @@ def parse_context_window(ctx_str: str) -> int:
 
 async def estimate_vram_ram(
     model_path: str,
-    context_window: str | int = "2k",
+    context_window: str | int = "4k",
     kv_cache_quantization: str = "FP16",
     gpu_layers: int = None,
     repo_id: str = None,

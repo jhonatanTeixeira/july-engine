@@ -11,7 +11,7 @@ class ResourceCheckRequest(BaseModel):
     model_path: Optional[str] = "model"
     model_id: Optional[str] = None # repo_id
     filename: Optional[str] = None
-    context_window: str | int = "2k"
+    context_window: str | int = "4k"
     gpu_layers: Optional[int] = -1
     kv_cache_quantization: Optional[str] = "FP16"
     mmproj_path: Optional[str] = None

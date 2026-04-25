@@ -12,6 +12,18 @@ logger = logging.getLogger(__name__)
 
 class Gemma4Handler(Gemma4ChatHandler):
     def __call__(self, **kwargs):
+        # Garante que os argumentos de tool_call sejam dicionários para o template Jinja
+        messages = kwargs.get("messages", [])
+        for message in messages:
+            if "tool_calls" in message and message["tool_calls"]:
+                for tool_call in message["tool_calls"]:
+                    f = tool_call.get("function")
+                    if f and isinstance(f.get("arguments"), str):
+                        try:
+                            f["arguments"] = json.loads(f["arguments"])
+                        except Exception:
+                            pass
+
         response = super().__call__(**kwargs)
 
         if kwargs.get("stream"):
@@ -210,6 +222,18 @@ class QwenChatHandler(LlamaChatCompletionHandler):
         self.handler = self.formatter.to_chat_handler()
 
     def __call__(self, **kwargs):
+        # Garante que os argumentos de tool_call sejam dicionários para o template Jinja
+        messages = kwargs.get("messages", [])
+        for message in messages:
+            if "tool_calls" in message and message["tool_calls"]:
+                for tool_call in message["tool_calls"]:
+                    f = tool_call.get("function")
+                    if f and isinstance(f.get("arguments"), str):
+                        try:
+                            f["arguments"] = json.loads(f["arguments"])
+                        except Exception:
+                            pass
+
         # O handler interno do Jinja2ChatFormatter faz o trabalho pesado de renderização
         response = self.handler(**kwargs)
 
@@ -464,6 +488,19 @@ class Qwen35Handler(Qwen35ChatHandler):
         super().__init__(**kwargs)
 
     def __call__(self, **kwargs):
+        # Garante que os argumentos de tool_call sejam dicionários para o template Jinja
+        # (Alguns templates como o do Qwen 3.5 usam | items e quebram se for string JSON)
+        messages = kwargs.get("messages", [])
+        for message in messages:
+            if "tool_calls" in message and message["tool_calls"]:
+                for tool_call in message["tool_calls"]:
+                    f = tool_call.get("function")
+                    if f and isinstance(f.get("arguments"), str):
+                        try:
+                            f["arguments"] = json.loads(f["arguments"])
+                        except Exception:
+                            pass
+
         response = super().__call__(**kwargs)
 
         if kwargs.get("stream"):
@@ -514,7 +551,15 @@ class Qwen35Handler(Qwen35ChatHandler):
                     }
                 })
 
-        # Remove as tags de tool call do conteúdo, mas preserva o resto (incluindo <think>)
+        # Extração de Thinking Block
+        thinking_pattern = re.compile(r'<(?:\|thought\||think|thought)>([\s\S]+?)(?:</(?:think|thought)>|(?=<\|)|$)', re.DOTALL)
+        think_match = thinking_pattern.search(content)
+        if think_match:
+            thinking = think_match.group(1).strip()
+            message["reasoning_content"] = thinking
+            content = content.replace(think_match.group(0), "").strip()
+
+        # Remove as tags de tool call do conteúdo, mas preserva o resto
         content = tool_call_pattern.sub('', content).strip() or None
         
         message["content"] = content
