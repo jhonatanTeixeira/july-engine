@@ -38,9 +38,9 @@ class Gemma4Handler(Gemma4ChatHandler):
         if not isinstance(content, str):
             return response
 
-        # 1. Extract thinking blocks: <|channel>thought\n...<channel|>
+        # 1. Extract thinking blocks: <|channel>thought\n...<channel|> (or end of string)
         thinking_pattern = re.compile(
-            r'<\|channel>thought([\s\S]+)<channel\|>', re.DOTALL
+            r'<\|channel>thought([\s\S]*?)(?:<channel\|>|$)', re.DOTALL
         )
         think_match = thinking_pattern.search(content)
         reasoning = None
@@ -552,7 +552,7 @@ class Qwen35Handler(Qwen35ChatHandler):
                 })
 
         # Extração de Thinking Block
-        thinking_pattern = re.compile(r'<(?:\|thought\||think|thought)>([\s\S]+?)(?:</(?:think|thought)>|(?=<\|)|$)', re.DOTALL)
+        thinking_pattern = re.compile(r'<(?:\|thought\||think|thought|\|channel>thought)>([\s\S]+?)(?:</(?:think|thought)>|<channel\|>|(?=<\|)|$)', re.DOTALL)
         think_match = thinking_pattern.search(content)
         if think_match:
             thinking = think_match.group(1).strip()
