@@ -339,6 +339,8 @@ async def list_gguf_models():
 
 @router.put("/{model_alias}")
 async def update_model_metadata(model_alias: str, request: UpdateMetadataRequest):
+    from ..orchestrators.gpu_orchestrator import gpu_orchestrator
+    
     db = load_models_db()
     if model_alias not in db:
         raise HTTPException(status_code=404, detail=f"Model {model_alias} not found")
@@ -352,12 +354,19 @@ async def update_model_metadata(model_alias: str, request: UpdateMetadataRequest
     db[model_alias] = model_data
     save_models_db(db)
     
+    # Descarrega o modelo da GPU se ele estiver carregado, para que a próxima chamada use as novas configs
+    await gpu_orchestrator.unload_model(model_alias)
+    
     return {"status": "success", "model": model_data}
 
 @router.delete("/{model_alias}")
 async def delete_model(model_alias: str):
+    from ..orchestrators.gpu_orchestrator import gpu_orchestrator
     db = load_models_db()
     if model_alias in db:
+        # Descarrega o modelo da GPU antes de remover do banco
+        await gpu_orchestrator.unload_model(model_alias)
+        
         del db[model_alias]
         save_models_db(db)
         return {"status": "success", "message": f"Model {model_alias} removed from database"}

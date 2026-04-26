@@ -5,9 +5,44 @@ import inspect
 from queue import Queue, Empty
 from typing import Any, AsyncGenerator, Union, Dict
 import logging
+from ..context import request_id_var
 
 logger = logging.getLogger('JulyEngne.Orchestrators.GpuOrchestrator')
 
+class ReentrantModelLock:
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._owner = None
+        self._count = 0
+
+    async def acquire(self):
+        rid = request_id_var.get()
+        if rid and self._owner == rid:
+            self._count += 1
+            return
+        await self._lock.acquire()
+        self._owner = rid
+        self._count = 1
+
+    def release(self):
+        rid = request_id_var.get()
+        if rid and self._owner == rid:
+            self._count -= 1
+            if self._count == 0:
+                self._owner = None
+                self._lock.release()
+        else:
+            # Fallback para chamadas sem request_id
+            self._owner = None
+            self._count = 0
+            if self._lock.locked():
+                self._lock.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.release()
 
 class GpuContext:
     def __init__(self):
@@ -17,6 +52,14 @@ class GpuContext:
         self.orchestrator_lock = asyncio.Lock() 
         self.condition = asyncio.Condition() 
         self.resource_manager = resource_manager
+        self.model_locks = {}
+        self.model_locks_lock = threading.Lock()
+
+    def get_model_lock(self, model_alias: str):
+        with self.model_locks_lock:
+            if model_alias not in self.model_locks:
+                self.model_locks[model_alias] = ReentrantModelLock()
+            return self.model_locks[model_alias]
 
     def get_runner(self, task_type: str) -> 'Runner':
         return self.state.get(task_type, {}).get("runner")
@@ -191,49 +234,53 @@ class Runner:
                     raise TimeoutError("Timeout na fila da GPU.")
 
     async def run(self, payload: dict):
-        async with self.context.orchestrator_lock:
-            self.context.garbage_collection()
+        model_alias = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+        model_lock = self.context.get_model_lock(model_alias)
 
-            domain = self.get_domain()
-            runner = self.context.get_runner(self.task_type)
+        async with model_lock:
+            async with self.context.orchestrator_lock:
+                self.context.garbage_collection()
 
-            # Comparação robusta de modelos (por alias ou ID)
-            model_changed = False
-            if runner:
-                current_id = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
-                new_id = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
-                model_changed = current_id != new_id
+                domain = self.get_domain()
+                runner = self.context.get_runner(self.task_type)
 
-            if self.context.is_loaded(self.task_type) and runner and model_changed:
-                await runner.unload()
+                # Comparação robusta de modelos (por alias ou ID)
+                model_changed = False
+                if runner:
+                    current_id = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
+                    new_id = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+                    model_changed = current_id != new_id
 
-            elif not domain.is_loaded():
-                required = await domain.get_required_vram(payload)
+                if self.context.is_loaded(self.task_type) and runner and model_changed:
+                    await runner.unload()
 
-                while self.context.get_free_vram() < required:
-                    # Tenta descarregar o que já está parado
-                    unloaded = await self.unload_next(required)
+                elif not domain.is_loaded():
+                    required = await domain.get_required_vram(payload)
+
+                    while self.context.get_free_vram() < required:
+                        # Tenta descarregar o que já está parado
+                        unloaded = await self.unload_next(required)
+                        
+                        if not unloaded:
+                            # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo
+                            if hasattr(domain._strategy, "decrement_layers"):
+                                success = domain._strategy.decrement_layers()
+                                if not success:
+                                    # Se chegou em 0 camadas e ainda não cabe, esperamos ou falhamos
+                                    await self.wait_for_free_vram(required, timeout=10)
+                                    # Se após o wait ainda não cabe, damos erro definitivo
+                                    if self.context.get_free_vram() < required:
+                                        raise MemoryError(f"VRAM insuficiente para carregar {self.task_type} ({self.model}). Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
+                                
+                                # Atualiza o valor 'required' após o decremento
+                                required = await domain.get_required_vram(payload)
+                            else:
+                                # Se o modelo não suporta decremento, apenas espera
+                                await self.wait_for_free_vram(required)
                     
-                    if not unloaded:
-                        # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo
-                        if hasattr(domain._strategy, "decrement_layers"):
-                            success = domain._strategy.decrement_layers()
-                            if not success:
-                                # Se chegou em 0 camadas e ainda não cabe, esperamos ou falhamos
-                                await self.wait_for_free_vram(required, timeout=10)
-                                # Se após o wait ainda não cabe, damos erro definitivo
-                                if self.context.get_free_vram() < required:
-                                    raise MemoryError(f"VRAM insuficiente para carregar {self.task_type} ({self.model}). Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
-                            
-                            # Atualiza o valor 'required' após o decremento
-                            required = await domain.get_required_vram(payload)
-                        else:
-                            # Se o modelo não suporta decremento, apenas espera
-                            await self.wait_for_free_vram(required)
-                
-                domain.load()
+                    domain.load()
 
-            self.context.mark_busy(self.task_type, self)
+                self.context.mark_busy(self.task_type, self)
         
         result = None
         is_stream = False
@@ -304,5 +351,31 @@ class GpuOrchestrator:
             logger.error(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")
             raise e
 
+    async def unload_model(self, model_alias: str):
+        """
+        Descarrega todas as instâncias de um modelo específico da GPU.
+        Útil quando as configurações do modelo são alteradas e precisam ser recarregadas.
+        """
+        to_unload = []
+        # Usamos list() para evitar erro de mudança de tamanho do dicionário durante a iteração
+        for slot, runner in list(self.slots.items()):
+            current_alias = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
+            if current_alias == model_alias:
+                to_unload.append((slot, runner))
+        
+        for slot, runner in to_unload:
+            if self.context.is_loaded(runner.task_type):
+                ctx_runner = self.context.get_runner(runner.task_type)
+                # Verifica se o runner no contexto é de fato ESTE runner
+                if ctx_runner == runner:
+                    logger.info(f"📦 [Orchestrator] Descarregando modelo {model_alias} da tarefa {runner.task_type} devido a atualização de config.")
+                    try:
+                        await runner.unload()
+                    except Exception as e:
+                        logger.error(f"❌ [Orchestrator] Erro ao descarregar modelo {model_alias}: {e}")
+            
+            # Remove do cache de slots para que a próxima chamada crie um novo Runner com a config fresca
+            if slot in self.slots:
+                del self.slots[slot]
 
 gpu_orchestrator = GpuOrchestrator()

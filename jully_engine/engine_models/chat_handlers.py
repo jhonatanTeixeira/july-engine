@@ -108,6 +108,7 @@ class Gemma4Handler(Gemma4ChatHandler):
         called_tools = False
 
         for chunk in response:
+            print(chunk)
             content = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
 
             if content == '<|channel>':
@@ -605,20 +606,31 @@ class Qwen35Handler(Qwen35ChatHandler):
                 
                 # Se não entrou em tag de tool_call, verifica se pode emitir parte do buffer
                 if not current_tag:
-                    if '<' in buffer:
+                    while buffer:
                         idx = buffer.find('<')
                         if idx > 0:
                             chunk_copy = json.loads(json.dumps(chunk))
                             chunk_copy["choices"][0]["delta"]["content"] = buffer[:idx]
                             yield chunk_copy
                             buffer = buffer[idx:]
-                        # Mantém no buffer tudo a partir do '<'
-                        continue
-                    else:
-                        delta["content"] = buffer
-                        yield chunk
-                        buffer = ""
-                        continue
+                        elif idx == 0:
+                            if "<tool_call>".startswith(buffer):
+                                # Prefixo de tool_call (pode ser incompleto), para o while e espera próximo chunk
+                                break
+                            else:
+                                # Não é prefixo, emite o '<' e continua o while
+                                chunk_copy = json.loads(json.dumps(chunk))
+                                chunk_copy["choices"][0]["delta"]["content"] = "<"
+                                yield chunk_copy
+                                buffer = buffer[1:]
+                        else:
+                            # Não tem '<' no buffer
+                            chunk_copy = json.loads(json.dumps(chunk))
+                            chunk_copy["choices"][0]["delta"]["content"] = buffer
+                            yield chunk_copy
+                            buffer = ""
+                            break
+                    continue
 
             # Processamento de Tool Call Ativa
             if current_tag == 'tool_call':

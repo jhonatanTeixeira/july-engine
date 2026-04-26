@@ -5,11 +5,23 @@ import json
 import logging
 import time
 import uuid
+import threading
+import copy
 from typing import Any, Dict, List, Optional
 from ..services.resource_calculator import estimate_vram_ram, ModelMetadata
 from ..context import request_id_var, acquired_instances_var
 
 logger = logging.getLogger("JulyEngine.Models.GGUF")
+
+# Global locks for model loading to prevent concurrent loads of the same file across GGUF instances
+_GGUF_LOAD_LOCKS = {}
+_GGUF_LOAD_LOCKS_LOCK = threading.Lock()
+
+def get_gguf_load_lock(model_path: str):
+    with _GGUF_LOAD_LOCKS_LOCK:
+        if model_path not in _GGUF_LOAD_LOCKS:
+            _GGUF_LOAD_LOCKS[model_path] = threading.Lock()
+        return _GGUF_LOAD_LOCKS[model_path]
 
 import re
 
@@ -61,34 +73,104 @@ def detect_model_capabilities(repo_id_or_filename: str) -> dict:
 
     return capabilities
 
-class SequencePool:
-    def __init__(self, instances: List[Any]):
-        self.instances = instances
-        self._available = asyncio.Queue()
-        for inst in instances:
-            self._available.put_nowait(inst)
+class ReentrantAsyncLock:
+    def __init__(self):
+        self._lock = asyncio.Lock()
+        self._owner = None
+        self._count = 0
 
-    async def acquire(self) -> Any:
-        """Adquire uma instância livre do pool, com suporte a re-entrância por request_id."""
+    async def acquire(self):
         rid = request_id_var.get()
-        if rid:
-            acquired = acquired_instances_var.get()
-            if self in acquired:
-                # Re-entrância: Esta request já reservou uma instância deste pool
-                return acquired[self]
+        if rid and self._owner == rid:
+            self._count += 1
+            return
+        await self._lock.acquire()
+        self._owner = rid
+        self._count = 1
+
+    def release(self):
+        rid = request_id_var.get()
+        if rid and self._owner == rid:
+            self._count -= 1
+            if self._count == 0:
+                self._owner = None
+                self._lock.release()
+        else:
+            self._owner = None
+            self._count = 0
+            if self._lock.locked():
+                self._lock.release()
+
+    async def __aenter__(self):
+        await self.acquire()
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.release()
+
+class SequenceSlot:
+    def __init__(self, model: Any, seq_id: int):
+        self.model = model
+        self.seq_id = seq_id
+        self.lock = ReentrantAsyncLock() # Lock reentrante to ensure only one request uses this slot/seq_id at a time
+
+    def __getattr__(self, name):
+        return getattr(self.model, name)
+
+    def create_chat_completion(self, *args, **kwargs):
+        kwargs["seq_id"] = self.seq_id
+        return self.model.create_chat_completion(*args, **kwargs)
+    
+    def create_completion(self, *args, **kwargs):
+        kwargs["seq_id"] = self.seq_id
+        return self.model.create_completion(*args, **kwargs)
+    
+    def generate(self, *args, **kwargs):
+        kwargs["seq_id"] = self.seq_id
+        return self.model.generate(*args, **kwargs)
+
+    def reset(self):
+        from llama_cpp.llama import active_seq_id
+        token = active_seq_id.set(self.seq_id)
+        try:
+            self.model.reset()
+        finally:
+            active_seq_id.reset(token)
+
+class SequencePool:
+    def __init__(self, slots: List[SequenceSlot]):
+        self.slots = slots
+        self._available = asyncio.Queue()
+        self._allocated = set()
+        self._pool_lock = asyncio.Lock()
+        for slot in slots:
+            self._available.put_nowait(slot)
+
+    async def acquire(self) -> SequenceSlot:
+        """Adquire um slot de sequência livre, com suporte a re-entrância por request_id."""
+        rid = request_id_var.get()
+        
+        async with self._pool_lock:
+            if rid:
+                acquired = acquired_instances_var.get()
+                if self in acquired:
+                    # Re-entrância: Esta request já reservou uma instância deste pool
+                    return acquired[self]
         
         # Caso contrário, espera por uma instância livre no pool
-        inst = await self._available.get()
+        # Fora do _pool_lock para permitir que outros chamem acquire enquanto um espera
+        slot = await self._available.get()
         
-        if rid:
-            # Reserva a instância para futuras chamadas nesta mesma request
-            acquired = acquired_instances_var.get()
-            acquired[self] = inst
-            acquired_instances_var.set(acquired)
+        async with self._pool_lock:
+            self._allocated.add(slot)
+            if rid:
+                # Reserva a instância para futuras chamadas nesta mesma request
+                acquired = acquired_instances_var.get()
+                acquired[self] = slot
+                acquired_instances_var.set(acquired)
             
-        return inst
+        return slot
 
-    def release(self, inst: Any):
+    def release(self, slot: SequenceSlot):
         """Libera a instância, a menos que esteja reservada para re-entrância."""
         rid = request_id_var.get()
         if rid:
@@ -97,15 +179,17 @@ class SequencePool:
             # A liberação real ocorrerá no Middleware ao fim da request.
             return
             
-        self._real_release(inst)
+        self._real_release(slot)
 
-    def _real_release(self, inst: Any):
+    def _real_release(self, slot: SequenceSlot):
         """Põe a instância de volta na fila de disponibilidade."""
-        self._available.put_nowait(inst)
+        if slot in self._allocated:
+            self._allocated.remove(slot)
+            self._available.put_nowait(slot)
 
-    def _force_release(self, inst: Any):
+    def _force_release(self, slot: SequenceSlot):
         """Força a liberação ignorando o request_id (usado pelo middleware)."""
-        self._real_release(inst)
+        self._real_release(slot)
 
     def stop(self):
         """Nada a fazer para o pool simples."""
@@ -162,7 +246,7 @@ class GGUF:
         # 2. Get layers config
         # Estima a VRAM necessária usando o calculador de recursos unificado
         estimate = await estimate_vram_ram(
-            model_path=self.meta['file_path'],
+            model_path=self.model_path,
             context_window=n_ctx_per_req,
             kv_cache_quantization=self.meta.get('kv_cache_quantization', 'FP16'),
             gpu_layers=meta.get("num_layers", -1),
@@ -180,106 +264,106 @@ class GGUF:
         meta = self.meta
         
         # Aumentamos o padrão para 4096 para suportar agentes mais complexos
-        n_ctx_per_req = n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 4096))
+        n_ctx_per_req = int((n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 4096))) / self.n_seq_max)
         effective_n_ctx = n_ctx_per_req * self.n_seq_max
         
-        if self.backend == 'cpu':
-            n_gpu_layers = 0
-        else:
-            n_gpu_layers = num_layers if num_layers else meta.get("num_layers", -1)
-            
-        if self.is_loaded():
-            if self.model.n_ctx() == effective_n_ctx:
-                logger.debug(f"GGUF: Modelo {self.meta['model_alias']} já carregado. Reaproveitando!")
-                return
+        # Serialização de carregamento do mesmo arquivo de modelo
+        lock = get_gguf_load_lock(self.model_path)
+        with lock:
+            if self.backend == 'cpu':
+                n_gpu_layers = 0
             else:
-                logger.info(f"GGUF: Reloading model {self.meta['model_alias']} because n_ctx changed ({self.model.n_ctx()} -> {effective_n_ctx})")
-                self.unload(self.meta['model_alias'])
-        
-        model_path = self.model_path
-
-        try:
-            from llama_cpp import Llama
-            import llama_cpp
-            
-            if self.backend == 'gpu':
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except ImportError:
-                    pass
-
-            logger.info(f"GGUF: Loading model {self.meta['model_alias']} on {self.backend} (n_seq_max={self.n_seq_max}, n_ctx_total={effective_n_ctx})")
-            
-            base_params = {
-                "model_path": model_path,
-                "n_gpu_layers": n_gpu_layers,
-                "n_ctx": n_ctx_per_req,
-                "n_parallel": 1,
-                "offload_kqv": self.offload_kqv,
-                "kv_unified": self.kv_unified,
-                "logits_all": self.logits_all,
-                "use_mmap": True,
-                "verbose": False,
-            }
-            logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
-
-            # Flash Attention: metadata > env var > default True
-            flash_attn = meta.get("flash_attn")
-            if flash_attn is None:
-                flash_attn = os.environ.get("FLASH_ATTN", "true").lower() == "true"
-            
-            if flash_attn:
-                base_params["flash_attn"] = True
-                logger.info("GGUF: Flash Attention enabled")
-
-            # Use KV Cache Quantization from metadata (preferred) or env var
-            kv_quant = meta.get("kv_cache_quantization") or os.environ.get('KV_CACHE_QUANTIZATION')
-            
-            if kv_quant:
-                kv_quant = str(kv_quant).upper()
-                if "8" in kv_quant or "Q8_0" in kv_quant:
-                    base_params["type_k"] = 8
-                    base_params["type_v"] = 8
-                    logger.info("GGUF: Using Q8_0 for KV Cache")
-                elif "4" in kv_quant or "Q4_0" in kv_quant:
-                    base_params["type_k"] = 2
-                    base_params["type_v"] = 2
-                    logger.info("GGUF: Using Q4_0 for KV Cache")
+                n_gpu_layers = num_layers if num_layers else meta.get("num_layers", -1)
+                
+            if self.is_loaded():
+                if self.model.n_ctx() == effective_n_ctx:
+                    logger.debug(f"GGUF: Modelo {self.meta['model_alias']} já carregado. Reaproveitando!")
+                    return
                 else:
-                    logger.info("GGUF: Using default FP16 for KV Cache")
+                    logger.info(f"GGUF: Reloading model {self.meta['model_alias']} because n_ctx changed ({self.model.n_ctx()} -> {effective_n_ctx})")
+                    self.unload(self.meta['model_alias'])
             
-            # Extração de Capacidades
-            model_identifier = meta["model_id"] + meta["filename"]
-            caps = detect_model_capabilities(model_identifier)
+            model_path = self.model_path
 
-            if meta.get("template"):
-                base_params["chat_format"] = meta["template"]
-            else:
-                base_params["chat_format"] = "jinja" if "jinja" in llama_cpp.llama_chat_format.CHAT_FORMATS else caps["chat_format"]
+            try:
+                from llama_cpp import Llama
+                import llama_cpp
+                
+                if self.backend == 'gpu':
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except ImportError:
+                        pass
 
-            # ==========================================
-            # LOAD MULTIPLE INSTANCES
-            # ==========================================
-            self.instances = []
-            for i in range(self.n_seq_max):
-                logger.info(f"GGUF: Loading instance {i+1}/{self.n_seq_max} on {self.backend} (n_ctx={n_ctx_per_req})...")
-                params = base_params.copy()
+                logger.info(f"GGUF: Loading model {self.meta['model_alias']} on {self.backend} (n_seq_max={self.n_seq_max}, n_ctx_total={effective_n_ctx})")
+                
+                base_params = {
+                    "model_path": model_path,
+                    "n_gpu_layers": n_gpu_layers,
+                    "n_ctx": effective_n_ctx,
+                    "n_seq_max": self.n_seq_max,
+                    "offload_kqv": self.offload_kqv,
+                    "kv_unified": self.kv_unified,
+                    "logits_all": self.logits_all,
+                    "use_mmap": True,
+                    "verbose": False,
+                }
+                logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
 
-                # Cada instância precisa do seu próprio Chat Handler (estado independente)
+                # Flash Attention: metadata > env var > default True
+                flash_attn = meta.get("flash_attn")
+                if flash_attn is None:
+                    flash_attn = os.environ.get("FLASH_ATTN", "true").lower() == "true"
+                
+                if flash_attn:
+                    base_params["flash_attn"] = True
+                    logger.info("GGUF: Flash Attention enabled")
+
+                # Use KV Cache Quantization from metadata (preferred) or env var
+                kv_quant = meta.get("kv_cache_quantization") or os.environ.get('KV_CACHE_QUANTIZATION')
+                
+                if kv_quant:
+                    kv_quant = str(kv_quant).upper()
+                    if "8" in kv_quant or "Q8_0" in kv_quant:
+                        base_params["type_k"] = 8
+                        base_params["type_v"] = 8
+                        logger.info("GGUF: Using Q8_0 for KV Cache")
+                    elif "4" in kv_quant or "Q4_0" in kv_quant:
+                        base_params["type_k"] = 2
+                        base_params["type_v"] = 2
+                        logger.info("GGUF: Using Q4_0 for KV Cache")
+                    else:
+                        logger.info("GGUF: Using default FP16 for KV Cache")
+                
+                # Extração de Capacidades
+                model_identifier = meta["model_id"] + meta["filename"]
+                caps = detect_model_capabilities(model_identifier)
+
+                if meta.get("template"):
+                    base_params["chat_format"] = meta["template"]
+                else:
+                    base_params["chat_format"] = "jinja" if "jinja" in llama_cpp.llama_chat_format.CHAT_FORMATS else caps["chat_format"]
+
+                # ==========================================
+                # LOAD SINGLE MULTI-SEQUENCE INSTANCE
+                # ==========================================
+                logger.info(f"GGUF: Loading single multi-sequence instance on {self.backend} (n_ctx={effective_n_ctx}, n_seq_max={self.n_seq_max})...")
+
+                # Cada seq_id precisa do seu próprio Chat Handler (estado independente)
                 # Qwen Tool Calling & Reasoning Support (non-VL)
                 if 'qwen' in model_identifier.lower() and not caps["vision_handler"]:
                     from .chat_handlers import QwenChatHandler
                     template = self.model_metadata.tokenizer_template or meta.get("template")
                     if isinstance(template, str) and template.strip():
-                        params["chat_handler"] = QwenChatHandler(
+                        base_params["chat_handler"] = QwenChatHandler(
                             template=template,
                             eos_token="<|im_end|>",
                             bos_token="<|im_start|>"
                         )
-                        if "chat_format" in params:
-                            del params["chat_format"]
+                        if "chat_format" in base_params:
+                            del base_params["chat_format"]
                 
                 if meta.get("model_type") == "vision" or caps["vision_handler"]:
                     mmproj_path = None
@@ -292,42 +376,40 @@ class GGUF:
                     try:
                         if v_handler == "gemma4":
                             from .chat_handlers import Gemma4Handler
-                            params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path) if mmproj_path else Gemma4Handler()
+                            base_params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path) if mmproj_path else Gemma4Handler()
                         elif v_handler == "gemma3":
                             from llama_cpp.llama_chat_format import Gemma3ChatHandler
-                            params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma3ChatHandler()
+                            base_params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma3ChatHandler()
                         elif v_handler == "qwen3vl":
                             from llama_cpp.llama_chat_format import Qwen3VLChatHandler
-                            params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen3VLChatHandler()
+                            base_params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen3VLChatHandler()
                         elif v_handler == "qwen25vl":
                             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-                            params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen25VLChatHandler()
+                            base_params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen25VLChatHandler()
                         elif v_handler == "qwen35":
                             from .chat_handlers import Qwen35Handler
-                            params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path) if mmproj_path else Qwen35Handler()
+                            base_params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path) if mmproj_path else Qwen35Handler()
                         elif v_handler == "moondream":
                             from llama_cpp.llama_chat_format import MoondreamChatHandler
-                            params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
                         elif v_handler == "llava-v1.6" or v_handler == "pixtral":
                             from llama_cpp.llama_chat_format import Llava16ChatHandler
-                            params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path)
                         elif v_handler == "llava":
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
                     except ImportError:
                         if mmproj_path:
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
 
-                inst = Llama(**params)
-                self.instances.append(inst)
-
-            self.model = self.instances[0] # Usado para consultas de metadados
-            self.sequence_pool = SequencePool(self.instances)
-            
-        except Exception as e:
-            logger.error(f"GGUF: Failed to load {self.meta['model_alias']}: {e}")
-            raise e
+                self.model = Llama(**base_params)
+                self.slots = [SequenceSlot(self.model, i) for i in range(self.n_seq_max)]
+                self.sequence_pool = SequencePool(self.slots)
+                
+            except Exception as e:
+                logger.error(f"GGUF: Failed to load {self.meta['model_alias']}: {e}")
+                raise e
 
     async def run_chat(self, messages: List[Dict[str, Any]], stream: bool = False, **kwargs):
         headers = kwargs.pop("headers", {})
@@ -358,149 +440,183 @@ class GGUF:
         if force_reasoning:
             messages.append({"role": "assistant", "content": "<think>\n"})
 
-        # Adquire uma instância do pool
-        inst = await self.sequence_pool.acquire()
+        # Adquire um slot do pool
+        slot = await self.sequence_pool.acquire()
         
-        # Sempre reseta para garantir que não há lixo no KV Cache
-        try:
-            # inst.reset()
-            logger.debug(f"GGUF: Instance KV cache reset")
-        except Exception as e:
-            logger.warning(f"GGUF: Could not reset instance: {e}")
-
-        try:
-            response = inst.create_chat_completion(
-                messages,
-                stream=stream,
-                **kwargs
-            )
-        except Exception as e:
-            self.sequence_pool.release(inst)
-            raise e
-
-        if stream:
-            async def stream_adapter():
-                try:
-                    tag_opened = force_reasoning
-                    buffer = ""
-                    raw_response = ""
-                    
-                    for chunk in response:
-                        delta = chunk["choices"][0].get("delta", {})
-                        
-                        finish_reason = chunk["choices"][0].get("finish_reason")
-                        if finish_reason in ["stop", "tool_calls"]:
-                            prompt_data = ""
-
-                            for message in messages:
-                                # prompt_data += message["content"] if isinstance(message["content"], str) else "".join([c.get("text", "") for c in message['content']])
-                                prompt_data += "\n".join(c['text'] for c in message.get("content")) if isinstance(message.get("content"), list) else (message.get("content") or "")
-
-                            prompt_tokens = len(inst.tokenize(prompt_data.encode('utf-8')))
-                            completion_tokens = len(inst.tokenize(raw_response.encode('utf-8')))
-
-                            chunk["choices"][0].setdefault("usage", {
-                                "prompt_tokens": prompt_tokens,
-                                "completion_tokens": completion_tokens,
-                                "total_tokens": (prompt_tokens + completion_tokens)
-                            })
-
-                            yield chunk
-                            continue
-
-                        # Pass-through para outros dados que não sejam texto puro
-                        if "audio_url" in delta or "image_url" in delta or "tool_calls" in delta:
-                            yield chunk
-                            continue
-
-                        content = delta.pop("content", "")
-                        buffer += content
-                        raw_response += content
-                        for tag_start, tag_end in [("<think>", "</think>"), ("<thought>", "</thought>"), ("<|thought|>", "<|thought|>"), ("<|channel>thought", "<channel|>")]:
-                            if tag_start in buffer:
-                                parts = buffer.split(tag_start, 1)
-                                
-                                # Se tiver texto ANTES da tag, entrega como content normal
-                                if parts[0]:
-                                    chunk["choices"][0]["delta"]["content"] = parts[0]
-                                    yield chunk
-                                
-                                buffer = parts[1]
-                                tag_opened = True
-                                break
-
-                            if tag_end in buffer and tag_opened:
-                                parts = buffer.split(tag_end, 1)
-                                if parts[0]:
-                                    chunk["choices"][0]["delta"]["reasoning_content"] = parts[0]
-                                    yield chunk
-                                
-                                buffer = parts[1]
-                                tag_opened = False
-                                break
-
-                        # Entrega o buffer se atingir um tamanho razoável ou quebra de linha
-                        if len(buffer) > 4 or "\n" in buffer:
-                            target_key = 'content' if not tag_opened else 'reasoning_content'
-                            chunk["choices"][0]["delta"][target_key] = buffer
-                            buffer = ""
-                            yield chunk
-
-                        await asyncio.sleep(0)
-
-                    # Flush residual do buffer se sobrar algo
-                    if buffer:
-                        target_key = 'content' if not tag_opened else 'reasoning_content'
-                        chunk["choices"][0]["delta"][target_key] = buffer
-                        yield chunk
-                finally:
-                    # Libera a instância ao fim do stream
-                    self.sequence_pool.release(inst)
-                    logger.debug(f"GGUF: Instance released back to pool")
-
-            return stream_adapter()
-            
-        else:
+        # O lock do slot garante que apenas uma operação ocorra por seq_id
+        # Se for uma chamada re-entrante da mesma request, ela esperará aqui
+        # até que a operação anterior (se houver) termine.
+        # Nota: Chamadas de ferramenta geralmente são sequenciais.
+        async with slot.lock:
+            # Sempre reseta para garantir que não há lixo no KV Cache
             try:
-                # MODO NÃO-STREAM: Limpa a tag e separa tudo na raiz do JSON
-                raw_content = response["choices"][0]["message"].get("content", "") or ""
+                # slot.reset()
+                logger.debug(f"GGUF: Sequence slot KV cache reset")
+            except Exception as e:
+                logger.warning(f"GGUF: Could not reset slot: {e}")
 
-                if force_reasoning:
-                    raw_content = "<think>" + raw_content
+            try:
+                response = slot.create_chat_completion(
+                    messages,
+                    stream=stream,
+                    **kwargs
+                )
+            except Exception as e:
+                self.sequence_pool.release(slot)
+                raise e
+
+            if stream:
+                async def stream_adapter():
+                    # Re-adquire o lock para o processamento do stream
+                    async with slot.lock:
+                        try:
+                            tag_opened = force_reasoning
+                            buffer = ""
+                            raw_response = ""
+                            
+                            for chunk in response:
+                                delta = chunk["choices"][0].get("delta", {})
+                                
+                                finish_reason = chunk["choices"][0].get("finish_reason")
+                                if finish_reason in ["stop", "tool_calls"]:
+                                    prompt_data = ""
+
+                                    for message in messages:
+                                        # prompt_data += message["content"] if isinstance(message["content"], str) else "".join([c.get("text", "") for c in message['content']])
+                                        prompt_data += "\n".join(c['text'] for c in message.get("content")) if isinstance(message.get("content"), list) else (message.get("content") or "")
+
+                                    prompt_tokens = len(slot.tokenize(prompt_data.encode('utf-8')))
+                                    completion_tokens = len(slot.tokenize(raw_response.encode('utf-8')))
+
+                                    chunk["choices"][0].setdefault("usage", {
+                                        "prompt_tokens": prompt_tokens,
+                                        "completion_tokens": completion_tokens,
+                                        "total_tokens": (prompt_tokens + completion_tokens)
+                                    })
+                                    
+                                    # Se recebemos um STOP e ainda há buffer, enviamos antes do chunk de stop
+                                    if buffer:
+                                        target_key = 'content' if not tag_opened else 'reasoning_content'
+                                        chunk_flush = copy.deepcopy(chunk)
+                                        chunk_flush["choices"][0]["delta"] = {target_key: buffer}
+                                        chunk_flush["choices"][0]["finish_reason"] = None
+                                        buffer = ""
+                                        yield chunk_flush
+
+                                    yield chunk
+                                    continue
+
+                                # Pass-through para outros dados que não sejam texto puro
+                                if "audio_url" in delta or "image_url" in delta or "tool_calls" in delta:
+                                    yield chunk
+                                    continue
+
+                                content = delta.get("content", "")
+                                if not content:
+                                    # Apenas manter vivos chunks que tenham estrutura vazia ou sem texto
+                                    if not finish_reason and not delta:
+                                        yield chunk
+                                    continue
+
+                                buffer += content
+                                raw_response += content
+
+                                while True:
+                                    processed = False
+                                    for tag_start, tag_end in [("<think>", "</think>"), ("<thought>", "</thought>"), ("<|thought|>", "<|thought|>"), ("<|channel>thought", "<channel|>")]:
+                                        if not tag_opened and tag_start in buffer:
+                                            parts = buffer.split(tag_start, 1)
+                                            if parts[0]:
+                                                chunk_out = copy.deepcopy(chunk)
+                                                chunk_out["choices"][0]["delta"] = {"content": parts[0]}
+                                                yield chunk_out
+                                            buffer = parts[1]
+                                            tag_opened = True
+                                            processed = True
+                                            break
+                                        
+                                        if tag_opened and tag_end in buffer:
+                                            parts = buffer.split(tag_end, 1)
+                                            if parts[0]:
+                                                chunk_out = copy.deepcopy(chunk)
+                                                chunk_out["choices"][0]["delta"] = {"reasoning_content": parts[0]}
+                                                yield chunk_out
+                                            buffer = parts[1]
+                                            tag_opened = False
+                                            processed = True
+                                            break
+                                    
+                                    if not processed:
+                                        break
+                                
+                                # Retém apenas os últimos 20 caracteres no buffer para garantir que não vamos
+                                # quebrar uma tag no meio. Envia todo o resto.
+                                if len(buffer) > 20:
+                                    safe_yield = buffer[:-20]
+                                    buffer = buffer[-20:]
+                                    if safe_yield:
+                                        target_key = 'content' if not tag_opened else 'reasoning_content'
+                                        chunk_out = copy.deepcopy(chunk)
+                                        chunk_out["choices"][0]["delta"] = {target_key: safe_yield}
+                                        yield chunk_out
+
+                                await asyncio.sleep(0)
+
+                            # Flush residual do buffer se sobrar algo
+                            if buffer:
+                                target_key = 'content' if not tag_opened else 'reasoning_content'
+                                chunk_out = copy.deepcopy(chunk)
+                                chunk_out["choices"][0]["delta"] = {target_key: buffer}
+                                yield chunk_out
+                                
+                        finally:
+                            # Libera o slot ao fim do stream
+                            self.sequence_pool.release(slot)
+                            logger.debug(f"GGUF: Sequence slot released back to pool")
+
+                return stream_adapter()
                 
-                # Parser robusto para tags <think>, <thought> ou <|thought|> mesmo não fechadas
-                think_pattern = re.compile(r"<(?:\|thought\||think|thought)>(.*?)(?:</(?:think|thought)>|(?=<\|)|$)", re.DOTALL)
-                match = think_pattern.search(raw_content)
-                
-                if match:
-                    reasoning = match.group(1).strip()
-                    # Remove o bloco de pensamento do conteúdo principal
-                    # Usamos match.group(0) para remover a tag inteira
-                    content = raw_content.replace(match.group(0), "").strip()
+            else:
+                try:
+                    # MODO NÃO-STREAM: Limpa a tag e separa tudo na raiz do JSON
+                    raw_content = response["choices"][0]["message"].get("content", "") or ""
+
+                    if force_reasoning:
+                        raw_content = "<think>" + raw_content
                     
-                    # Cleanup de tags de fechamento remanescentes se necessário
-                    for close_tag in ["</think>", "</thought>", "<channel|>"]:
-                        content = content.replace(close_tag, "").strip()
+                    # Parser robusto para tags <think>, <thought> ou <|thought|> mesmo não fechadas
+                    think_pattern = re.compile(r"<(?:\|thought\||think|thought)>(.*?)(?:</(?:think|thought)>|(?=<\|)|$)", re.DOTALL)
+                    match = think_pattern.search(raw_content)
                     
-                    response["choices"][0]["message"]["reasoning_content"] = reasoning
-                    response["choices"][0]["message"]["content"] = content if content else None
-                
-                return response
-            finally:
-                # Libera a instância após o processamento não-stream
-                self.sequence_pool.release(inst)
-                logger.debug(f"GGUF: Instance released back to pool")
+                    if match:
+                        reasoning = match.group(1).strip()
+                        # Remove o bloco de pensamento do conteúdo principal
+                        # Usamos match.group(0) para remover a tag inteira
+                        content = raw_content.replace(match.group(0), "").strip()
+                        
+                        # Cleanup de tags de fechamento remanescentes se necessário
+                        for close_tag in ["</think>", "</thought>", "<channel|>"]:
+                            content = content.replace(close_tag, "").strip()
+                        
+                        response["choices"][0]["message"]["reasoning_content"] = reasoning
+                        response["choices"][0]["message"]["content"] = content if content else None
+                    
+                    return response
+                finally:
+                    # Libera o slot após o processamento não-stream
+                    self.sequence_pool.release(slot)
+                    logger.debug(f"GGUF: Sequence slot released back to pool")
 
     def unload(self, model_name: str):
-        if self.instances:
+        if hasattr(self, 'slots') and self.slots:
             # Para o pool e limpa todas as instâncias
             if self.sequence_pool:
                 self.sequence_pool.stop()
             
-            for inst in self.instances:
-                del inst
+            for slot in self.slots:
+                del slot
             
-            self.instances = []
+            self.slots = []
             self.model = None
             
         import gc
