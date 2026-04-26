@@ -1,6 +1,7 @@
 import re
 import uuid
 import logging
+import time
 
 import json
 from copy import deepcopy
@@ -143,9 +144,7 @@ class Gemma4Handler(Gemma4ChatHandler):
                 channel = None
 
                 for idx, tool_call in enumerate(tools_calls.replace('<|"|>', '"').split('call:')):
-                    unique_id = uuid.uuid4().hex
-                    
-                    if not tool_call:
+                    if not tool_call.strip():
                         continue
 
                     matches = re.match(r'(\w+)(\{.*\})', tool_call, re.DOTALL)
@@ -157,8 +156,9 @@ class Gemma4Handler(Gemma4ChatHandler):
                         # Fix missing quotes around keys (relaxed JSON)
                         args = re.sub(r'([{,])\s*([a-zA-Z0-9_-]+)\s*:', r'\1"\2":', args)
                         
-                        yield self.parse_tool_calls(self.parse_tool_call(unique_id, name=name))
-                        yield self.parse_tool_calls(self.parse_tool_call(unique_id, args=args))
+                        tool_id = f"call_{uuid.uuid4().hex[:10]}"
+                        yield self.parse_tool_calls(self.parse_tool_call(idx, id=tool_id, name=name))
+                        yield self.parse_tool_calls(self.parse_tool_call(idx, id=tool_id, args=args))
                     else:
                         logger.warning(f"Gemma4Handler: Failed to match tool call pattern in: {tool_call}")
 
@@ -166,10 +166,6 @@ class Gemma4Handler(Gemma4ChatHandler):
 
                 continue
 
-            if channel == "tool_call":
-                tools_calls += content
-                continue
-            
             if chunk.get("choices", [{}])[0].get("finish_reason") == "stop" and called_tools:
                 copy = deepcopy(chunk)
                 copy["choices"][0]["delta"]["content"] = ""
@@ -177,6 +173,10 @@ class Gemma4Handler(Gemma4ChatHandler):
                 
                 yield copy
                 
+                continue
+
+            if channel == "tool_call":
+                tools_calls += content
                 continue
 
             yield chunk
@@ -193,10 +193,10 @@ class Gemma4Handler(Gemma4ChatHandler):
             ]
         }
 
-    def parse_tool_call(self, idx, name=None, args=None):
+    def parse_tool_call(self, idx, id=None, name=None, args=None):
         tool_call = {
             "index": idx,
-            "id": f"call_{idx}",
+            "id": id or f"call_{idx}",
         }
 
         if name:
@@ -596,18 +596,35 @@ class Qwen35Handler(Qwen35ChatHandler):
                     current_tag = 'tool_call'
                     called_tools = True
                     before, after = buffer.split('<tool_call>', 1)
-                    if before.strip():
-                        delta["content"] = before
-                        yield chunk
+                    if before:
+                        chunk_copy = json.loads(json.dumps(chunk))
+                        chunk_copy["choices"][0]["delta"]["content"] = before
+                        yield chunk_copy
                     buffer = after
-                    continue
+                    # Não retornamos continue aqui para processar o 'after' imediatamente
+                
+                # Se não entrou em tag de tool_call, verifica se pode emitir parte do buffer
+                if not current_tag:
+                    if '<' in buffer:
+                        idx = buffer.find('<')
+                        if idx > 0:
+                            chunk_copy = json.loads(json.dumps(chunk))
+                            chunk_copy["choices"][0]["delta"]["content"] = buffer[:idx]
+                            yield chunk_copy
+                            buffer = buffer[idx:]
+                        # Mantém no buffer tudo a partir do '<'
+                        continue
+                    else:
+                        delta["content"] = buffer
+                        yield chunk
+                        buffer = ""
+                        continue
 
             # Processamento de Tool Call Ativa
             if current_tag == 'tool_call':
                 # Fim da tool call
                 if '</tool_call>' in buffer:
-                    current_tag = None
-                    # Se uma função estava aberta, fecha o JSON dos argumentos
+                    # Se uma função ainda estava aberta, fecha-a
                     if current_tool_name:
                         chunk_end = json.loads(json.dumps(chunk))
                         chunk_end["choices"][0]["delta"]["tool_calls"] = [{
@@ -618,34 +635,36 @@ class Qwen35Handler(Qwen35ChatHandler):
 
                     _, rest = buffer.split('</tool_call>', 1)
                     buffer = rest
+                    current_tag = None
                     continue
 
                 # Início da função: <function=name>
-                fn_match = re.search(r'<function=(.*?)>', buffer)
-                if fn_match:
-                    current_tool_name = fn_match.group(1).strip()
-                    uid = uuid.uuid4().hex[:10]
-                    first_param = True
-                    
-                    # 1. Emite o início da tool call (nome da função)
-                    chunk_head = json.loads(json.dumps(chunk))
-                    chunk_head["choices"][0]["delta"]["tool_calls"] = [{
-                        "index": 0, "id": f"call_{uid}", "type": "function", "function": {"name": current_tool_name}
-                    }]
-                    yield chunk_head
-                    
-                    # 2. Inicia o JSON dos argumentos
-                    chunk_start_args = json.loads(json.dumps(chunk))
-                    chunk_start_args["choices"][0]["delta"]["tool_calls"] = [{
-                        "index": 0, "id": f"call_{uid}", "function": {"arguments": "{"}
-                    }]
-                    yield chunk_start_args
-                    
-                    buffer = buffer.split(fn_match.group(0), 1)[1]
-                    continue
-
+                if not current_tool_name:
+                    fn_match = re.search(r'<function=(.*?)>', buffer)
+                    if fn_match:
+                        current_tool_name = fn_match.group(1).strip().replace('"', '').replace("'", "")
+                        uid = uuid.uuid4().hex[:10]
+                        first_param = True
+                        
+                        # 1. Emite o início da tool call
+                        chunk_head = json.loads(json.dumps(chunk))
+                        chunk_head["choices"][0]["delta"]["tool_calls"] = [{
+                            "index": 0, "id": f"call_{uid}", "type": "function", "function": {"name": current_tool_name}
+                        }]
+                        yield chunk_head
+                        
+                        # 2. Inicia o JSON dos argumentos
+                        chunk_start_args = json.loads(json.dumps(chunk))
+                        chunk_start_args["choices"][0]["delta"]["tool_calls"] = [{
+                            "index": 0, "id": f"call_{uid}", "function": {"arguments": "{"}
+                        }]
+                        yield chunk_start_args
+                        
+                        buffer = buffer.split(fn_match.group(0), 1)[1]
+                        continue
+                
                 # Fim da função: </function>
-                if '</function>' in buffer and current_tool_name:
+                if current_tool_name and '</function>' in buffer:
                     chunk_end = json.loads(json.dumps(chunk))
                     chunk_end["choices"][0]["delta"]["tool_calls"] = [{
                         "index": 0, "id": f"call_{uid}", "function": {"arguments": "}"}
@@ -657,56 +676,68 @@ class Qwen35Handler(Qwen35ChatHandler):
                     buffer = rest
                     continue
 
-                # Início de parâmetro: <parameter=name>
-                param_match = re.search(r'<parameter=(.*?)>', buffer)
-                if param_match:
-                    current_param_name = param_match.group(1).strip()
-                    buffer = buffer.split(param_match.group(0), 1)[1]
-                    # Continua para tentar achar o fim no mesmo chunk
+                # Processamento de Parâmetros dentro da função ativa
+                if current_tool_name:
+                    # Se não estamos capturando um parâmetro, busca o próximo <parameter=name>
+                    if not current_param_name:
+                        param_start_match = re.search(r'<parameter=(.*?)>', buffer)
+                        if param_start_match:
+                            current_param_name = param_start_match.group(1).strip().replace('"', '').replace("'", "")
+                            buffer = buffer.split(param_start_match.group(0), 1)[1]
+                            # Continua para processar o valor se estiver no buffer
+                    
+                    # Se estamos capturando um parâmetro, busca o fim </parameter>
+                    if current_param_name:
+                        if '</parameter>' in buffer:
+                            val, rest = buffer.split('</parameter>', 1)
+                            val = val.strip()
+                            
+                            # Conversão de tipos
+                            v_lower = val.lower()
+                            if v_lower == "true": val_parsed = True
+                            elif v_lower == "false": val_parsed = False
+                            elif val.isdigit(): val_parsed = int(val)
+                            else:
+                                try: val_parsed = float(val)
+                                except: val_parsed = val
+                            
+                            arg_key = json.dumps(current_param_name)
+                            arg_val = json.dumps(val_parsed)
+                            
+                            arg_delta = f"{'' if first_param else ', '}{arg_key}: {arg_val}"
+                            first_param = False
+                            
+                            chunk_args = json.loads(json.dumps(chunk))
+                            chunk_args["choices"][0]["delta"]["tool_calls"] = [{
+                                "index": 0, "id": f"call_{uid}", "function": {"arguments": arg_delta}
+                            }]
+                            yield chunk_args
+                            
+                            buffer = rest
+                            current_param_name = None
+                            continue
                 
-                # Fim de parâmetro: </parameter>
-                if current_param_name and '</parameter>' in buffer:
-                    val, rest = buffer.split('</parameter>', 1)
-                    val = val.strip()
-                    
-                    # Conversão de tipos (bool, int, float)
-                    v_lower = val.lower()
-                    if v_lower == "true": val = True
-                    elif v_lower == "false": val = False
-                    elif val.isdigit(): val = int(val)
-                    else:
-                        try: val = float(val)
-                        except: pass
-                    
-                    # Formata o delta do argumento (ex: "query": "valor" ou , "query": "valor")
-                    arg_key = json.dumps(current_param_name)
-                    arg_val = json.dumps(val) # json.dumps cuida das aspas se for string, e não coloca se for bool/int
-                    
-                    arg_delta = f"{'' if first_param else ', '}{arg_key}: {arg_val}"
-                    first_param = False
-                    
-                    chunk_args = json.loads(json.dumps(chunk))
-                    chunk_args["choices"][0]["delta"]["tool_calls"] = [{
-                        "index": 0, "id": f"call_{uid}", "function": {"arguments": arg_delta}
-                    }]
-                    yield chunk_args
-                    
-                    buffer = rest
-                    current_param_name = None
-                    continue
-
-                # Se detectamos o início de um parâmetro mas ainda não temos o fim, esperamos o próximo chunk
-                if current_param_name and '</parameter>' not in buffer:
-                    continue
-
-                # Não emite o conteúdo das tags de tool call para o usuário
+                # Enquanto estamos dentro de <tool_call>, nunca emitimos conteúdo para o usuário
+                # Se o buffer crescer demais sem tags, algo está errado, mas mantemos o buffer
+                if len(buffer) > 1000 and '<' not in buffer:
+                    # Fallback preventivo: se parecer texto perdido, limpa
+                    buffer = ""
                 continue
 
-            # Fluxo Normal (incluindo tags de pensamento como <think>)
-            delta["content"] = buffer
-            yield chunk
-            buffer = ""
-
         if called_tools:
-            # Finish reason fix se necessário
-            pass
+            try:
+                yield {
+                    "id": f"chatcmpl-{uuid.uuid4().hex}",
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": "qwen",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "tool_calls"
+                        }
+                    ]
+                }
+            except:
+                pass

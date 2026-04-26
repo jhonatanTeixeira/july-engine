@@ -18,6 +18,9 @@ class ResourceCheckRequest(BaseModel):
     mmproj_id: Optional[str] = None
     mmproj_filename: Optional[str] = None
     flash_attn: Optional[bool] = True
+    n_seq_max: Optional[int] = 1
+    offload_kqv: Optional[bool] = True
+    logits_all: Optional[bool] = False
 
 @router.post("/check-resources")
 async def check_resources(req: ResourceCheckRequest):
@@ -34,5 +37,9 @@ async def check_resources(req: ResourceCheckRequest):
         filename=req.filename,
         mmproj_path=req.mmproj_path,
         mmproj_repo_id=req.mmproj_id,
-        mmproj_filename=req.mmproj_filename
+        mmproj_filename=req.mmproj_filename,
+        n_seq_max=req.n_seq_max,
+        offload_kqv=req.offload_kqv,
+        flash_attention=req.flash_attn,
+        logits_all=req.logits_all
     )

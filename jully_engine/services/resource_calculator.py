@@ -4,7 +4,7 @@ import hashlib
 import logging
 import httpx
 
-from typing import Optional
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger("JulyEngine.Services.ResourceCalculator")
 
@@ -313,25 +313,6 @@ class ModelMetadata:
     def _effective_model_size_gb(self) -> float:
         """
         Retorna o tamanho efetivo do modelo para fins de cálculo de VRAM.
-
-        Para modelos DENSOS: retorna file_size_gb sem alteração.
-        O peso do arquivo corresponde diretamente ao peso que precisa estar
-        na VRAM (proporcional às layers offloadas).
-
-        Para modelos MoE: apenas os experts ATIVOS precisam estar "quentes"
-        na VRAM a qualquer momento. Os experts inativos ficam na RAM e são
-        carregados sob demanda pelo llama.cpp.
-
-        O modelo é dividido conceitualmente em duas partes:
-          - Densa  (~35% do arquivo): attention, embeddings, layer norms.
-            Sempre precisa estar na VRAM para as layers offloadas.
-          - MoE    (~65% do arquivo): os FFN experts.
-            Apenas a fração ativa (expert_used / expert_count) precisa
-            estar na VRAM simultaneamente.
-
-        A proporção dense_fraction=0.35 é uma heurística calibrada
-        empiricamente para arquiteturas MoE comuns (Mixtral, Qwen MoE,
-        DeepSeek MoE). Modelos densos nunca chegam a este método.
         """
         if not self.is_moe or self.expert_count <= 0 or self.expert_used_count <= 0:
             # Modelo denso: sem ajuste — retorna tamanho real do arquivo
@@ -355,14 +336,7 @@ class ModelMetadata:
 
     def _estimate_kv_cache_gb(self, ctx: int, kv_cache_quantization: str, gpu_layers: int) -> float:
         """
-        Calcula o KV Cache respeitando arquiteturas híbridas:
-          - key_length / value_length explícitos no GGUF
-          - Sliding Window Attention (SWA) vs Global Attention
-          - Cross-Layer KV Sharing (shared_kv_layers)
-
-        NOTA IMPORTANTE: MoE NÃO afeta o KV Cache.
-        A atenção é sempre densa em arquiteturas MoE — apenas o FFN é esparso.
-        Por isso este método não faz nenhum ajuste para MoE.
+        Calcula o KV Cache respeitando arquiteturas híbridas.
         """
         quant_map = {
             'FP16':   2.0,
@@ -377,8 +351,6 @@ class ModelMetadata:
         total_layers = self.block_count
 
         # --- Dimensões explícitas de K/V do GGUF ---
-        # Mais confiáveis que derivar de embedding_length / head_count,
-        # especialmente em arquiteturas com GQA ou dimensões não-padrão.
         head_dim_fallback = self.embedding_length // self.head_count if self.head_count > 0 else 128
 
         key_len_global = int(self._get_fuzzy("attention.key_length",       head_dim_fallback))
@@ -392,7 +364,6 @@ class ModelMetadata:
         swa_pattern = bool(self._get_fuzzy("attention.sliding_window_pattern", False))
 
         # --- Cross-Layer KV Sharing ---
-        # Layers com KV compartilhado não alocam buffer próprio.
         shared             = self.shared_kv_layers
         layers_with_own_kv = max(total_layers - shared, 1)
 
@@ -401,16 +372,10 @@ class ModelMetadata:
 
         # --- Proporção de layers Global vs SWA ---
         if has_swa and swa_pattern:
-            # Heurística conservadora para padrão alternado:
-            # ~20% global, ~80% SWA. Calibrado para Gemma 4 (1 global a cada 6).
-            # Para outros modelos com padrão alternado diferente, ainda é
-            # uma estimativa razoável (tende a subestimar levemente).
             global_ratio = 0.20
         elif has_swa:
-            # SWA presente mas sem padrão explícito: assume 50/50
             global_ratio = 0.50
         else:
-            # Modelo sem SWA (LLaMA, Qwen, Mistral denso, etc): 100% global
             global_ratio = 1.0
 
         global_layers_gpu = round(gpu_kv_layers * global_ratio)
@@ -439,17 +404,18 @@ class ModelMetadata:
 
         return (kv_global + kv_swa) / (1024**3)
 
-    def estimate_vram_gb(self, context_window=None, kv_cache_quantization='FP16', gpu_layers=None):
+    def estimate_vram_gb(
+        self,
+        context_window=None,
+        kv_cache_quantization='FP16',
+        gpu_layers=None,
+        n_seq_max: int = 1,
+        offload_kqv: bool = True,
+        flash_attention: bool = False,
+        logits_all: bool = False
+    ):
         """
         Estima a VRAM necessária para rodar o modelo no llama.cpp.
-
-        Args:
-            context_window (int | str): Janela de contexto. Ex: 4096, "4k", "128k".
-            kv_cache_quantization (str): Quantização do KV Cache. Ex: 'FP16', 'Q8_0', 'Q4_0'.
-            gpu_layers (int): Layers a colocar na GPU. None = todas as layers.
-
-        Returns:
-            dict: Breakdown detalhado do uso de VRAM em GB e MB.
         """
         total_layers = self.block_count
         if total_layers <= 0:
@@ -465,9 +431,6 @@ class ModelMetadata:
         )
 
         # ── 1. Peso do modelo na GPU ─────────────────────────────────────────
-        # Para MoE: usa tamanho efetivo (só experts ativos).
-        # Para densos: usa file_size_gb diretamente.
-        # A proporção gpu_layers/total_layers determina quanto vai pra VRAM.
         effective_file_size = self._effective_model_size_gb()
         fixed_weights_ratio = 0.10   # ~10% do peso é fixo (embeddings, norms)
         layer_weights_ratio = 1.0 - fixed_weights_ratio
@@ -476,35 +439,34 @@ class ModelMetadata:
         )
 
         # ── 2. KV Cache ──────────────────────────────────────────────────────
-        # Suporta SWA, Cross-Layer KV Sharing e dimensões K/V explícitas.
-        # MoE não afeta o KV Cache (atenção é sempre densa).
         kv_cache_gb = self._estimate_kv_cache_gb(ctx, kv_cache_quantization, gpu_layers)
+        kv_cache_gb *= max(n_seq_max, 1)
+
+        kv_cache_vram_gb = kv_cache_gb if offload_kqv else 0
+        kv_cache_ram_gb  = kv_cache_gb if not offload_kqv else 0
 
         # ── 3. Compute buffer do grafo CUDA ──────────────────────────────────
-        # Alocação estática do llama.cpp para buffers intermediários de
-        # computação (ativações temporárias, workspace da operação GEMM, etc).
-        # Escala com embedding_length e batch_size.
         batch_size = 512  # n_batch default do llama.cpp
-        compute_buffer_gb = (4 * batch_size * self.embedding_length * 4) / (1024**3)
+        if flash_attention:
+            # FA processa em blocos — não materializa a matriz de atenção completa
+            # Redução de ~80% no compute buffer
+            compute_buffer_gb = (4 * batch_size * self.embedding_length) / (1024**3)
+        else:
+            compute_buffer_gb = (4 * batch_size * self.embedding_length * 4) / (1024**3)
 
         # ── 4. Logits buffer ─────────────────────────────────────────────────
-        # Buffer de saída para os logits de todo o vocabulário por token do batch.
-        # CRÍTICO para modelos com vocabulário grande:
-        #   Gemma 4: 256k tokens → ~0.49 GB
-        #   Qwen3:   152k tokens → ~0.29 GB
-        #   LLaMA 3:  128k tokens → ~0.25 GB
-        #   LLaMA 2:   32k tokens → ~0.06 GB
+        # O llama.cpp aloca logits apenas para 1 token por vez em modo normal
+        # (não para o batch inteiro) — exceto se logits_all=True
         vocab_size = self.vocab_size
-        logits_buffer_gb = (vocab_size * batch_size * 4) / (1024**3)
+        logits_tokens = ctx if logits_all else 1
+        logits_buffer_gb = (vocab_size * logits_tokens * 4) / (1024**3)
 
         # ── 5. Overhead fixo CUDA ────────────────────────────────────────────
-        # Contexto CUDA, streams, alocador de memória.
-        # Relativamente constante independente do modelo (~100-150 MB).
         cuda_overhead_gb = 0.12
 
-        total = (
+        total_vram = (
             model_vram
-            + kv_cache_gb
+            + kv_cache_vram_gb
             + compute_buffer_gb
             + logits_buffer_gb
             + cuda_overhead_gb
@@ -512,11 +474,14 @@ class ModelMetadata:
         )
 
         return {
-            # Breakdown por componente
             "model_vram_gb":           model_vram,
             "model_vram_mb":           model_vram * 1024,
-            "kv_cache_vram_gb":        kv_cache_gb,
-            "kv_cache_vram_mb":        kv_cache_gb * 1024,
+            "kv_cache_vram_gb":        kv_cache_vram_gb,
+            "kv_cache_vram_mb":        kv_cache_vram_gb * 1024,
+            "kv_cache_ram_gb":         kv_cache_ram_gb,
+            "kv_cache_ram_mb":         kv_cache_ram_gb * 1024,
+            "kv_cache_total_gb":       kv_cache_gb,
+            "kv_cache_total_mb":       kv_cache_gb * 1024,
             "compute_buffer_gb":       compute_buffer_gb,
             "compute_buffer_mb":       compute_buffer_gb * 1024,
             "logits_buffer_gb":        logits_buffer_gb,
@@ -524,14 +489,11 @@ class ModelMetadata:
             "cuda_overhead_gb":        cuda_overhead_gb,
             "cuda_overhead_mb":        cuda_overhead_gb * 1024,
             "mmproj_size_gb":          self.mmproj_size_gb,
-            # Total
-            "total_vram_gb":           total,
-            "total_vram_mb":           total * 1024,
-            # Info de layers
+            "total_vram_gb":           total_vram,
+            "total_vram_mb":           total_vram * 1024,
             "offloaded_layers":        gpu_layers,
             "total_layers":            total_layers,
             "percent_on_gpu":          (gpu_layers / total_layers) * 100,
-            # Info de arquitetura (para debug / UI)
             "vocab_size":              vocab_size,
             "has_swa":                 self.sliding_window > 0,
             "shared_kv_layers":        self.shared_kv_layers,
@@ -540,6 +502,11 @@ class ModelMetadata:
             "expert_used_count":       self.expert_used_count,
             "effective_model_size_gb": effective_file_size,
             "is_rough_estimate":       self.is_rough_estimate,
+            "architecture":            self.architecture,
+            "n_seq_max":               n_seq_max,
+            "offload_kqv":             offload_kqv,
+            "flash_attention":         flash_attention,
+            "logits_all":              logits_all
         }
 
 
@@ -571,7 +538,11 @@ async def estimate_vram_ram(
     filename: str = None,
     mmproj_path: str = None,
     mmproj_repo_id: str = None,
-    mmproj_filename: str = None
+    mmproj_filename: str = None,
+    n_seq_max: int = 1,
+    offload_kqv: bool = True,
+    flash_attention: bool = False,
+    logits_all: bool = False
 ):
     logger.info(f"🔍 Checking if model exists: {model_path}")
 
@@ -601,8 +572,8 @@ async def estimate_vram_ram(
                     logger.info(f"📍 Model found in HF Hub Cache: {hf_path}")
                     model_path = hf_path
                     exists_locally = True
-            except Exception as e:
-                logger.debug(f"HF Hub Cache check skipped: {e}")
+            except Exception:
+                pass
 
     metadata = ModelMetadata(
         model_path,
@@ -621,9 +592,17 @@ async def estimate_vram_ram(
     ctx_int = context_window
     if isinstance(context_window, str):
         ctx_int = parse_context_window(context_window)
-
+    
+    # O contexto real é a janela individual vezes o número de sequências paralelas
+    # (No llama.cpp, n_ctx total é compartilhado ou multiplicado dependendo do n_parallel)
+    # Aqui tratamos como o contexto BASE de uma única sequência.
+    
     return metadata.estimate_vram_gb(
         context_window=ctx_int,
         kv_cache_quantization=kv_cache_quantization,
-        gpu_layers=gpu_layers
+        gpu_layers=gpu_layers,
+        n_seq_max=n_seq_max,
+        offload_kqv=offload_kqv,
+        flash_attention=flash_attention,
+        logits_all=logits_all
     )

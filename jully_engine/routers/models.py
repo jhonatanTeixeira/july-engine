@@ -59,6 +59,10 @@ def detect_model_metadata(model_id: str, filename: str) -> Dict[str, Any]:
         "model_type": "text",
         "template": "chatml", # Fallback seguro geral
         "force_reasoning": False,
+        "n_seq_max": 1,
+        "offload_kqv": True,
+        "kv_unified": True,
+        "logits_all": False,
     }
     
     # Varre a Matriz de Conhecimento
@@ -99,6 +103,10 @@ class DownloadRequest(BaseModel):
     force_reasoning: Optional[bool] = None
     is_vision: Optional[bool] = None
     flash_attn: Optional[bool] = True
+    n_seq_max: Optional[int] = 1
+    offload_kqv: Optional[bool] = True
+    kv_unified: Optional[bool] = True
+    logits_all: Optional[bool] = False
 
 class UpdateMetadataRequest(BaseModel):
     model_type: Optional[str] = None
@@ -113,6 +121,10 @@ class UpdateMetadataRequest(BaseModel):
     force_reasoning: Optional[bool] = None
     is_vision: Optional[bool] = None
     flash_attn: Optional[bool] = None
+    n_seq_max: Optional[int] = None
+    offload_kqv: Optional[bool] = None
+    kv_unified: Optional[bool] = None
+    logits_all: Optional[bool] = None
     file_path: Optional[str] = None
     mmproj_path: Optional[str] = None
 
@@ -215,6 +227,10 @@ async def download_gguf(request: DownloadRequest):
         "force_reasoning": final_reasoning,
         "flash_attn": request.flash_attn if request.flash_attn is not None else True,
         "is_vision": request.is_vision if request.is_vision is not None else (request.model_type == "vision"),
+        "n_seq_max": request.n_seq_max or 1,
+        "offload_kqv": request.offload_kqv if request.offload_kqv is not None else True,
+        "kv_unified": request.kv_unified if request.kv_unified is not None else True,
+        "logits_all": request.logits_all if request.logits_all is not None else False,
         "file_path": None, # Pendente download
         "mmproj_path": None
     }

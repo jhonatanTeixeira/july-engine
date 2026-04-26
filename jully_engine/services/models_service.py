@@ -64,7 +64,12 @@ class ModelsService:
         if not model_alias or model_alias == "default":
             return False
             
-        config = self.get(model_alias) or self.resolve_by_settings(model_alias)
+        if isinstance(model_alias, dict):
+            # Se já é um dict, extrai o alias ou usa o próprio dict se for o caso
+            config = model_alias
+            model_alias = config.get("model_alias") or config.get("alias", "unknown")
+        else:
+            config = self.get(model_alias) or self.resolve_by_settings(model_alias)
         if not config:
             # Fallback para detecção por nome se não houver config
             name = model_alias.lower()

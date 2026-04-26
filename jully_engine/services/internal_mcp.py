@@ -455,7 +455,7 @@ class InternalMCP:
                             "type": 'function',
                             "function": {
                                 "name": name,
-                                "arguments": parsed_args
+                                "arguments": json.dumps(parsed_args) if isinstance(parsed_args, (dict, list)) else str(parsed_args)
                             }
                         })
                     
@@ -473,6 +473,7 @@ class InternalMCP:
                     logger.debug(f"InternalMCP: Envio para segundo turno: {json.dumps(original_payload['messages'], indent=2)}")
 
                     if requires_second_call:
+                        print("yeah boy")
                         async for chunk_2p in await brain_instance.chat(original_payload):
                             yield chunk_2p
                             await asyncio.sleep(0)

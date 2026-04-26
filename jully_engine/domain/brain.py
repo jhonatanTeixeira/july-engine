@@ -106,7 +106,7 @@ class Brain:
         elif isinstance(self._strategy, GGUF):
             messages = payload.pop("messages", [])
             stream = payload.pop("stream", False)
-            response = self._strategy.run_chat(messages, stream=stream, **payload)
+            response = await self._strategy.run_chat(messages, stream=stream, **payload)
 
         if mcp_handler:
             return await mcp_handler.orchestrate(response, self, original_payload)

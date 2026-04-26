@@ -78,41 +78,44 @@ class Runner:
         ]
 
     def get_domain(self):
-        if self.task_type == "text_chat": 
-            return self.model_loader.get_brain('gpu', self.model)
-        if self.task_type == "vision_chat": 
-            return self.model_loader.get_eyes('gpu', self.model)
-        if self.task_type == "tts": 
-            return self.model_loader.get_mouth('gpu', self.model)
-        if self.task_type == "stt": 
-            return self.model_loader.get_ears('gpu', self.model)
-        if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
-            return self.model_loader.get_presence('gpu', self.model)
+        # Garante que passamos apenas o alias (string) para o loader, evitando erros de tipo no DB
+        model_tag = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
 
-        return self.model_loader.get_memory('gpu', self.model)
+        if self.task_type == "text_chat": 
+            return self.model_loader.get_brain('gpu', model_tag)
+        if self.task_type == "vision_chat": 
+            return self.model_loader.get_eyes('gpu', model_tag)
+        if self.task_type == "tts": 
+            return self.model_loader.get_mouth('gpu', model_tag)
+        if self.task_type == "stt": 
+            return self.model_loader.get_ears('gpu', model_tag)
+        if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
+            return self.model_loader.get_presence('gpu', model_tag)
+
+        return self.model_loader.get_memory('gpu', model_tag)
 
     async def run_task(self, payload):
         task_type = self.task_type
         domain = self.get_domain()
 
         if task_type == "text_chat": 
-            result = domain.chat(payload)
+            result = await domain.chat(payload)
         elif task_type == "vision_chat": 
-            result = domain.analyze(payload)
+            result = await domain.analyze(payload)
         elif task_type == "tts": 
-            result = domain.speak(payload)
+            result = await domain.speak(payload)
         elif task_type == "stt": 
-            result = domain.listen(payload.get('audio'), payload.get('language'), payload)
+            result = await domain.listen(payload.get('audio'), payload.get('language'), payload)
         elif task_type in ["embedding", "embeddings"]: 
-            result = domain.embed(payload)
+            result = await domain.embed(payload)
         elif task_type == "rag_add": 
-            result = domain.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"))
+            result = await domain.add_to_rag(payload.get("text"), payload.get("metadata"), payload.get("collection", "july_memory"))
         elif task_type == "rag_batch_add": 
-            result = domain.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory"))
+            result = await domain.add_batch_to_rag(payload.get("documents", []), payload.get("collection", "july_memory"))
         elif task_type == "rag_search": 
             vector = payload.get("vector")
             if vector:
-                result = domain.search_with_details_vector(vector, payload.get("top_k", 3), payload.get("collection", "july_memory"))
+                result = await domain.search_with_details_vector(vector, payload.get("top_k", 3), payload.get("collection", "july_memory"))
             else:
                 result = domain.search(payload.get("query"), payload.get("top_k", 3), payload.get("collection", "july_memory"))
         elif task_type == "rag_vector_add": 
@@ -137,33 +140,37 @@ class Runner:
 
         return result
 
-    def unload_next(self, required_vram: int):
+    async def unload_next(self, required_vram: int):
         """Busca o próximo modelo idle na prioridade e descarrega."""
         for task in self.unload_priority:
             if self.context.is_loaded(task) and self.context.is_truly_idle(task):
                 logger.info(f"📦 [Orchestrator] Descarregando {task} para liberar espaço...")
                 runner = self.context.get_runner(task)
-                runner.unload()
+                await runner.unload()
                 
                 if self.context.get_free_vram() >= required_vram:
                     return True
 
         return False
 
-    def unload(self, timeout=60):
+    async def unload(self, timeout=60):
+        elapsed_wait = 0
+        while not self.context.is_truly_idle(self.task_type) and elapsed_wait < timeout:
+            elapsed_wait += 1
+            await asyncio.sleep(1)
+
+        if elapsed_wait >= timeout:
+            logger.warning(f"⚠️ [Orchestrator] Timeout aguardando {self.task_type} ficar idle. Forçando descarregamento.")
+            # Se der timeout, tentamos descarregar mesmo assim ou falhamos
+            # No caso de erro fatal, é melhor subir a exceção
+            raise Exception(f"Timeout na GPU: {self.task_type} não está idle após {timeout}s.")
+
+        # Garantir exclusividade no unload real
         with self.state_lock:
-            elapsed_wait = 0
-
-            while not self.context.is_truly_idle(self.task_type) and elapsed_wait <= timeout:
-                elapsed_wait += 1
-                time.sleep(1)
-
-            if elapsed_wait >= timeout:
-                raise Exception(f"Timeout na GPU: {self.task_type} não está idle após {timeout}s.")
-
             self.get_domain().unload()
             self.context.garbage_collection()
             self.context.release_task(self.task_type)
+            logger.info(f"✅ [Orchestrator] {self.task_type} descarregado com sucesso.")
 
     async def wait_for_free_vram(self, required_vram: int, timeout: int = 60):
         start_time = time.time()
@@ -190,15 +197,22 @@ class Runner:
             domain = self.get_domain()
             runner = self.context.get_runner(self.task_type)
 
-            if self.context.is_loaded(self.task_type) and runner and runner.model != self.model:
-                runner.unload()
+            # Comparação robusta de modelos (por alias ou ID)
+            model_changed = False
+            if runner:
+                current_id = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
+                new_id = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+                model_changed = current_id != new_id
+
+            if self.context.is_loaded(self.task_type) and runner and model_changed:
+                await runner.unload()
 
             elif not domain.is_loaded():
                 required = await domain.get_required_vram(payload)
 
                 while self.context.get_free_vram() < required:
                     # Tenta descarregar o que já está parado
-                    unloaded = self.unload_next(required)
+                    unloaded = await self.unload_next(required)
                     
                     if not unloaded:
                         # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo
@@ -268,8 +282,17 @@ class GpuOrchestrator:
         """
         from ..services.models_service import model_service
 
-        model = payload.get("model") or model_service.resolve_by_task_type(task_type)
-        slot = f"{task_type}_{model}"
+        model_req = payload.get("model")
+        if isinstance(model_req, str):
+            # Resolve o alias para o dicionário completo para comparação consistente
+            model = model_service.get(model_req) or model_service.resolve_by_settings(model_req)
+        else:
+            model = model_req
+
+        if not model:
+            model = model_service.resolve_by_task_type(task_type)
+
+        slot = f"{task_type}_{model.get('model_alias') if isinstance(model, dict) else model}"
 
         if slot not in self.slots:
             self.slots[slot] = Runner(task_type, model, self.context)

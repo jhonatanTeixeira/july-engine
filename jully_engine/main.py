@@ -65,6 +65,8 @@ from .routers.webhooks_router import router as webhooks_router
 from .services.external_mcp import external_mcp_manager
 from .events import event_manager
 from fastapi.staticfiles import StaticFiles
+import uuid
+from .context import request_id_var, acquired_instances_var
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -115,6 +117,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    # Gera um ID único para a requisição HTTP
+    rid = str(uuid.uuid4())
+    token_rid = request_id_var.set(rid)
+    # Inicializa o registro de instâncias para esta requisição
+    token_instances = acquired_instances_var.set({})
+    
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        # Liberação automática de qualquer instância que não foi liberada manualmente
+        # (ex: em caso de erro ou interrupção prematura)
+        acquired = acquired_instances_var.get()
+        if acquired:
+            for pool, inst in acquired.items():
+                try:
+                    # Usamos um método privado para forçar a liberação se necessário
+                    pool._force_release(inst)
+                except:
+                    pass
+        
+        # Limpa o contexto
+        request_id_var.reset(token_rid)
+        acquired_instances_var.reset(token_instances)
 
 # Servir arquivos estáticos do diretório storage/voices
 storage_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage", "voices")
