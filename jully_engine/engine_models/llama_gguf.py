@@ -74,10 +74,12 @@ def detect_model_capabilities(repo_id_or_filename: str) -> dict:
     return capabilities
 
 class ReentrantAsyncLock:
-    def __init__(self):
+    def __init__(self, seq_id=0):
         self._lock = asyncio.Lock()
         self._owner = None
         self._count = 0
+        self._seq_id = seq_id
+        self._token = None
 
     async def acquire(self):
         rid = request_id_var.get()
@@ -87,6 +89,11 @@ class ReentrantAsyncLock:
         await self._lock.acquire()
         self._owner = rid
         self._count = 1
+        try:
+            from llama_cpp.llama import active_seq_id
+            self._token = active_seq_id.set(self._seq_id)
+        except ImportError:
+            pass
 
     def release(self):
         rid = request_id_var.get()
@@ -94,10 +101,24 @@ class ReentrantAsyncLock:
             self._count -= 1
             if self._count == 0:
                 self._owner = None
+                if self._token:
+                    try:
+                        from llama_cpp.llama import active_seq_id
+                        active_seq_id.reset(self._token)
+                    except Exception:
+                        pass
+                    self._token = None
                 self._lock.release()
         else:
             self._owner = None
             self._count = 0
+            if self._token:
+                try:
+                    from llama_cpp.llama import active_seq_id
+                    active_seq_id.reset(self._token)
+                except Exception:
+                    pass
+                self._token = None
             if self._lock.locked():
                 self._lock.release()
 
@@ -111,7 +132,7 @@ class SequenceSlot:
     def __init__(self, model: Any, seq_id: int):
         self.model = model
         self.seq_id = seq_id
-        self.lock = ReentrantAsyncLock() # Lock reentrante to ensure only one request uses this slot/seq_id at a time
+        self.lock = ReentrantAsyncLock(seq_id=seq_id) # Lock reentrante to ensure only one request uses this slot/seq_id at a time
 
     def __getattr__(self, name):
         return getattr(self.model, name)
