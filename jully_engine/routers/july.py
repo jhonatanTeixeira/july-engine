@@ -234,36 +234,18 @@ async def add_rag_batch(
 
 
 @router.get("/rag")
-@router.post("/rag")
 async def search_rag(
     http_request: Request,
     query: Optional[str] = None,
     collection: str = "july_memory",
     top_k: int = 3
 ):
-    """Busca avançada de contexto (Texto ou Vetor) que retorna IDs, Distâncias e Metadados."""
+    """Busca avançada de contexto via Texto que retorna IDs, Distâncias e Metadados."""
     headers = dict(http_request.headers)
-    
-    # Se for POST, tenta pegar os parâmetros do body JSON
-    if http_request.method == "POST":
-        try:
-            body = await http_request.json()
-            query = body.get("query", query)
-            collection = body.get("collection", collection)
-            top_k = body.get("top_k", top_k)
-            vector = body.get("vector")
-            
-            # Se houver vetor, realiza busca vetorial direta
-            if vector:
-                payload = {"vector": vector, "collection": collection, "top_k": top_k}
-                result = await bridge.process_rag_search(payload, headers)
-                return JSONResponse(content=result)
-        except Exception:
-            pass
 
     if not query:
-        return JSONResponse(status_code=400, content={"error": "Envie 'query' ou um payload POST com 'vector'."})
-        
+        return JSONResponse(status_code=400, content={"error": "O parâmetro 'query' via query string é obrigatório."})
+
     try:
         payload = {"query": query, "collection": collection, "top_k": top_k}
         result = await bridge.process_rag_search(payload, headers)
