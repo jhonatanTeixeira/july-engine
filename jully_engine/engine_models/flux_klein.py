@@ -22,10 +22,17 @@ class FluxKleinNode:
         self.model_id = self.meta.get("id", "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic")
 
     def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM para o FLUX.2 Klein SDNQ."""
+        """Calcula a VRAM para o FLUX.2 Klein SDNQ baseada no offload."""
         if self.backend == "cpu":
             return 0
-        return 3500
+            
+        offload = os.environ.get("FLUX_OFFLOAD", None).lower()
+        if offload == "sequential":
+            return 500
+        elif offload == "cpu":
+            return 1500
+        else:
+            return 3500
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():
@@ -68,10 +75,22 @@ class FluxKleinNode:
 
         # 4. Kit Sobrevivência 4GB
         logger.info("FluxKleinNode: Ativando travas de segurança de VRAM...")
-        # self.model_t2i.enable_model_cpu_offload()
-        self.model_t2i.enable_sequential_cpu_offload()
-        self.model_t2i.vae.enable_tiling()
-        self.model_t2i.vae.enable_slicing()
+        offload = os.environ.get("FLUX_OFFLOAD", "sequential").lower()
+        
+        if offload == "cpu":
+            logger.info("FluxKleinNode: Ativando model_cpu_offload...")
+            self.model_t2i.enable_model_cpu_offload()
+        elif offload == "sequential":
+            logger.info("FluxKleinNode: Ativando sequential_cpu_offload...")
+            self.model_t2i.enable_sequential_cpu_offload()
+        else:
+            logger.info("FluxKleinNode: Offload desativado. Usando VRAM completa.")
+            self.model_t2i.to(self.device)
+
+        if os.environ.get("ENABLE_VAE", "true").lower() == "true":
+            logger.info("FluxKleinNode: Ativando otimizações de VAE (tiling/slicing)...")
+            self.model_t2i.vae.enable_tiling()
+            self.model_t2i.vae.enable_slicing()
         
         logger.info("FluxKleinNode: Carga finalizada com sucesso!")
 

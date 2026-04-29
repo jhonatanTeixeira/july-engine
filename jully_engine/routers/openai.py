@@ -202,3 +202,9 @@ async def create_image_generation(request: ImageGenerationRequest, http_request:
     headers = dict(http_request.headers)
     payload = request.model_dump()
     return await bridge.process_image_generation(payload, headers)
+
+@router.post("/images/resize")
+async def create_image_resize(payload: dict, http_request: Request):
+    headers = dict(http_request.headers)
+    result = await bridge.process_image_resize(payload, headers)
+    return {"image": result}
