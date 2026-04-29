@@ -7,7 +7,7 @@ from typing import Any, AsyncGenerator, Union, Dict
 import logging
 from ..context import request_id_var
 
-logger = logging.getLogger('JulyEngne.Orchestrators.GpuOrchestrator')
+logger = logging.getLogger('JulyEngine.Orchestrators.GpuOrchestrator')
 
 class ReentrantModelLock:
     def __init__(self):
@@ -221,10 +221,12 @@ class Runner:
     async def wait_for_free_vram(self, required_vram: int, timeout: int = 60):
         start_time = time.time()
 
+        logger.debug(f"🚀 [Orchestrator] Aguardando por {required_vram} MB livres. Total Livre: {self.context.get_free_vram()} MB")
+
         async with self.context.condition:
             while self.context.get_free_vram() < required_vram:
-                # Se algo ficou idle enquanto esperávamos, tentamos dar unload
-                if any(self.context.is_truly_idle(t) for t in self.context.state):
+                # Se algo que estava carregado ficou idle enquanto esperávamos, tentamos dar unload
+                if any(self.context.is_loaded(t) and self.context.is_truly_idle(t) for t in self.context.state):
                     return 
 
                 elapsed = time.time() - start_time
@@ -283,7 +285,7 @@ class Runner:
                                 required = await domain.get_required_vram(payload)
                             else:
                                 # Se o modelo não suporta decremento, apenas espera
-                                await self.wait_for_free_vram(required)
+                                await self.wait_for_free_vram(required, timeout=10)
                     
                     domain.load()
 

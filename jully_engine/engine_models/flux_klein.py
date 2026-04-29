@@ -25,7 +25,7 @@ class FluxKleinNode:
         """Calcula a VRAM para o FLUX.2 Klein SDNQ."""
         if self.backend == "cpu":
             return 0
-        return 3800 # ~3.8GB. Otimizado para 4GB VRAM.
+        return 3500
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():

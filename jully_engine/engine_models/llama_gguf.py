@@ -104,7 +104,7 @@ class ReentrantAsyncLock:
                 if self._token:
                     try:
                         from llama_cpp.llama import active_seq_id
-                        active_seq_id.reset(self._token)
+                        # active_seq_id.reset(self._token)
                     except Exception:
                         pass
                     self._token = None
@@ -115,7 +115,7 @@ class ReentrantAsyncLock:
             if self._token:
                 try:
                     from llama_cpp.llama import active_seq_id
-                    active_seq_id.reset(self._token)
+                    # active_seq_id.reset(self._token)
                 except Exception:
                     pass
                 self._token = None
@@ -155,7 +155,8 @@ class SequenceSlot:
         try:
             self.model.reset()
         finally:
-            active_seq_id.reset(token)
+            # active_seq_id.reset(token)
+            pass
 
 class SequencePool:
     def __init__(self, slots: List[SequenceSlot]):
@@ -213,8 +214,14 @@ class SequencePool:
         self._real_release(slot)
 
     def stop(self):
-        """Nada a fazer para o pool simples."""
-        pass
+        """Para o pool e limpa referências para permitir coleta de lixo."""
+        self.slots = []
+        while not self._available.empty():
+            try:
+                self._available.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+        self._allocated.clear()
 
 class GGUF:
     def __init__(self, backend, model):
@@ -226,7 +233,7 @@ class GGUF:
         self.model = None
         self.model_path = hf_hub_download(repo_id=model["model_id"], filename=model["filename"])
         self.model_metadata = ModelMetadata(self.model_path)
-        self.sequence_pool = None
+        self.sequence_pool: SequencePool = None
         self.instances = []
         self.n_seq_max = int(model.get("n_seq_max") or model.get("n_parallel") or 1)
         self.offload_kqv = model.get("offload_kqv") if model.get("offload_kqv") is not None else True
@@ -274,7 +281,8 @@ class GGUF:
             n_seq_max=self.n_seq_max,
             offload_kqv=self.offload_kqv,
             flash_attention=self.meta.get('flash_attn', True),
-            logits_all=self.logits_all
+            logits_all=self.logits_all,
+            kv_unified=self.kv_unified
         )
         
         return estimate["total_vram_mb"]
@@ -285,7 +293,7 @@ class GGUF:
         meta = self.meta
         
         # Aumentamos o padrão para 4096 para suportar agentes mais complexos
-        n_ctx_per_req = int((n_ctx or meta.get("context_window") or int(os.environ.get("LLM_CTX_TOKENS", 4096))) / self.n_seq_max)
+        n_ctx_per_req = n_ctx or int(meta.get("context_window") or os.environ.get("LLM_CTX_TOKENS", '4096'))
         effective_n_ctx = n_ctx_per_req * self.n_seq_max
         
         # Serialização de carregamento do mesmo arquivo de modelo
@@ -331,7 +339,6 @@ class GGUF:
                     "use_mmap": True,
                     "verbose": False,
                 }
-                logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
 
                 # Flash Attention: metadata > env var > default True
                 flash_attn = meta.get("flash_attn")
@@ -374,7 +381,7 @@ class GGUF:
 
                 # Cada seq_id precisa do seu próprio Chat Handler (estado independente)
                 # Qwen Tool Calling & Reasoning Support (non-VL)
-                if 'qwen' in model_identifier.lower() and not caps["vision_handler"]:
+                if 'qwen' in model_identifier.lower() and meta.get("model_type") != "vision":
                     from .chat_handlers import QwenChatHandler
                     template = self.model_metadata.tokenizer_template or meta.get("template")
                     if isinstance(template, str) and template.strip():
@@ -386,7 +393,7 @@ class GGUF:
                         if "chat_format" in base_params:
                             del base_params["chat_format"]
                 
-                if meta.get("model_type") == "vision" or caps["vision_handler"]:
+                if meta.get("model_type") == "vision":
                     mmproj_path = None
                     mmproj_id = meta.get("mmproj_id")
                     mmproj_filename = meta.get("mmproj_filename")
@@ -423,6 +430,8 @@ class GGUF:
                         if mmproj_path:
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
                             base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+
+                logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
 
                 self.model = Llama(**base_params)
                 self.slots = [SequenceSlot(self.model, i) for i in range(self.n_seq_max)]
@@ -629,30 +638,63 @@ class GGUF:
                     logger.debug(f"GGUF: Sequence slot released back to pool")
 
     def unload(self, model_name: str):
-        if hasattr(self, 'slots') and self.slots:
-            # Para o pool e limpa todas as instâncias
-            if self.sequence_pool:
+        logger.info(f"GGUF: Explicitly unloading {model_name}...")
+        
+        try:
+            acquired = acquired_instances_var.get()
+            if self.sequence_pool in acquired:
+                del acquired[self.sequence_pool]
+                acquired_instances_var.set(acquired)
+        except Exception as e:
+            logger.debug(f"GGUF: Non-critical error clearing context vars: {e}")
+
+        if self.sequence_pool:
+            try:
                 self.sequence_pool.stop()
+            except Exception as e:
+                logger.warning(f"GGUF: Error stopping sequence pool: {e}")
+            self.sequence_pool = None
             
+        if hasattr(self, 'slots') and self.slots:
             for slot in self.slots:
-                del slot
-            
+                slot.model = None # Remove referência circular
+                # Se o lock reentrante ficou preso, forçamos a soltura
+                if hasattr(slot, 'lock') and slot.lock._token:
+                    try:
+                        slot.lock.release()
+                    except Exception:
+                        pass
             self.slots = []
-            self.model = None
+
+        if self.model:
+            if hasattr(self.model, 'close'):
+                try:
+                    logger.debug(f"GGUF: Calling model.close() for {model_name}")
+                    self.model.close()
+                except Exception as e:
+                    logger.warning(f"GGUF: Error calling close() on model: {e}")
             
+            # Deletar explicitamente chama o destrutor (__del__) no C++ 
+            del self.model
+            self.model = None
+
         import gc
         gc.collect()
         
-        # Se estivermos usando CUDA, tenta esvaziar o cache via torch se disponível
         try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+            import ctypes
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
+
+        # 6. Limpeza de VRAM (CUDA)
+        try:
+            from ..resource_manager import resource_manager
+            resource_manager.clear_memory()
         except ImportError:
             pass
             
-        logger.info(f"GGUF: Unloaded {model_name} and cleared CUDA cache")
+        logger.info(f"GGUF: Finished unloading {model_name}")
 
     def is_loaded(self):
         return self.model is not None

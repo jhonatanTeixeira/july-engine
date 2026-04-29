@@ -50,19 +50,17 @@ os.environ["XFORMERS_MORE_DETAILS"] = "0"
 # ---------------------------------------------------------------------------
 
 def free_vram():
-    import torch
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+    from ..resource_manager import resource_manager
+
+    resource_manager.clear_memory()
 
 
 def print_vram(label: str = ""):
-    import torch
-    if torch.cuda.is_available():
-        used = torch.cuda.memory_allocated() / 1024**3
-        reserved = torch.cuda.memory_reserved() / 1024**3
-        print(f"[VRAM] {label} | Alocado: {used:.2f} GB | Reservado: {reserved:.2f} GB")
+    from ..resource_manager import resource_manager
+    
+    free, used, total = resource_manager.get_vram_usage()
+
+    print(f"[VRAM] {label} | Alocado: {used:.2f} GB | Livre: {free:.2f} GB")
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +144,9 @@ class LCMFaceIDPipeline:
         
         # Se for usar offload sequencial ou de modelo, o consumo cai drasticamente
         if self.use_sequential_offload or payload.get("use_sequential_offload"):
-            return 1500 # ~2.1GB
+            return 2100 # ~2.1GB
         if self.use_cpu_offload or payload.get("use_cpu_offload"):
-            return 2100 # ~2.8GB
+            return 2800 # ~2.8GB
             
         return 3500 # ~4.2GB para SD1.5 + IP-Adapter sem offload
 
@@ -323,6 +321,8 @@ class LCMFaceIDPipeline:
         """
         if not self._loaded:
             self.load()
+
+        free_vram()
 
         import torch
         with torch.inference_mode():

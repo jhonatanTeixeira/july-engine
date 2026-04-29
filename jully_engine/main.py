@@ -25,6 +25,9 @@ class ColorFormatter(logging.Formatter):
         formatter = logging.Formatter(log_fmt, datefmt="%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
 
+env = os.environ['ENV'] if 'ENV' in os.environ else None
+load_dotenv(f'.env.{env}' if env else '.env', verbose=True)
+
 # Configura o logger raiz para o ecossistema JulyEngine
 root_logger = logging.getLogger("JulyEngine")
 root_logger.setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.INFO)
@@ -36,14 +39,12 @@ if not root_logger.handlers:
     root_logger.addHandler(console_handler)
 
 # Silenciar logs barulhentos de bibliotecas externas
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("llama_cpp").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.WARNING)
+logging.getLogger("llama_cpp").setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.WARNING)
 
 # --- FIM CONFIGURAÇÃO DE LOGS ---
 
-env = os.environ['ENV'] if 'ENV' in os.environ else None
-load_dotenv(f'.env.{env}' if env else '.env', verbose=True)
 
 import uvicorn
 from fastapi import FastAPI, Request

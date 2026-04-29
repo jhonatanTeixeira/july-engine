@@ -42,18 +42,21 @@ class ResourceManager:
         self.initialized = True
 
     def get_vram_usage(self):
-        """Retorna (Free, Used, Total) em Megabytes direto do Driver."""
+        """Retorna (Free, Used, Total) em MiB, calculando o espaço disponível real."""
         if not self.has_gpu or not self._nvml_handle:
             return 0.0, 0.0, 0.0
             
         try:
             import pynvml
             info = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
-            return (
-                info.free / 1024**2,
-                info.used / 1024**2,
-                info.total / 1024**2
-            )
+            
+            total_mib = info.total / 1024**2
+            used_mib = info.used / 1024**2
+            
+            free_mib = total_mib - used_mib
+            
+            return free_mib, used_mib, total_mib
+            
         except Exception as e:
             logger.error(f"ResourceManager: Error reading NVML: {e}")
             return 0.0, 0.0, 0.0
@@ -65,27 +68,37 @@ class ResourceManager:
             
         free_mb, used_mb, _ = self.get_vram_usage()
         
-        # Margem de segurança mínima (100MB) para o contexto do driver CUDA não travar
-        safety_margin = 100 
-        available = free_mb - safety_margin
+        available = free_mb
         
         return max(0.0, available)
 
     def clear_memory(self):
-        """Limpa RAM e solicita ao PyTorch que libere cache da VRAM."""
+        """Limpa RAM, VRAM e tenta forçar o fechamento de contextos residuais."""
+        import gc
+        import ctypes
+        
         gc.collect()
         
-        # Import local para não pesar o topo do arquivo
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
-                logger.info("ResourceManager: PyTorch CUDA cache cleared")
-        except ImportError:
-            pass
-            
-        time.sleep(0.1) # Breve pausa para o driver atualizar as métricas
+                
+                for obj in gc.get_objects():
+                    try:
+                        if torch.is_tensor(obj) or (hasattr(obj, 'data') and torch.is_tensor(obj.data)):
+                            if obj.is_cuda:
+                                del obj
+                    except:
+                        pass
+                
+                torch.cuda.synchronize()
+                
+                logger.info("ResourceManager: Profound VRAM cleanup completed")
+        except Exception as e:
+            logger.error(f"Error during VRAM cleanup: {e}")
 
     def get_cpu_usage(self) -> float:
         return psutil.cpu_percent(interval=None)

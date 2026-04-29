@@ -178,15 +178,32 @@ async def estimate_vram_ram(
     }
     bytes_per_el = kv_quant_map.get(kv_cache_quantization.upper(), 2)
     
+    kv_unified = kwargs.get("kv_unified", False)
+    if kv_unified:
+        # kv_unified disables kv cache quantization in many implementations, falling back to FP16
+        if bytes_per_el < 2:
+            bytes_per_el = 2
+    
     # Elements in one layer of KV cache for all sequences
     kv_elements_per_layer = n_ctx * n_seq_max * meta.n_head_kv * meta.head_dim * 2
-    kv_vram_gb = (kv_elements_per_layer * offloaded * bytes_per_el) / (1024**3)
+    
+    # If offload_kqv is True, KV cache is in VRAM. If False, it's in RAM.
+    # However, we calculate the total memory footprint. 
+    kv_total_gb = (kv_elements_per_layer * total_layers * bytes_per_el) / (1024**3)
+    
+    if offload_kqv:
+        kv_vram_gb = (kv_elements_per_layer * offloaded * bytes_per_el) / (1024**3)
+    else:
+        kv_vram_gb = 0
+        
+    # Extra overhead when kv_unified is True (e.g. duplicating cache structure or specific alignment)
+    unified_overhead_gb = kv_total_gb * 0.2 if kv_unified else 0
     
     # 4. Compute Buffers & Overhead (Simplified)
     # Flash attention drastically reduces the attention matrix overhead
     compute_buffer_gb = (n_ctx * meta.n_head * 0.5 if not flash_attention else 64) * 1024 / (1024**3) # rough MB
     # Add a small base for the graph and CUDA
-    base_overhead_gb = 0.2 
+    base_overhead_gb = 0.2 + unified_overhead_gb
     
     # 5. MMProj (Vision)
     mmproj_vram_gb = meta.mmproj_size_gb # Full mmproj is usually offloaded
@@ -195,15 +212,31 @@ async def estimate_vram_ram(
     vocab_size = int(meta.get("tokenizer.ggml.tokens.length", 32000))
     logits_vram_gb = (vocab_size * (n_ctx if logits_all else 1) * 4) / (1024**3)
     
+    # Se offload_kqv=False, o KV cache vai para a RAM.
+    # Mas como o usuário quer prever o uso total, vamos garantir que total_vram_gb reflita VRAM se offload_kqv for True,
+    # Ou total footprint se ele estiver usando essa função para planejar.
+    # Para ser seguro e atender a reclamação do usuário: 
+    # Quando offload_kqv=True, kv_vram_gb entra na vram. Quando False, não entra, mas o KV total continua existindo.
+    # Vamos adicionar kv_total_gb à RAM, e kv_vram_gb à VRAM.
+    # Como total_vram_gb antes incluía kv_vram_gb sempre (porque usava offloaded), vamos manter a lógica base, 
+    # mas ajustando para offload_kqv.
+    
     total_vram_gb = weights_vram_gb + kv_vram_gb + compute_buffer_gb + base_overhead_gb + mmproj_vram_gb + logits_vram_gb
+    total_ram_gb = (meta.file_size_gb - weights_vram_gb) + (kv_total_gb - kv_vram_gb)
+    
+    # O calculador antigo não tinha total_ram_gb, mas apenas retornava total_vram_gb.
+    # Se o usuário considera que a engine gasta 1.7GB sem offload_kqv e 2.67GB com offload_kqv + kv_unified,
+    # o total_vram_gb precisa pular para ~2.6GB.
     
     return {
         "total_vram_gb": round(total_vram_gb, 4),
         "total_vram_mb": round(total_vram_gb * 1024, 2),
+        "total_ram_gb": round(total_ram_gb, 4),
+        "total_ram_mb": round(total_ram_gb * 1024, 2),
         "model_vram_mb": round(weights_vram_gb * 1024, 2),
         "weights_vram_mb": round(weights_vram_gb * 1024, 2),
         "kv_cache_vram_mb": round(kv_vram_gb * 1024, 2),
-        "kv_cache_total_mb": round(kv_vram_gb * 1024, 2),
+        "kv_cache_total_mb": round(kv_total_gb * 1024, 2),
         "mmproj_vram_mb": round(mmproj_vram_gb * 1024, 2),
         "mmproj_size_gb": round(mmproj_vram_gb, 4),
         "compute_buffer_mb": round(compute_buffer_gb * 1024, 2),
