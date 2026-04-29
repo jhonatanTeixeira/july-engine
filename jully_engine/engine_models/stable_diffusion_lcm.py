@@ -25,6 +25,7 @@ ARQUIVOS em models/:
 """
 from __future__ import annotations
 from diffusers.utils import logging as diffusers_logging
+
 diffusers_logging.disable_progress_bar()
 
 import gc
@@ -33,7 +34,7 @@ import os
 import warnings
 from pathlib import Path
 from PIL import Image
-from typing import Optional, Union, TYPE_CHECKING
+from typing import Optional, Union, Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -139,17 +140,17 @@ class LCMFaceIDPipeline:
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o SD LCM (~3GB)."""
-        return 3000 # ~3.0GB (float16)
+
         if self.device == "cpu":
             return 0
         
         # Se for usar offload sequencial ou de modelo, o consumo cai drasticamente
         if self.use_sequential_offload or payload.get("use_sequential_offload"):
-            return 2100 # ~2.1GB
+            return 1500 # ~2.1GB
         if self.use_cpu_offload or payload.get("use_cpu_offload"):
-            return 2800 # ~2.8GB
+            return 2100 # ~2.8GB
             
-        return 4200 # ~4.2GB para SD1.5 + IP-Adapter sem offload
+        return 3500 # ~4.2GB para SD1.5 + IP-Adapter sem offload
 
     def load(self):
         if self._loaded:

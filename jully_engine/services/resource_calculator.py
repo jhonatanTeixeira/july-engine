@@ -67,7 +67,13 @@ class ModelMetadata:
         return default
 
     @property
+    def tokenizer_template(self): return self.get("tokenizer.chat_template", None)
+
+    @property
     def layers(self): return int(self.get("block_count", 32))
+    
+    @property
+    def block_count(self): return self.layers
     
     @property
     def n_embd(self): return int(self.get("embedding_length", 4096))

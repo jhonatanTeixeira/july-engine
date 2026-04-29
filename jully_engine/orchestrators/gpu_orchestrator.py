@@ -122,7 +122,10 @@ class Runner:
 
     def get_domain(self):
         # Garante que passamos apenas o alias (string) para o loader, evitando erros de tipo no DB
-        model_tag = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+        if isinstance(self.model, dict):
+            model_tag = self.model.get("model_alias") or self.model.get("model")
+        else:
+            model_tag = self.model
 
         if self.task_type == "text_chat": 
             return self.model_loader.get_brain('gpu', model_tag)
@@ -234,7 +237,11 @@ class Runner:
                     raise TimeoutError("Timeout na fila da GPU.")
 
     async def run(self, payload: dict):
-        model_alias = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+        if isinstance(self.model, dict):
+            model_alias = self.model.get("model_alias") or self.model.get("model")
+        else:
+            model_alias = self.model
+            
         model_lock = self.context.get_model_lock(model_alias)
 
         async with model_lock:
@@ -247,8 +254,8 @@ class Runner:
                 # Comparação robusta de modelos (por alias ou ID)
                 model_changed = False
                 if runner:
-                    current_id = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
-                    new_id = self.model.get("model_alias") if isinstance(self.model, dict) else self.model
+                    new_id = self.model.get("model_alias") or self.model.get("model") if isinstance(self.model, dict) else self.model
+                    current_id = runner.model.get("model_alias") or runner.model.get("model") if isinstance(runner.model, dict) else runner.model
                     model_changed = current_id != new_id
 
                 if self.context.is_loaded(self.task_type) and runner and model_changed:
@@ -331,15 +338,20 @@ class GpuOrchestrator:
 
         model_req = payload.get("model")
         if isinstance(model_req, str):
-            # Resolve o alias para o dicionário completo para comparação consistente
-            model = model_service.get(model_req) or model_service.resolve_by_settings(model_req)
+            # Tenta primeiro como modelo GGUF (banco de dados)
+            model = model_service.get(model_req)
+            
+            # Se não for GGUF e for tarefa de texto, tenta resolver via Presets/Settings
+            if not model and task_type in ["text_chat", "vision_chat"]:
+                model = model_service.resolve_by_settings(model_req)
         else:
             model = model_req
 
         if not model:
             model = model_service.resolve_by_task_type(task_type)
 
-        slot = f"{task_type}_{model.get('model_alias') if isinstance(model, dict) else model}"
+        m_id = model.get('model_alias') or model.get('model') if isinstance(model, dict) else model
+        slot = f"{task_type}_{m_id}"
 
         if slot not in self.slots:
             self.slots[slot] = Runner(task_type, model, self.context)
@@ -359,7 +371,7 @@ class GpuOrchestrator:
         to_unload = []
         # Usamos list() para evitar erro de mudança de tamanho do dicionário durante a iteração
         for slot, runner in list(self.slots.items()):
-            current_alias = runner.model.get("model_alias") if isinstance(runner.model, dict) else runner.model
+            current_alias = runner.model.get("model_alias") or runner.model.get("model") if isinstance(runner.model, dict) else runner.model
             if current_alias == model_alias:
                 to_unload.append((slot, runner))
         
