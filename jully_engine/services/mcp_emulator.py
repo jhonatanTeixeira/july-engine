@@ -2,6 +2,7 @@ import asyncio
 import re
 import html
 import json
+import uuid
 from dataclasses import dataclass
 import textwrap
 from typing import Any, Dict, AsyncGenerator, List, Union
@@ -163,6 +164,28 @@ class McpEmulator:
         if 'tools' in payload and payload['tools']:
             xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
             
+        messages = payload.get("messages", [])
+        
+        # 1. Mapeia IDs de tool_calls para nomes de funções (protocolo OpenAI)
+        tool_id_to_name = {}
+        for msg in messages:
+            if msg.get("role") == "assistant" and "tool_calls" in msg:
+                for tc in msg["tool_calls"]:
+                    tool_id_to_name[tc.get("id")] = tc.get("function", {}).get("name")
+
+        # 2. Converte role: tool para role: user com prefixo [SYSTEM MESSAGE]
+        # Isso é necessário para modelos emulados que não entendem o role 'tool' nativo.
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "tool":
+                tool_id = msg.get("tool_call_id")
+                tool_name = tool_id_to_name.get(tool_id, "unknown")
+                content = msg.get("content", "")
+                
+                messages[i] = {
+                    "role": "user",
+                    "content": f"[SYSTEM MESSAGE: TOOL {tool_name} CALLED]: {content}"
+                }
+
         system_prompt = textwrap.dedent(f'''
 # TOOLING CAPABILITIES
 You can call tools to get information or perform actions. The environment will execute the tool and return the results to you.
@@ -250,6 +273,8 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             import html
             raw_content = html.unescape(raw_content)
             
+            enable_internal_mcp = original_payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
+            
             tools_to_execute = []
             
             # Substitui as tags por vazio no texto final e guarda os objetos Tool
@@ -263,6 +288,25 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
             # Se não achou nenhuma ferramenta (ou era só reasoning), devolve a resposta original limpa
             if not tools_to_execute:
                 return response 
+
+            if not enable_internal_mcp:
+                # CONVERSÃO XML -> OPENAI TOOL CALLS (SEM EXECUÇÃO)
+                tool_calls = []
+                for item in tools_to_execute:
+                    args = self._build_args(item.name, item.arguments)
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:10]}",
+                        "type": "function",
+                        "function": {
+                            "name": item.name,
+                            "arguments": json.dumps(args)
+                        }
+                    })
+                
+                message["tool_calls"] = tool_calls
+                message["content"] = clean_content if clean_content else None
+                response["choices"][0]["finish_reason"] = "tool_calls"
+                return response
 
             message['content'] = [{"type": "text", "text": clean_content}]
                 
@@ -326,12 +370,18 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 first_response = ''
                 tools_executed = False
                 requires_second_call = False
+                enable_internal_mcp = original_payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
+                tool_index = 0
+                last_usage = None
                 
                 # O Parser consome a rede neural, nós consumimos o Parser!
                 async for item in XMLStreamParser(response):
                     if isinstance(item, Chunk):
                         if not item.is_reasoning:
                             first_response += item.content
+
+                        if "usage" in item.delta and item.delta["usage"]:
+                            last_usage = item.delta["usage"]
 
                         yield item.delta
                         
@@ -345,6 +395,47 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         
                         first_response = ''
                         
+                        if not enable_internal_mcp:
+                            # CONVERSÃO XML -> OPENAI TOOL CALLS (DELTA STREAM)
+                            call_id = f"call_{uuid.uuid4().hex[:10]}"
+                            args = self._build_args(item.name, item.arguments)
+                            
+                            # Yield 1: Function name
+                            yield {
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [{
+                                            "index": tool_index,
+                                            "id": call_id,
+                                            "type": "function",
+                                            "function": {
+                                                "name": item.name,
+                                                "arguments": ""
+                                            }
+                                        }]
+                                    }
+                                }]
+                            }
+
+                            # Yield 2: Function arguments
+                            yield {
+                                "choices": [{
+                                    "index": 0,
+                                    "delta": {
+                                        "tool_calls": [{
+                                            "index": tool_index,
+                                            "function": {
+                                                "arguments": json.dumps(args)
+                                            }
+                                        }]
+                                    }
+                                }]
+                            }
+                            tool_index += 1
+                            tools_executed = True
+                            continue
+
                         # Executa On-The-Fly!
                         args = self._build_args(item.name, item.arguments)
                         
@@ -397,6 +488,18 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
 
                     await asyncio.sleep(0)
                 
+                if tools_executed and not enable_internal_mcp:
+                    final_chunk = {
+                        "choices": [{
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "tool_calls"
+                        }]
+                    }
+                    if last_usage:
+                        final_chunk["usage"] = last_usage
+                    yield final_chunk
+
                 if tools_executed and requires_second_call:
                     # 3. Dispara o segundo turno imediatamente!
                     async for second_chunk in await brain.chat(original_payload):

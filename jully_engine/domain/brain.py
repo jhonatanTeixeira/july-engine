@@ -72,13 +72,16 @@ class Brain:
         mcp_handler = None
         
         if enable_internal_mcp:
-            if mcp_option == "emulated":
-                mcp_handler = self._mcp
-            elif mcp_option == "internal":
+            if mcp_option == "internal":
                 mcp_handler = self._mcp.internal_mcp
             elif mcp_option == "external_only":
                 from ..services.external_mcp import external_mcp_manager
                 mcp_handler = external_mcp_manager
+            else: # emulated
+                mcp_handler = self._mcp
+        elif mcp_option == "emulated" and payload.get("tools"):
+            # Special case: Enable McpEmulator only for XML/OpenAI conversion (no internal execution)
+            mcp_handler = self._mcp
             
         if mcp_handler:
             mcp_handler.inject_tools(payload, tools_whitelist)
