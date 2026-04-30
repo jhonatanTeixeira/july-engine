@@ -2,10 +2,10 @@
 
 --find-links ./vendor/llama-cpp-python/dist
 
-llama-cpp-python
+llama-cpp-python==0.3.36
 faster-whisper
-coqui-tts
-transformers==5.0.0
+coqui-tts==0.27.5
+transformers==4.57.3
 kokoro==0.9.4
 torch==2.8.0
 torchaudio==2.8.0
@@ -38,7 +38,7 @@ accelerate
 nvidia-ml-py
 diffusers
 bitsandbytes
-peft
+peft==0.19.1
 safetensors
 insightface
 xformers
@@ -48,9 +48,9 @@ realesrgan
 gfpgan
 facexlib
 gguf
-sdnq
+sdnq==0.1.7
 onnxruntime-gpu
-sentence-transformers
+sentence-transformers==5.4.1
 tavily-python
 replicate
 pyinstaller
@@ -58,3 +58,5 @@ noisereduce
 soundfile
 pyppeteer
 timm
+faster-qwen3-tts==0.2.6
+py-cpuinfounsloth[colab-new]

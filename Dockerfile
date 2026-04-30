@@ -1,7 +1,12 @@
-# Stage 1: Build stage (CUDA Support)
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04 AS builder
+# Stage 1: Build & Runtime Environment (CUDA Support)
+FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
 
-# Install Python and build dependencies
+# Configurações de ambiente para Python e CUDA
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Instalação do Python 3.11 e dependências de compilação
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3-pip \
@@ -12,62 +17,36 @@ RUN apt-get update && apt-get install -y \
     curl \
     build-essential \
     ninja-build \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set python3.11 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
-
-WORKDIR /app
-
-# Copy requirements and setup script
-COPY requirements.txt .
-COPY requirements_cpu.txt .
-COPY requirements_gpu.txt .
-COPY setup.sh .
-
-# Recebe os build args
-ARG ENABLE_CPU=true
-ARG ENABLE_GPU=true
-ENV ENABLE_CPU=$ENABLE_CPU
-ENV ENABLE_GPU=$ENABLE_GPU
-
-# Run setup.sh - This handles CUDA compilation for llama-cpp and downloads models
-# We ensure it's executable and fix CRLF issues
-RUN chmod +x setup.sh && sed -i 's/\r$//' setup.sh && ./setup.sh
-
-# Copy the rest of the application
-COPY . .
-
-# Build the application with PyInstaller
-RUN pip install pyinstaller
-RUN pyinstaller --onefile --name july_engine jully_engine/main.py
-
-# Stage 2: Runtime stage
-FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
-
-# Install runtime dependencies (OpenCV, etc. might need these)
-RUN apt-get update && apt-get install -y \
-    python3.11 \
     libgl1-mesa-glx \
     libglib2.0-0 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Configura Python 3.11 como padrão
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+
 WORKDIR /app
 
-# Copy the binary from the builder stage
-COPY --from=builder /app/dist/july_engine .
-# Copy models downloaded by setup.sh
-COPY --from=builder /app/models ./models
-# Copy config files
-COPY config.json . 
-COPY voices.json . 
+# Copia os arquivos do projeto
+COPY . .
 
-# Create storage folders
+# Instalação via setup.sh para garantir compilação do llama-cpp com flags de ambiente
+# O setup.sh cria e configura o .venv automaticamente
+RUN python -m venv .venv && \
+    chmod +x setup.sh && \
+    sed -i 's/\r$//' setup.sh && \
+    ./setup.sh
+
+# Criação de pastas de armazenamento
 RUN mkdir -p storage/voices storage/temp
 
+# Exposição da porta do FastAPI
 EXPOSE 8000
 
-# Run the binary
-CMD ["./july_engine"]
+# Healthcheck interno do Docker
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+# Inicialização usando o uvicorn dentro do venv configurado pelo setup.sh
+CMD [".venv/bin/python", "-m", "uvicorn", "jully_engine.main:app", "--host", "0.0.0.0", "--port", "8000"]

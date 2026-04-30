@@ -1,5 +1,4 @@
 from __future__ import annotations
-from csv import Error
 import os
 from typing import Dict, Optional, TYPE_CHECKING
 import logging
@@ -8,13 +7,11 @@ if TYPE_CHECKING:
     import replicate
     import replicate.client
 
-
-logger =  logging.getLogger("JulyEngine.Models.Replicate")
+logger = logging.getLogger("JulyEngine.Models.Replicate")
 
 class Replicate:
     def __init__(self, backend="api"):
         self.backend = backend
-        self.voices_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "storage", "voices"))
 
     def is_loaded(self):
         """Replicate é baseado em API, sempre 'carregado'."""
@@ -39,28 +36,27 @@ class Replicate:
     def _extract_model(self, model: str):
         return model.removeprefix('replicate/')
 
-    async def run_tts(self, model: str, text: str, voice: str = None, headers: Optional[Dict[str, str]] = None, voice_info=None, **kwargs):
-        if not voice_info:
-            from ..persistence import get_backend
-            uploaded_voices = get_backend().get_uploaded_voices()
-            voice_info = next((v for v in uploaded_voices if v.get("id") == voice), {})
-            
+    async def run_tts(self, model: str, text: str, voice: str = None, headers: Optional[Dict[str, str]] = None, **kwargs):
         model = self._extract_model(model)
 
-        language = voice_info.get('language', 'en')
-
-        # The 'voice' argument is the ID string (e.g. "yuni"). We need the actual file path from voice_info (e.g. "yuni.wav")
-        rel_path = voice_info.get('path')
-        full_path = os.path.join(self.voices_dir, rel_path) if rel_path else None
+        from ..services.voice_service import voice_service
         
-        if not full_path or not os.path.exists(full_path):
+        voice_res = voice_service.get_voice_path(voice)
+
+        if not voice_res:
+            logger.error(f"Replicate: Voice {voice} not found and no fallback available.")
+            raise ValueError(f"Voice {voice} not found")
+            
+        full_path, voice_lang = voice_res
+        language = voice_lang or 'en'
+        
+        if not os.path.exists(full_path):
             logger.error(f"Replicate: Reference audio not found at {full_path} for voice ID '{voice}'")
-            raise Error('Audio path does not exists')
+            raise FileNotFoundError(f'Audio path does not exist: {full_path}')
 
         try:
             with open(full_path, 'rb') as audio_file:
                 if model.find('chatterbox') > 0:
-                    # Replicate input dictionary
                     input_data = {
                         "text": text,
                         "cfg_weight": self._extract_tts_cfg_weight(headers) if language in ['pt', 'en'] else 0.0,
@@ -75,13 +71,23 @@ class Replicate:
                         'speaker': audio_file,
                         'language': language
                     }
+                elif model.find('qwen3_tts') > 0:
+                    input_data = {
+                        'mode': 'voice_clone',
+                        'text': text,
+                        'reference_audio': audio_file,
+                        'language': language
+                    }
+
+                    if (style := kwargs.get('style_instruction', None)):
+                        input_data['style_instruction'] = style
+                        
                 else:
                     input_data = {
                         'text': text,
                         **kwargs
                     }
 
-                # Log the payload being sent (masking the file object)
                 log_data = input_data.copy()
                 if "reference_audio" in log_data:
                     log_data["reference_audio"] = f"<File pointer to {full_path}>"
@@ -103,7 +109,7 @@ class Replicate:
 
                 logger.info(f"Engine Replicate executed successfully on {self.backend} with {model}")
                 return audio_content
+                
         except Exception as e:
             logger.error(f"Replicate: TTS failed: {e}")
-            raise e        
-        
+            raise e

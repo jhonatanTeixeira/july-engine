@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..engine_models.llm_api import LLMApi
     from ..engine_models.kokoro_tts import KokoroTTS
     from ..engine_models.chatterbox import ChatterboxTTS
+    from ..engine_models.qwen3_tts import FasterQwen3TTS
 
 from ..persistence import get_backend
 
@@ -50,6 +51,9 @@ class Mouth:
         elif self.model_tag.startswith("chatterbox"):
             from ..engine_models.chatterbox_tts import ChatterboxTTS
             return ChatterboxTTS(backend=self.backend, model_tag=self.model_tag)
+        elif self.model_tag == "qwen3-tts":
+            from ..engine_models.qwen3_tts import FasterQwen3TTS
+            return FasterQwen3TTS(backend=self.backend)
         else:
             raise ValueError(f"Mouth: Unsupported backend/model combination: {self.backend}/{self.model_tag}")
 
@@ -68,6 +72,7 @@ class Mouth:
         from ..engine_models.piper import Piper
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.kokoro_tts import KokoroTTS
+        from ..engine_models.qwen3_tts import FasterQwen3TTS
         
         # 1. Extração e Limpeza de Texto
         raw_text = payload.get("input", payload.get("text", ""))
@@ -122,6 +127,8 @@ class Mouth:
                         audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
                     elif isinstance(self._strategy, Piper):
                         audio_chunk = self._strategy.run(sentence, voice_id)
+                    elif isinstance(self._strategy, FasterQwen3TTS):
+                        audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
 
                     if audio_chunk:
                         if inspect.iscoroutine(audio_chunk):
@@ -147,6 +154,9 @@ class Mouth:
 
         elif isinstance(self._strategy, KokoroTTS):
             return await self._strategy.run(clean_text, voice_id, language, stream=False, semitones=semitones)
+
+        elif isinstance(self._strategy, FasterQwen3TTS):
+            return self._strategy.run(clean_text, voice_id, language, temperature=temperature)
 
         return None
 
