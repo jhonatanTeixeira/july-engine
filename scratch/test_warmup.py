@@ -7,8 +7,8 @@ from typing import List, Dict, Any
 # Mocking FastAPI/Uvicorn environment enough to test the handler
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from jully_engine.routers.models import model_warmup, WarmupRequest, WarmupItem
-from jully_engine.model_loader import model_loader
+from july_engine.routers.models import model_warmup, WarmupRequest, WarmupItem
+from july_engine.model_loader import model_loader
 
 async def test_warmup():
     print("--- Inciando Teste de Warmup ---")

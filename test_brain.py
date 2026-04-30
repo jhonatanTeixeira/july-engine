@@ -17,9 +17,9 @@ import argparse
 import sys
 import json
 
-from jully_engine.domain.brain import Brain
-# from jully_engine.model_loader import model_loader
-from jully_engine.persistence import get_backend
+from july_engine.domain.brain import Brain
+# from july_engine.model_loader import model_loader
+from july_engine.persistence import get_backend
 
 
 async def main():

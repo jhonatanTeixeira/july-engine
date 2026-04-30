@@ -16,7 +16,7 @@ _event_process = None
 def _event_worker(queue: multiprocessing.Queue):
     """Background process that listens for events and writes to DB"""
     # Initialize DB inside the worker process so it gets its own connection
-    from jully_engine.persistence import get_backend, reset_backend
+    from july_engine.persistence import get_backend, reset_backend
     reset_backend()
     db = get_backend()
     

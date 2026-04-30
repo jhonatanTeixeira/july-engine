@@ -3,7 +3,7 @@ import os
 import time
 from PIL import Image
 
-from jully_engine.engine_models.stable_diffusion import StableDiffusion
+from july_engine.engine_models.stable_diffusion import StableDiffusion
 
 def main():
     parser = argparse.ArgumentParser(description="Teste Arquiteto - Stable Diffusion (LCM + IP-Adapters)")

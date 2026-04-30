@@ -50,24 +50,24 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from .bridge import bridge
-from .routers.openai import router as openai_router
-from .routers.anthropic import router as anthropic_router
-from .routers.models import router as models_router
-from .routers.calculator import router as calculator_router
-from .routers.monitoring import router as monitoring_router
-from .routers.voice import router as voice_router
-from .routers.search import router as search_router
-from .routers.july import router as july_router
+from july_engine.bridge import bridge
+from july_engine.routers.openai import router as openai_router
+from july_engine.routers.anthropic import router as anthropic_router
+from july_engine.routers.models import router as models_router
+from july_engine.routers.calculator import router as calculator_router
+from july_engine.routers.monitoring import router as monitoring_router
+from july_engine.routers.voice import router as voice_router
+from july_engine.routers.search import router as search_router
+from july_engine.routers.july import router as july_router
 
-from .routers.settings_router import router as settings_router
-from .routers.mcps_router import router as mcps_router
-from .routers.webhooks_router import router as webhooks_router
-from .services.external_mcp import external_mcp_manager
-from .events import event_manager
+from july_engine.routers.settings_router import router as settings_router
+from july_engine.routers.mcps_router import router as mcps_router
+from july_engine.routers.webhooks_router import router as webhooks_router
+from july_engine.services.external_mcp import external_mcp_manager
+from july_engine.events import event_manager
 from fastapi.staticfiles import StaticFiles
 import uuid
-from .context import request_id_var, acquired_instances_var
+from july_engine.context import request_id_var, acquired_instances_var
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -147,7 +147,7 @@ async def request_id_middleware(request: Request, call_next):
         acquired_instances_var.reset(token_instances)
 
 # Servir arquivos estáticos do diretório storage/voices
-storage_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "storage", "voices")
+storage_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "voices")
 app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
 app.include_router(openai_router, prefix="/v1/openai")
@@ -169,4 +169,4 @@ async def health():
 
 
 if __name__ == "__main__":
-    uvicorn.run("jully_engine.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

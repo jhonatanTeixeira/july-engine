@@ -109,8 +109,8 @@ For environments with low VRAM:
 ## 🛠️ Development Guide
 
 ### How to add a new model:
-1.  **Engine Model**: Create a new class in `jully_engine/engine_models/`. It must have `load` and `run` methods.
-2.  **Domain Mapping**: Update the corresponding domain class (e.g., `jully_engine/domain/brain.py`) to recognize the new model tag or strategy.
+1.  **Engine Model**: Create a new class in `july_engine/engine_models/`. It must have `load` and `run` methods.
+2.  **Domain Mapping**: Update the corresponding domain class (e.g., `july_engine/domain/brain.py`) to recognize the new model tag or strategy.
 3.  **Orchestrator**: If the model requires special initialization, update the orchestrators.
 
 ## 🗣️ Voice Resolution (TTS)

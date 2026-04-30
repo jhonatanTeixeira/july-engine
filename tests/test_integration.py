@@ -20,10 +20,10 @@ def anyio_backend():
 @pytest.fixture(scope="module")
 async def client():
     # Import inside fixture to ensure env vars are set
-    from jully_engine.main import app
-    from jully_engine.bridge import bridge
-    from jully_engine.persistence.tinydb_backend import TinyDBBackend
-    from jully_engine.persistence import persistence
+    from main import app
+    from july_engine.bridge import bridge
+    from july_engine.persistence.tinydb_backend import TinyDBBackend
+    from july_engine.persistence import persistence
     
     # # Use a specific test database named 'testes.json'
     # test_db_path = os.path.join("storage", "db", "testes.json")
@@ -342,7 +342,7 @@ async def test_internal_mcp_image_generation(client):
 @pytest.mark.anyio
 async def test_video_description_strategies(client):
     print("\n[Test] Running Video Description Strategy Integration...")
-    video_path = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/jully/july_engine/tests/20171231_164112.mp4"
+    video_path = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/july/july_engine/tests/20171231_164112.mp4"
 
     strategies = ["default", "interaction", "emotion"]
     

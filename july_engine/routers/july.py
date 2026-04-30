@@ -140,7 +140,7 @@ async def get_face_embedding(
 ):
     """
     Recebe um crop de rosto em base64 e retorna o embedding ArcFace via DeepFace.
-    Usado pelo jully_photos para matching facial delegado à Engine.
+    Usado pelo july_photos para matching facial delegado à Engine.
     """
     image_b64 = payload.get("image")
     if not image_b64:

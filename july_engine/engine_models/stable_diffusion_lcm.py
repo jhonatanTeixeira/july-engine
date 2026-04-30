@@ -432,7 +432,7 @@ if __name__ == "__main__":
     # Teste COM face
     # -----------------------------------------------------------------------
     face_ref = Image.open(
-        Path("E:/projects/jhon/ai/jully/july_dating/resources/pictures/anna_profile.png")
+        Path("E:/projects/jhon/ai/july/july_dating/resources/pictures/anna_profile.png")
     )
 
     images = pipeline(

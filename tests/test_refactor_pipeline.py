@@ -6,13 +6,13 @@ import pytest
 import asyncio
 import numpy as np
 from PIL import Image
-from jully_engine.domain.eyes import Eyes
-from jully_engine.orchestrators.cpu_orchestrator import cpu_orchestrator
-from jully_engine.orchestrators.gpu_orchestrator import gpu_orchestrator
-from jully_engine.services.helpers import inference_helper
-from jully_engine.persistence.vector_store import vector_store
+from july_engine.domain.eyes import Eyes
+from july_engine.orchestrators.cpu_orchestrator import cpu_orchestrator
+from july_engine.orchestrators.gpu_orchestrator import gpu_orchestrator
+from july_engine.services.helpers import inference_helper
+from july_engine.persistence.vector_store import vector_store
 
-VIDEO_PATH = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/jully/july_engine/tests/20171231_164112.mp4"
+VIDEO_PATH = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/july/july_engine/tests/20171231_164112.mp4"
 
 @pytest.mark.asyncio
 async def test_vision_video_pipeline():

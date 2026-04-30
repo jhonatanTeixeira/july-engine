@@ -49,4 +49,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:8000/health || exit 1
 
 # Inicialização usando o uvicorn dentro do venv configurado pelo setup.sh
-CMD [".venv/bin/python", "-m", "uvicorn", "jully_engine.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD [".venv/bin/python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

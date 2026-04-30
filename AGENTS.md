@@ -25,9 +25,9 @@ The system uses a 3-tier dependency architecture to maintain environment purity 
 
 ## 3. DIRECTORY ENFORCEMENT
 You MUST place files in their exact designated locations:
-- `jully_engine/engine_models/`: ONLY for low-level ML library wrappers.
-- `jully_engine/domain/`: ONLY for business logic and strategy routing (Brain, Eyes, etc.).
-- `jully_engine/orchestrators/`: ONLY for hardware and queue management.
+- `july_engine/engine_models/`: ONLY for low-level ML library wrappers.
+- `july_engine/domain/`: ONLY for business logic and strategy routing (Brain, Eyes, etc.).
+- `july_engine/orchestrators/`: ONLY for hardware and queue management.
 - `storage/temp/`: MANDATORY location for all temporary audio/image file I/O. NEVER save temp files in root.
 
 ## 4. API & DTO STANDARDS
@@ -52,7 +52,7 @@ To ensure output examples render correctly in Swagger, you MUST:
 
 ## 7. ADDING NEW MODELS OR CAPABILITIES [WORKFLOW]
 When asked to implement a new feature (e.g., a resizer, a new LLM, a vision model), you MUST execute these steps in order:
-1. **Create the Wrapper:** Build individual classes for each underlying library (e.g., `PilowResizer`, `GFPGANResizer`) strictly inside `jully_engine/engine_models/`. 
+1. **Create the Wrapper:** Build individual classes for each underlying library (e.g., `PilowResizer`, `GFPGANResizer`) strictly inside `july_engine/engine_models/`. 
 2. **Update the Domain Strategy:** Go to the corresponding Domain class (e.g., `Presence`, `Eyes`) and update its `_get_strategy()` method to return your new wrapper based on `self.model_tag` and `self.backend`.
 3. **Register in Orchestrators:** Ensure the task can be handled by the `cpu_orchestrator`, `gpu_orchestrator`, or `api_orchestrator` as appropriate.
 4. **Update the Bridge:** Add the invocation logic in the `Bridge` class.
@@ -90,7 +90,7 @@ Before generating ANY code response, you MUST silently verify this checklist. Ou
 1. Am I bypassing the `Bridge` or `inference_helper`? (If yes, rewrite).
 2. Did I use the word 'engine' in a payload instead of 'model'? (If yes, fix it).
 3. Did I update the `_get_strategy()` method in the Domain class to map my new wrapper?
-4. Are my new model wrappers correctly placed inside `jully_engine/engine_models/`?
+4. Are my new model wrappers correctly placed inside `july_engine/engine_models/`?
 5. Did I handle VRAM cleanup if using the GPU?
 6. Did I add a new setting/task? If so, did I update `july_engine_studio` to reflect this new configuration block?
 7. Did I respect the Persistence Strategy? (No raw DB/Vector calls outside of the `persistence/` directory).

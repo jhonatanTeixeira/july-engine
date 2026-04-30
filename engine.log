@@ -4,18 +4,18 @@
              Searching for package file structure from directories with        
              __init__.py files                                                 
 INFO:ResourceManager:Detected GPU with 4.00 GB VRAM
-             Importing from E:\projects\jhon\ai\jully\july_engine
+             Importing from E:\projects\jhon\ai\july\july_engine
  
-    module   📁 jully_engine   
+    module   📁 july_engine   
              ├── 🐍 __init__.py
              └── 🐍 main.py    
  
       code   Importing the FastAPI app object from the module with the         
              following code:                                                   
  
-             from jully_engine.main import app
+             from july_engine.main import app
  
-       app   Using import string: jully_engine.main:app
+       app   Using import string: july_engine.main:app
  
     server   Server started at http://0.0.0.0:4000
     server   Documentation at http://0.0.0.0:4000/docs

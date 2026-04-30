@@ -51,4 +51,4 @@ EXPOSE 8000
 ENV PATH="/app/.venv_docker/bin:$PATH"
 
 # Run with uvicorn directly for reload support
-CMD ["python", "-m", "uvicorn", "jully_engine.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

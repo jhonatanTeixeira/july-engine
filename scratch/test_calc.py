@@ -1,6 +1,6 @@
 import asyncio
 import os
-from jully_engine.services.resource_calculator import estimate_vram_ram
+from july_engine.services.resource_calculator import estimate_vram_ram
 
 async def main():
     # Test with a mock path that exists in cache
