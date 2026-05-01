@@ -108,7 +108,6 @@ class Gemma4Handler(Gemma4ChatHandler):
         called_tools = False
 
         for chunk in response:
-            print(chunk)
             content = chunk.get("choices", [{}])[0].get("delta", {}).get("content")
 
             if content == '<|channel>':
