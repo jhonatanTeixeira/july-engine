@@ -28,21 +28,15 @@ WORKDIR /app
 
 # Dev environment with dedicated venv (to ignore host .venv)
 COPY requirements.txt .
-COPY requirements_cpu.txt .
-COPY requirements_gpu.txt .
+COPY vendor ./vendor
 COPY setup.sh .
-
-# Recebe os build args
-ARG ENABLE_CPU=true
-ARG ENABLE_GPU=true
-ENV ENABLE_CPU=$ENABLE_CPU
-ENV ENABLE_GPU=$ENABLE_GPU
 
 # We setup the venv and then run the setup.sh INSIDE the venv
 RUN python -m venv .venv_docker && \
     .venv_docker/bin/pip install --upgrade pip && \
     chmod +x setup.sh && \
     sed -i 's/\r$//' setup.sh && \
+    sed -i 's/\.venv/.venv_docker/g' setup.sh && \
     PATH="/app/.venv_docker/bin:$PATH" bash ./setup.sh
 
 EXPOSE 8000

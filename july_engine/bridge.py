@@ -152,7 +152,9 @@ class Bridge:
                         if "id" in normalized:
                             interaction_id = normalized["id"]
                         if "usage" in normalized and normalized["usage"]:
-                            tokens = normalized["usage"].get("total_tokens", tokens)
+                            usage_data = normalized["usage"]
+                            tokens = usage_data.get("total_tokens", tokens)
+                            logger.debug(f"Bridge: Usage chunk received: {usage_data}")
                         
                         # Normalização Universal de Reasoning
                         if "choices" in normalized and len(normalized["choices"]) > 0:

@@ -26,7 +26,7 @@ if [ "$RECOMPILE" = "true" ] || [ -z "$EXISTING_WHEEL" ]; then
 
     echo "[1/3] Compilando llama-cpp-python com CUDA (apenas desta vez)..."
 
-    git submodule update --init --recursive
+    # git submodule update --init --recursive
 
     if [ ! -d "$SUBMODULE_DIR" ]; then
         echo "ERRO: Submódulo não encontrado em $SUBMODULE_DIR"

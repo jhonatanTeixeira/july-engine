@@ -104,6 +104,13 @@ class LLMApi:
             **kwargs,
             **payload
         }
+
+        # Enable usage reporting in stream if requested
+        if params.get("stream") is True:
+            if "stream_options" not in params:
+                params["stream_options"] = {"include_usage": True}
+            else:
+                params["stream_options"]["include_usage"] = True
         
         if reasoning_enabled:
             params["extra_body"] = {
