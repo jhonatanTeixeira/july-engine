@@ -145,17 +145,6 @@ def load_models_db() -> Dict[str, Any]:
     models = models_service.get_all()
     # convert list to dict
     db = {m.get("model_alias"): m for m in models if m.get("model_alias")}
-
-    db.setdefault('xtts', {        'model_alias': 'xtts',
-        'model_type': 'tts',
-        'estimated_vram': 3000
-    })
-    
-    db.setdefault('faster-whisper', {
-        'model_alias': 'faster-whisper',
-        'model_type': 'stt',
-        'estimated_vram': 1500            
-    })
     
     return db
 

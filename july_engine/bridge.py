@@ -81,10 +81,16 @@ class Bridge:
             
         return str(obj)
     
+    def _extract_interaction_id(self, headers: Dict[str, str]) -> Optional[str]:
+        return headers.get('x-interaction-id') or headers.get('x-july-interaction-id') or headers.get('X-Interaction-Id')
+
     async def process_openai_chat(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Union[Dict[str, Any], AsyncGenerator[Dict[str, Any], None]]:
         start_time = time.time()
         task_type = "text_chat"
         payload['headers'] = headers
+        
+        # Get interaction ID from headers if provided by Studio/Frontend
+        header_interaction_id = headers.get('x-interaction-id') or headers.get('x-july-interaction-id') or headers.get('X-Interaction-Id')
 
         try:
             helper = MultiModalHelper(payload=payload)
@@ -126,7 +132,9 @@ class Bridge:
             gen_time = time.time() - start_time
             
             tokens = normalized_response.get("usage", {}).get("total_tokens", 0) if isinstance(normalized_response, dict) else 0
-            interaction_id = normalized_response.get("id", f"chatcmpl-{uuid.uuid4().hex[:10]}") if isinstance(normalized_response, dict) else f"chatcmpl-{uuid.uuid4().hex[:10]}"
+            
+            # Use header ID if present, otherwise try to get from response or generate new one
+            interaction_id = header_interaction_id or (normalized_response.get("id") if isinstance(normalized_response, dict) else None) or f"chatcmpl-{uuid.uuid4().hex[:10]}"
             
             if isinstance(normalized_response, str):
                 est_tokens = len(normalized_response) // 4
@@ -142,7 +150,7 @@ class Bridge:
 
         async def openai_generator():
             tokens = 0
-            interaction_id = f"chatcmpl-{uuid.uuid4().hex[:10]}"
+            interaction_id = header_interaction_id or f"chatcmpl-{uuid.uuid4().hex[:10]}"
             try:
                 iterator = response if hasattr(response, '__aiter__') else response
                 
@@ -226,7 +234,7 @@ class Bridge:
             reasoning_text = message.get("reasoning_content") or ""
             
             usage = openai_response.get("usage", {})
-            interaction_id = openai_response.get("id", f"msg_{uuid.uuid4().hex[:10]}")
+            interaction_id = header_interaction_id or openai_response.get("id") or f"msg_{uuid.uuid4().hex[:10]}"
             
             res = {
                 "id": interaction_id,
@@ -248,7 +256,7 @@ class Bridge:
 
         # 4. ADAPTER OUT (Async - SSE Stream Anthropic)
         async def anthropic_generator():
-            msg_id = f"msg_{uuid.uuid4().hex[:10]}"
+            msg_id = header_interaction_id or f"msg_{uuid.uuid4().hex[:10]}"
             model_name = openai_payload.get("model", "claude-3")
             
             yield f"event: message_start\ndata: {json.dumps({'type': 'message_start', 'message': {'id': msg_id, 'type': 'message', 'role': 'assistant', 'model': model_name, 'content': [], 'stop_reason': None, 'usage': {'input_tokens': 0, 'output_tokens': 0}}})}\n\n"
@@ -336,7 +344,7 @@ class Bridge:
             results.append(res)
         
         gen_time = time.time() - start_time
-        event_manager.emit("image", generation_time=gen_time)
+        event_manager.emit("image", generation_time=gen_time, interaction_id=self._extract_interaction_id(headers))
         
         data = []
         for res in results:
@@ -357,7 +365,8 @@ class Bridge:
         result = await inference_helper.process("image_resize", payload)
         
         gen_time = time.time() - start_time
-        event_manager.emit("image", generation_time=gen_time)
+        interaction_id = self._extract_interaction_id(headers)
+        event_manager.emit("image", generation_time=gen_time, interaction_id=interaction_id)
         return result
 
     async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
@@ -384,7 +393,7 @@ class Bridge:
             results.append(res)
         
         gen_time = time.time() - start_time
-        event_manager.emit("image", generation_time=gen_time)
+        event_manager.emit("image", generation_time=gen_time, interaction_id=self._extract_interaction_id(headers))
         
         data = []
         for res in results:
@@ -406,7 +415,8 @@ class Bridge:
         res = await inference_helper.process("search_web", payload)
         
         gen_time = time.time() - start_time
-        event_manager.emit("search_web", generation_time=gen_time)
+        interaction_id = self._extract_interaction_id(headers)
+        event_manager.emit("search_web", generation_time=gen_time, interaction_id=interaction_id)
         return res
 
     async def process_search_code(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Any:
@@ -417,7 +427,8 @@ class Bridge:
         res = await inference_helper.process("search_code", payload)
         
         gen_time = time.time() - start_time
-        event_manager.emit("search_code", generation_time=gen_time)
+        interaction_id = self._extract_interaction_id(headers)
+        event_manager.emit("search_code", generation_time=gen_time, interaction_id=interaction_id)
         return res
 
     async def process_search_and_scrape(self, search_results: List[Dict[str, Any]], query: str, headers: Dict[str, str], describe_model: Optional[str] = None) -> str:
