@@ -154,6 +154,7 @@ class McpEmulator:
     
     def inject_tools(self, payload: Dict, tools_whitelist: List = []):
         xml_tags = self.xml_tags
+        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
         
         if tools_whitelist:
             tools: list = payload.setdefault('tools', [])
@@ -169,9 +170,11 @@ class McpEmulator:
         # 1. Mapeia IDs de tool_calls para nomes de funções (protocolo OpenAI)
         tool_id_to_name = {}
         for msg in messages:
-            if msg.get("role") == "assistant" and "tool_calls" in msg:
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 for tc in msg["tool_calls"]:
                     tool_id_to_name[tc.get("id")] = tc.get("function", {}).get("name")
+                
+                msg.pop("tool_calls", None)
 
         # 2. Converte role: tool para role: user com prefixo [SYSTEM MESSAGE]
         # Isso é necessário para modelos emulados que não entendem o role 'tool' nativo.

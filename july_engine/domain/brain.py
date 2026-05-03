@@ -79,7 +79,7 @@ class Brain:
                 mcp_handler = external_mcp_manager
             else: # emulated
                 mcp_handler = self._mcp
-        elif mcp_option == "emulated" and payload.get("tools"):
+        elif mcp_option == "emulated":
             # Special case: Enable McpEmulator only for XML/OpenAI conversion (no internal execution)
             mcp_handler = self._mcp
             
