@@ -61,6 +61,7 @@ from july_engine.routers.search import router as search_router
 from july_engine.routers.july import router as july_router
 
 from july_engine.routers.settings_router import router as settings_router
+from july_engine.routers.services_router import router as services_router
 from july_engine.routers.mcps_router import router as mcps_router
 from july_engine.routers.webhooks_router import router as webhooks_router
 from july_engine.services.external_mcp import external_mcp_manager
@@ -158,6 +159,7 @@ app.include_router(monitoring_router)
 app.include_router(voice_router)
 app.include_router(search_router)
 app.include_router(settings_router)
+app.include_router(services_router)
 app.include_router(mcps_router)
 app.include_router(webhooks_router)
 app.include_router(july_router)

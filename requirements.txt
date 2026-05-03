@@ -60,3 +60,4 @@ pyppeteer
 timm
 faster-qwen3-tts==0.2.6
 py-cpuinfo
+tf-keras==2.21.0
