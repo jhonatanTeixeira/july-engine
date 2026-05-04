@@ -404,32 +404,32 @@ class GGUF:
                     try:
                         if v_handler == "gemma4":
                             from .chat_handlers import Gemma4Handler
-                            base_params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path) if mmproj_path else Gemma4Handler()
+                            base_params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Gemma4Handler(verbose=base_params.get("verbose", False))
                         elif v_handler == "gemma3":
                             from llama_cpp.llama_chat_format import Gemma3ChatHandler
-                            base_params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path) if mmproj_path else Gemma3ChatHandler()
+                            base_params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Gemma3ChatHandler(verbose=base_params.get("verbose", False))
                         elif v_handler == "qwen3vl":
                             from llama_cpp.llama_chat_format import Qwen3VLChatHandler
-                            base_params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen3VLChatHandler()
+                            base_params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen3VLChatHandler(verbose=base_params.get("verbose", False))
                         elif v_handler == "qwen25vl":
                             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-                            base_params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path) if mmproj_path else Qwen25VLChatHandler()
+                            base_params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen25VLChatHandler(verbose=base_params.get("verbose", False))
                         elif v_handler == "qwen35":
                             from .chat_handlers import Qwen35Handler
-                            base_params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path) if mmproj_path else Qwen35Handler()
+                            base_params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen35Handler(verbose=base_params.get("verbose", False))
                         elif v_handler == "moondream":
                             from llama_cpp.llama_chat_format import MoondreamChatHandler
-                            base_params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
                         elif v_handler == "llava-v1.6" or v_handler == "pixtral":
                             from llama_cpp.llama_chat_format import Llava16ChatHandler
-                            base_params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
                         elif v_handler == "llava":
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
                     except ImportError:
                         if mmproj_path:
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path)
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
 
                 logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
 

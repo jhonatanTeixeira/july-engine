@@ -3,13 +3,20 @@
 # Exit on error
 set -e
 
+# Verifica qual ambiente estamos configurando para exibir a mensagem correta
 echo "-------------------------------------------------------"
-echo "Configurando ambiente para RTX 3050 4GB (CUDA)..."
+if [ "$WITH_VULKAN" = "true" ]; then
+    echo "Configurando ambiente para VULKAN (Placas AMD/Intel)..."
+else
+    echo "Configurando ambiente para RTX 3050 4GB (CUDA)..."
+fi
 echo "-------------------------------------------------------"
 
 WHEELS_DIR="./vendor/llama-cpp-python/dist"
 SUBMODULE_DIR="./vendor/llama-cpp-python"
-CUDA_ARCH="86"  # RTX 3050 = sm_86
+# Define CUDA_ARCH com o valor da variável de ambiente, 
+# ou usa "86" (RTX 3050) como padrão se estiver vazia.
+CUDA_ARCH="${CUDA_ARCH:-86}"
 
 # Detecta a versão do Python no venv (ex: 311, 312)
 PY_VER=$(.venv/bin/python -c "import sys; print(f'{sys.version_info.major}{sys.version_info.minor}')")
@@ -20,11 +27,10 @@ EXISTING_WHEEL=$(find "$WHEELS_DIR" -name "llama_cpp_python-*-cp${PY_VER}-*.whl"
 # Suporte para forçar recompilação via RECOMPILE=true
 if [ "$RECOMPILE" = "true" ] || [ -z "$EXISTING_WHEEL" ]; then
     echo "[1/3] Forçando recompilação do llama-cpp-python..."
+    
     # Limpa builds anteriores para garantir nova compilação
     rm -rf "$WHEELS_DIR"
     rm -rf "$SUBMODULE_DIR/build"
-
-    echo "[1/3] Compilando llama-cpp-python com CUDA (apenas desta vez)..."
 
     # git submodule update --init --recursive
 
@@ -35,8 +41,22 @@ if [ "$RECOMPILE" = "true" ] || [ -z "$EXISTING_WHEEL" ]; then
 
     mkdir -p "$WHEELS_DIR"
 
+    # --- INÍCIO DA MODIFICAÇÃO CIRÚRGICA ---
+    # Define os argumentos de compilação dependendo da variável de ambiente
+    if [ "$WITH_VULKAN" = "true" ]; then
+        echo "      -> Aplicando flags de compilação para VULKAN..."
+        # Removemos os comandos CUDA e inserimos o -DGGML_VULKAN=on
+        LOCAL_CMAKE_ARGS="-DGGML_VULKAN=on -DGGML_SCHED_MAX_SPLIT_INPUTS=512"
+    else
+        echo "      -> Aplicando flags de compilação para CUDA..."
+        # Mantém a configuração original para a RTX 3050
+        LOCAL_CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} -DGGML_SCHED_MAX_SPLIT_INPUTS=512"
+    fi
+    # --- FIM DA MODIFICAÇÃO CIRÚRGICA ---
+
     # GGML_SCHED_MAX_SPLIT_INPUTS=512 resolve crashes em modelos MoE/DeepSeek com muitos experts
-    CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} -DGGML_SCHED_MAX_SPLIT_INPUTS=512" \
+    # Passamos a nossa variável LOCAL_CMAKE_ARGS dinamicamente
+    CMAKE_ARGS="$LOCAL_CMAKE_ARGS" \
     CFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=512" \
     CXXFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=512" \
         .venv/bin/pip wheel "$SUBMODULE_DIR" \
