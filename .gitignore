@@ -6,6 +6,7 @@ storage
 !storage/voices/*.json
 !storage/voices/*.wav
 !storage/models/*
+!july_engine/services/storage
 # storage/voices/uploaded
 # storage/voices/uploaded_voices.json
 # storage/temp
