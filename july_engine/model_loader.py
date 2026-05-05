@@ -78,4 +78,19 @@ class ModelLoader:
                 self.instances[key] = World(backend, model_tag)
             return self.instances[key]
 
+    def delete_instance(self, backend: str, model_tag: str, domain_type: str = None):
+        """Remove explicitamente uma instância do cache para forçar o recarregamento com novos metadados."""
+        with self.lock:
+            if domain_type:
+                keys = [f"{domain_type}_{backend}_{model_tag}"]
+            else:
+                # Se não especificado, remove todas as facetas do modelo (brain, eyes, etc)
+                prefixes = ["brain", "eyes", "mouth", "ears", "presence", "memory", "world"]
+                keys = [f"{p}_{backend}_{model_tag}" for p in prefixes]
+            
+            for key in keys:
+                if key in self.instances:
+                    logger.info(f"ModelLoader: Removendo instância {key} do cache para atualização.")
+                    del self.instances[key]
+
 model_loader = ModelLoader()

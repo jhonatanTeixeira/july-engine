@@ -129,20 +129,47 @@ async def request_id_middleware(request: Request, call_next):
     token_instances = acquired_instances_var.set({})
     
     try:
-        response = await call_next(request)
-        return response
-    finally:
-        # Liberação automática de qualquer instância que não foi liberada manualmente
-        # (ex: em caso de erro ou interrupção prematura)
-        acquired = acquired_instances_var.get()
-        if acquired:
-            for pool, inst in acquired.items():
-                try:
-                    # Usamos um método privado para forçar a liberação se necessário
-                    pool._force_release(inst)
-                except:
-                    pass
+        from fastapi.responses import StreamingResponse
         
+        # Função de limpeza que aceita um dicionário explícito
+        def cleanup_explicit(to_cleanup):
+            if to_cleanup:
+                for pool, inst in to_cleanup.items():
+                    try:
+                        pool._force_release(inst)
+                    except:
+                        pass
+        
+        try:
+            response = await call_next(request)
+            
+            # Captura as instâncias adquiridas ATÉ AGORA nesta request
+            current_acquired = acquired_instances_var.get().copy()
+            
+            if isinstance(response, StreamingResponse):
+                original_iterator = response.body_iterator
+                
+                async def wrapped_iterator():
+                    try:
+                        async for chunk in original_iterator:
+                            yield chunk
+                    finally:
+                        cleanup_explicit(current_acquired)
+                
+                response.body_iterator = wrapped_iterator()
+                return response
+                
+            # Para respostas síncronas
+            cleanup_explicit(current_acquired)
+            return response
+        finally:
+            # Se deu erro antes de 'current_acquired' ser definido ou antes da resposta
+            if 'current_acquired' not in locals():
+                cleanup_explicit(acquired_instances_var.get())
+            elif not isinstance(response, StreamingResponse):
+                # Já limpamos acima para sync, mas por segurança...
+                pass
+    finally:
         # Limpa o contexto
         request_id_var.reset(token_rid)
         acquired_instances_var.reset(token_instances)

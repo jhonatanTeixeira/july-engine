@@ -263,30 +263,33 @@ class Runner:
                 if self.context.is_loaded(self.task_type) and runner and model_changed:
                     await runner.unload()
 
-                elif not domain.is_loaded():
-                    required = await domain.get_required_vram(payload)
-
-                    while self.context.get_free_vram() < required:
-                        # Tenta descarregar o que já está parado
-                        unloaded = await self.unload_next(required)
-                        
-                        if not unloaded:
-                            # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo
-                            if hasattr(domain._strategy, "decrement_layers"):
-                                success = domain._strategy.decrement_layers()
-                                if not success:
-                                    # Se chegou em 0 camadas e ainda não cabe, esperamos ou falhamos
-                                    await self.wait_for_free_vram(required, timeout=10)
-                                    # Se após o wait ainda não cabe, damos erro definitivo
-                                    if self.context.get_free_vram() < required:
-                                        raise MemoryError(f"VRAM insuficiente para carregar {self.task_type} ({self.model}). Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
-                                
-                                # Atualiza o valor 'required' após o decremento
-                                required = await domain.get_required_vram(payload)
-                            else:
-                                # Se o modelo não suporta decremento, apenas espera
-                                await self.wait_for_free_vram(required, timeout=10)
+                # 1. Garante que temos VRAM suficiente para rodar, mesmo se já estiver carregado
+                # (Importante para modelos com offload dinâmico como Flux)
+                required = await domain.get_required_vram(payload)
+                
+                while self.context.get_free_vram() < required:
+                    # Tenta descarregar o que já está parado
+                    unloaded = await self.unload_next(required)
                     
+                    if not unloaded:
+                        # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo (se GGUF)
+                        if hasattr(domain, "decrement_layers"):
+                            success = domain.decrement_layers()
+                            if not success:
+                                # Se chegou em 0 camadas e ainda não cabe, esperamos
+                                await self.wait_for_free_vram(required, timeout=10)
+                                if self.context.get_free_vram() < required:
+                                    raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
+                            
+                            # Atualiza o valor 'required' após o decremento
+                            required = await domain.get_required_vram(payload)
+                        else:
+                            # Se o modelo não suporta decremento (ex: Flux), apenas espera por liberação externa
+                            await self.wait_for_free_vram(required, timeout=10)
+                            if self.context.get_free_vram() < required:
+                                raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
+
+                if not domain.is_loaded():
                     domain.load()
 
                 self.context.mark_busy(self.task_type, self)
@@ -385,6 +388,11 @@ class GpuOrchestrator:
                     logger.info(f"📦 [Orchestrator] Descarregando modelo {model_alias} da tarefa {runner.task_type} devido a atualização de config.")
                     try:
                         await runner.unload()
+                        
+                        # Limpa também o cache do ModelLoader para forçar recarga de metadados
+                        from ..model_loader import model_loader
+                        model_loader.delete_instance('gpu', model_alias)
+                        
                     except Exception as e:
                         logger.error(f"❌ [Orchestrator] Erro ao descarregar modelo {model_alias}: {e}")
             
