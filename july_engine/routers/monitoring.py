@@ -4,6 +4,7 @@ import logging
 import json
 from fastapi import APIRouter
 from typing import Dict, Any, List, Optional
+from ..resource_manager import resource_manager
 
 logger = logging.getLogger("JulyEngine.Routers.Monitoring")
 
@@ -13,37 +14,26 @@ def get_gpu_info():
     if os.environ.get("DISABLE_GPU", "false").lower() == "true":
         return None
     
+    if not resource_manager.has_gpu:
+        return []
+    
     try:
-        import pynvml
-        pynvml.nvmlInit()
-        device_count = pynvml.nvmlDeviceGetCount()
-        devices = []
-        for i in range(device_count):
-            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-            name = pynvml.nvmlDeviceGetName(handle)
-            memory = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            
-            # Try to get clocks
-            try:
-                graphics_clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_GRAPHICS)
-                mem_clock = pynvml.nvmlDeviceGetClockInfo(handle, pynvml.NVML_CLOCK_MEM)
-            except:
-                graphics_clock = None
-                mem_clock = None
-
-            devices.append({
-                "index": i,
-                "name": name if isinstance(name, str) else name.decode('utf-8'),
-                "vram_total_mb": memory.total / 1024 / 1024,
-                "vram_used_mb": memory.used / 1024 / 1024,
-                "vram_free_mb": memory.free / 1024 / 1024,
-                "graphics_clock_mhz": graphics_clock,
-                "memory_clock_mhz": mem_clock
-            })
-        pynvml.nvmlShutdown()
+        free_mib, used_mib, total_mib = resource_manager.get_vram_usage()
+        
+        # We maintain the list format for backward compatibility
+        devices = [{
+            "index": 0,
+            "name": resource_manager.gpu_name,
+            "vram_total_mb": total_mib,
+            "vram_used_mb": used_mib,
+            "vram_free_mb": free_mib,
+            "graphics_clock_mhz": None, # Clocks are not currently tracked by ResourceManager
+            "memory_clock_mhz": None
+        }]
+        
         return devices
     except Exception as e:
-        logger.warning(f"Failed to get GPU info: {e}")
+        logger.warning(f"Failed to get GPU info from ResourceManager: {e}")
         return []
 
 def get_cpu_info():

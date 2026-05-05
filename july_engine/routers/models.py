@@ -107,6 +107,7 @@ class DownloadRequest(BaseModel):
     offload_kqv: Optional[bool] = True
     kv_unified: Optional[bool] = True
     logits_all: Optional[bool] = False
+    vision_on_cpu: Optional[bool] = False
 
 class UpdateMetadataRequest(BaseModel):
     model_type: Optional[str] = None
@@ -125,6 +126,7 @@ class UpdateMetadataRequest(BaseModel):
     offload_kqv: Optional[bool] = None
     kv_unified: Optional[bool] = None
     logits_all: Optional[bool] = None
+    vision_on_cpu: Optional[bool] = None
     file_path: Optional[str] = None
     mmproj_path: Optional[str] = None
 
@@ -220,6 +222,7 @@ async def download_gguf(request: DownloadRequest):
         "offload_kqv": request.offload_kqv if request.offload_kqv is not None else True,
         "kv_unified": request.kv_unified if request.kv_unified is not None else True,
         "logits_all": request.logits_all if request.logits_all is not None else False,
+        "vision_on_cpu": request.vision_on_cpu if request.vision_on_cpu is not None else False,
         "file_path": None, # Pendente download
         "mmproj_path": None
     }

@@ -120,6 +120,7 @@ async def estimate_vram_ram(
     offload_kqv: bool = True,
     flash_attention: bool = True,
     logits_all: bool = False,
+    vision_on_cpu: bool = False,
     **kwargs
 ) -> Dict[str, Any]:
     
@@ -206,7 +207,7 @@ async def estimate_vram_ram(
     base_overhead_gb = 0.2 + unified_overhead_gb
     
     # 5. MMProj (Vision)
-    mmproj_vram_gb = meta.mmproj_size_gb # Full mmproj is usually offloaded
+    mmproj_vram_gb = 0 if vision_on_cpu else meta.mmproj_size_gb # Full mmproj is usually offloaded
     
     # 6. Logits
     vocab_size = int(meta.get("tokenizer.ggml.tokens.length", 32000))
@@ -222,7 +223,7 @@ async def estimate_vram_ram(
     # mas ajustando para offload_kqv.
     
     total_vram_gb = weights_vram_gb + kv_vram_gb + compute_buffer_gb + base_overhead_gb + mmproj_vram_gb + logits_vram_gb
-    total_ram_gb = (meta.file_size_gb - weights_vram_gb) + (kv_total_gb - kv_vram_gb)
+    total_ram_gb = (meta.file_size_gb - weights_vram_gb) + (kv_total_gb - kv_vram_gb) + (meta.mmproj_size_gb if vision_on_cpu else 0)
     
     # O calculador antigo não tinha total_ram_gb, mas apenas retornava total_vram_gb.
     # Se o usuário considera que a engine gasta 1.7GB sem offload_kqv e 2.67GB com offload_kqv + kv_unified,

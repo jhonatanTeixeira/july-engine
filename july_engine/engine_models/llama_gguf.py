@@ -239,6 +239,7 @@ class GGUF:
         self.offload_kqv = model.get("offload_kqv") if model.get("offload_kqv") is not None else True
         self.kv_unified = model.get("kv_unified") if model.get("kv_unified") is not None else True
         self.logits_all = model.get("logits_all") if model.get("logits_all") is not None else False
+        self.vision_on_cpu = model.get("vision_on_cpu", False)
 
     def max_layers(self):
         return self.model_metadata.block_count
@@ -282,7 +283,8 @@ class GGUF:
             offload_kqv=self.offload_kqv,
             flash_attention=self.meta.get('flash_attn', True),
             logits_all=self.logits_all,
-            kv_unified=self.kv_unified
+            kv_unified=self.kv_unified,
+            vision_on_cpu=self.vision_on_cpu
         )
         
         return estimate["total_vram_mb"]
@@ -336,8 +338,9 @@ class GGUF:
                     "offload_kqv": self.offload_kqv,
                     "kv_unified": self.kv_unified,
                     "logits_all": self.logits_all,
-                    "use_mmap": True,
-                    "verbose": False,
+                    "use_mmap": os.environ.get("USE_MMAP", "true").lower() == "true",
+                    "verbose": os.environ.get("LLM_VERBOSE", "false").lower() == "true",
+                    "n_batch": max(int(os.environ.get("LLM_N_BATCH", "512")), 2048)
                 }
 
                 # Flash Attention: metadata > env var > default True
@@ -348,6 +351,9 @@ class GGUF:
                 if flash_attn:
                     base_params["flash_attn"] = True
                     logger.info("GGUF: Flash Attention enabled")
+                else:
+                    base_params["flash_attn"] = False
+                    logger.info("GGUF: Flash Attention disabled")
 
                 # Use KV Cache Quantization from metadata (preferred) or env var
                 kv_quant = meta.get("kv_cache_quantization") or os.environ.get('KV_CACHE_QUANTIZATION')
@@ -401,35 +407,38 @@ class GGUF:
                         mmproj_path = hf_hub_download(mmproj_id, mmproj_filename)
 
                     v_handler = caps["vision_handler"]
+                    use_gpu_vision = not self.vision_on_cpu
+                    handler_kwargs = {"verbose": base_params.get("verbose", False), "use_gpu": use_gpu_vision}
+                    
                     try:
                         if v_handler == "gemma4":
                             from .chat_handlers import Gemma4Handler
-                            base_params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Gemma4Handler(verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Gemma4Handler(clip_model_path=mmproj_path, **handler_kwargs) if mmproj_path else Gemma4Handler(**handler_kwargs)
                         elif v_handler == "gemma3":
                             from llama_cpp.llama_chat_format import Gemma3ChatHandler
-                            base_params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Gemma3ChatHandler(verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Gemma3ChatHandler(clip_model_path=mmproj_path, **handler_kwargs) if mmproj_path else Gemma3ChatHandler(**handler_kwargs)
                         elif v_handler == "qwen3vl":
                             from llama_cpp.llama_chat_format import Qwen3VLChatHandler
-                            base_params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen3VLChatHandler(verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Qwen3VLChatHandler(clip_model_path=mmproj_path, **handler_kwargs) if mmproj_path else Qwen3VLChatHandler(**handler_kwargs)
                         elif v_handler == "qwen25vl":
                             from llama_cpp.llama_chat_format import Qwen25VLChatHandler
-                            base_params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen25VLChatHandler(verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Qwen25VLChatHandler(clip_model_path=mmproj_path, **handler_kwargs) if mmproj_path else Qwen25VLChatHandler(**handler_kwargs)
                         elif v_handler == "qwen35":
                             from .chat_handlers import Qwen35Handler
-                            base_params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False)) if mmproj_path else Qwen35Handler(verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Qwen35Handler(clip_model_path=mmproj_path, **handler_kwargs) if mmproj_path else Qwen35Handler(**handler_kwargs)
                         elif v_handler == "moondream":
                             from llama_cpp.llama_chat_format import MoondreamChatHandler
-                            base_params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = MoondreamChatHandler(clip_model_path=mmproj_path, **handler_kwargs)
                         elif v_handler == "llava-v1.6" or v_handler == "pixtral":
                             from llama_cpp.llama_chat_format import Llava16ChatHandler
-                            base_params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Llava16ChatHandler(clip_model_path=mmproj_path, **handler_kwargs)
                         elif v_handler == "llava":
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, **handler_kwargs)
                     except ImportError:
                         if mmproj_path:
                             from llama_cpp.llama_chat_format import Llava15ChatHandler
-                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, verbose=base_params.get("verbose", False))
+                            base_params["chat_handler"] = Llava15ChatHandler(clip_model_path=mmproj_path, **handler_kwargs)
 
                 logger.info(f"GGUF: Final base params for Llama instances: {base_params}")
 

@@ -50,15 +50,15 @@ if [ "$RECOMPILE" = "true" ] || [ -z "$EXISTING_WHEEL" ]; then
     else
         echo "      -> Aplicando flags de compilação para CUDA..."
         # Mantém a configuração original para a RTX 3050
-        LOCAL_CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} -DGGML_SCHED_MAX_SPLIT_INPUTS=512"
+        LOCAL_CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} -DGGML_SCHED_MAX_SPLIT_INPUTS=2048"
     fi
     # --- FIM DA MODIFICAÇÃO CIRÚRGICA ---
 
     # GGML_SCHED_MAX_SPLIT_INPUTS=512 resolve crashes em modelos MoE/DeepSeek com muitos experts
     # Passamos a nossa variável LOCAL_CMAKE_ARGS dinamicamente
     CMAKE_ARGS="$LOCAL_CMAKE_ARGS" \
-    CFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=512" \
-    CXXFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=512" \
+    CFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=2048" \
+    CXXFLAGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=2048" \
         .venv/bin/pip wheel "$SUBMODULE_DIR" \
         --no-deps \
         -w "$WHEELS_DIR"

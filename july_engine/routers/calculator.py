@@ -21,6 +21,7 @@ class ResourceCheckRequest(BaseModel):
     n_seq_max: Optional[int] = 1
     offload_kqv: Optional[bool] = True
     logits_all: Optional[bool] = False
+    vision_on_cpu: Optional[bool] = False
 
 @router.post("/check-resources")
 async def check_resources(req: ResourceCheckRequest):
@@ -41,5 +42,6 @@ async def check_resources(req: ResourceCheckRequest):
         n_seq_max=req.n_seq_max,
         offload_kqv=req.offload_kqv,
         flash_attention=req.flash_attn,
-        logits_all=req.logits_all
+        logits_all=req.logits_all,
+        vision_on_cpu=req.vision_on_cpu
     )
