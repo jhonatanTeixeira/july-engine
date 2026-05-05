@@ -37,6 +37,7 @@ class ResourceManager:
             
             name = pynvml.nvmlDeviceGetName(self._nvml_handle)
             self.gpu_name = name if isinstance(name, str) else name.decode('utf-8')
+            info = pynvml.nvmlDeviceGetMemoryInfo(self._nvml_handle)
             self.total_vram_mb = info.total / 1024**2
             self.has_gpu = True
             self.gpu_type = 'nvidia'

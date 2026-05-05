@@ -28,7 +28,7 @@ class FluxKleinNode:
             
         offload = os.environ.get("FLUX_OFFLOAD", None).lower()
         if offload == "sequential":
-            return 500
+            return 1000
         elif offload == "cpu":
             return 1500
         else:
