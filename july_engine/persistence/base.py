@@ -70,13 +70,19 @@ class PersistenceBackend(ABC):
     def insert_many(self, table_name: str, documents: List[Dict[str, Any]]) -> None:
         pass
 
-    def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:        
+    def get_model_by_settings(self, model_alias)  -> Optional[Dict[str, Any]]:
         text_presets = self.get_setting("TEXT_PRESETS") or []
         
         preset = next((p for p in text_presets if p.get("alias") == model_alias), None)
         
         if not preset:
+            setting = next((s for s in self.get_all_settings() if s.get('value', {}).get('model') == model_alias), None)
+
+            if setting:
+                return setting.get('value', {})
+
             preset = next((p for p in text_presets if p.get("is_default", False)), None)
+
             if not preset and text_presets:
                 preset = text_presets[0]
             if not preset:

@@ -61,43 +61,43 @@ class GpuContext:
                 self.model_locks[model_alias] = ReentrantModelLock()
             return self.model_locks[model_alias]
 
-    def get_runner(self, task_type: str) -> 'Runner':
-        return self.state.get(task_type, {}).get("runner")
+    def get_runner(self, slot_name: str) -> 'Runner':
+        return self.state.get(slot_name, {}).get("runner")
 
-    def release_task(self, task_type: str):
+    def release_task(self, slot_name: str):
         with self.state_lock:
-            if task_type in self.state:
-                self.state[task_type]['status'] = 'idle'
-                self.state[task_type]['usage_count'] = 0
-                self.state[task_type]['runner'] = None
+            if slot_name in self.state:
+                self.state[slot_name]['status'] = 'idle'
+                self.state[slot_name]['usage_count'] = 0
+                self.state[slot_name]['runner'] = None
 
-    def mark_busy(self, task_type: str, runner: 'Runner'):
+    def mark_busy(self, slot_name: str, runner: 'Runner'):
         with self.state_lock:
-            if task_type not in self.state:
-                self.state[task_type] = {'status': 'idle', 'usage_count': 0, 'runner': runner}
+            if slot_name not in self.state:
+                self.state[slot_name] = {'status': 'idle', 'usage_count': 0, 'runner': runner}
             
-            self.state[task_type]['status'] = 'busy'
-            self.state[task_type]['usage_count'] += 1
-            self.state[task_type]['runner'] = runner
+            self.state[slot_name]['status'] = 'busy'
+            self.state[slot_name]['usage_count'] += 1
+            self.state[slot_name]['runner'] = runner
 
-    async def mark_idle(self, task_type: str):
+    async def mark_idle(self, slot_name: str):
         async with self.condition:
             with self.state_lock:
-                if task_type in self.state:
-                    self.state[task_type]['usage_count'] -= 1
-                    if self.state[task_type]['usage_count'] <= 0:
-                        self.state[task_type]['usage_count'] = 0
-                        self.state[task_type]['status'] = 'idle'
+                if slot_name in self.state:
+                    self.state[slot_name]['usage_count'] -= 1
+                    if self.state[slot_name]['usage_count'] <= 0:
+                        self.state[slot_name]['usage_count'] = 0
+                        self.state[slot_name]['status'] = 'idle'
             self.condition.notify_all()
 
-    def is_truly_idle(self, task_type: str):
+    def is_truly_idle(self, slot_name: str):
         with self.state_lock:
-            data = self.state.get(task_type)
+            data = self.state.get(slot_name)
             return data and data['status'] == 'idle' and data['usage_count'] == 0
 
-    def is_loaded(self, task_type: str):
+    def is_loaded(self, slot_name: str):
         with self.state_lock:
-            data = self.state.get(task_type)
+            data = self.state.get(slot_name)
             return data is not None and data.get("runner") is not None
 
     def get_free_vram(self):
@@ -108,12 +108,15 @@ class GpuContext:
 
 class Runner:
     def __init__(self, task_type: str, model: dict, context: GpuContext):
-        from ..model_loader import model_loader # Import interno para evitar circularidade
+        from ..model_loader import model_loader
+
         self.task_type = task_type
         self.model = model
+        self.model_tag = model.get("alias") or model.get("model")
+        self.slot_name = f'{task_type}_{self.model_tag}'
         self.context = context
         self.model_loader = model_loader
-        self.is_running = True
+        self.is_running = False
         self.state_lock = threading.Lock()
         self.unload_priority = [
             'stt', 'tts', 'embeddings', 'rag_add', 'rag_batch_add', 
@@ -121,11 +124,7 @@ class Runner:
         ]
 
     def get_domain(self):
-        # Garante que passamos apenas o alias (string) para o loader, evitando erros de tipo no DB
-        if isinstance(self.model, dict):
-            model_tag = self.model.get("model_alias") or self.model.get("model")
-        else:
-            model_tag = self.model
+        model_tag = self.model_tag
 
         if self.task_type == "text_chat": 
             return self.model_loader.get_brain('gpu', model_tag)
@@ -188,10 +187,11 @@ class Runner:
 
     async def unload_next(self, required_vram: int):
         """Busca o próximo modelo idle na prioridade e descarrega."""
-        for task in self.unload_priority:
-            if self.context.is_loaded(task) and self.context.is_truly_idle(task):
-                logger.info(f"📦 [Orchestrator] Descarregando {task} para liberar espaço...")
-                runner = self.context.get_runner(task)
+
+        for slot_name in self.context.state.keys():
+            if self.context.is_loaded(slot_name) and self.context.is_truly_idle(slot_name):
+                logger.info(f"📦 [Orchestrator] Descarregando {slot_name} para liberar espaço...")
+                runner = self.context.get_runner(slot_name)
                 await runner.unload()
                 
                 if self.context.get_free_vram() >= required_vram:
@@ -201,22 +201,23 @@ class Runner:
 
     async def unload(self, timeout=60):
         elapsed_wait = 0
-        while not self.context.is_truly_idle(self.task_type) and elapsed_wait < timeout:
+
+        while not self.context.is_truly_idle(self.slot_name) and elapsed_wait < timeout:
             elapsed_wait += 1
             await asyncio.sleep(1)
 
         if elapsed_wait >= timeout:
-            logger.warning(f"⚠️ [Orchestrator] Timeout aguardando {self.task_type} ficar idle. Forçando descarregamento.")
+            logger.warning(f"⚠️ [Orchestrator] Timeout aguardando {self.slot_name} ficar idle. Forçando descarregamento.")
             # Se der timeout, tentamos descarregar mesmo assim ou falhamos
             # No caso de erro fatal, é melhor subir a exceção
-            raise Exception(f"Timeout na GPU: {self.task_type} não está idle após {timeout}s.")
+            raise Exception(f"Timeout na GPU: {self.slot_name} não está idle após {timeout}s.")
 
         # Garantir exclusividade no unload real
         with self.state_lock:
             self.get_domain().unload()
             self.context.garbage_collection()
-            self.context.release_task(self.task_type)
-            logger.info(f"✅ [Orchestrator] {self.task_type} descarregado com sucesso.")
+            self.context.release_task(self.slot_name)
+            logger.info(f"✅ [Orchestrator] {self.slot_name} descarregado com sucesso.")
 
     async def wait_for_free_vram(self, required_vram: int, timeout: int = 60):
         start_time = time.time()
@@ -239,10 +240,7 @@ class Runner:
                     raise TimeoutError("Timeout na fila da GPU.")
 
     async def run(self, payload: dict):
-        if isinstance(self.model, dict):
-            model_alias = self.model.get("model_alias") or self.model.get("model")
-        else:
-            model_alias = self.model
+        model_alias = self.model_tag
             
         model_lock = self.context.get_model_lock(model_alias)
 
@@ -251,21 +249,10 @@ class Runner:
                 self.context.garbage_collection()
 
                 domain = self.get_domain()
-                runner = self.context.get_runner(self.task_type)
+                required = 0
 
-                # Comparação robusta de modelos (por alias ou ID)
-                model_changed = False
-                if runner:
-                    new_id = self.model.get("model_alias") or self.model.get("model") if isinstance(self.model, dict) else self.model
-                    current_id = runner.model.get("model_alias") or runner.model.get("model") if isinstance(runner.model, dict) else runner.model
-                    model_changed = current_id != new_id
-
-                if self.context.is_loaded(self.task_type) and runner and model_changed:
-                    await runner.unload()
-
-                # 1. Garante que temos VRAM suficiente para rodar, mesmo se já estiver carregado
-                # (Importante para modelos com offload dinâmico como Flux)
-                required = await domain.get_required_vram(payload)
+                if not self.context.is_loaded(self.slot_name):
+                    required = await domain.get_required_vram(payload)
                 
                 while self.context.get_free_vram() < required:
                     # Tenta descarregar o que já está parado
@@ -292,30 +279,32 @@ class Runner:
                 if not domain.is_loaded():
                     domain.load()
 
-                self.context.mark_busy(self.task_type, self)
+                self.context.mark_busy(self.slot_name, self)
         
         result = None
         is_stream = False
+
         try:
             result = await self.run_task(payload)
+
             if hasattr(result, '__aiter__'):
                 is_stream = True
                 
-                async def generator_wrapper(gen, context, task_type):
+                async def generator_wrapper(gen, context, slot_name):
                     try:
                         async for chunk in gen:
                             yield chunk
                     finally:
-                        await context.mark_idle(task_type)
+                        await context.mark_idle(slot_name)
                         context.garbage_collection()
                 
-                return generator_wrapper(result, self.context, self.task_type)
+                return generator_wrapper(result, self.context, self.slot_name)
             
             return result
         finally:
             if not is_stream:
                 # Libera o contador mas MANTÉM o modelo carregado ("quente")
-                await self.context.mark_idle(self.task_type)
+                await self.context.mark_idle(self.slot_name)
                 self.context.garbage_collection()
 
 
@@ -342,27 +331,15 @@ class GpuOrchestrator:
         from ..services.models_service import model_service
 
         model_req = payload.get("model")
-        if isinstance(model_req, str):
-            # Tenta primeiro como modelo GGUF (banco de dados)
-            model = model_service.get(model_req)
-            
-            # Se não for GGUF e for tarefa de texto, tenta resolver via Presets/Settings
-            if not model and task_type in ["text_chat", "vision_chat"]:
-                model = model_service.resolve_by_settings(model_req)
-        else:
-            model = model_req
 
-        if not model:
-            model = model_service.resolve_by_task_type(task_type)
+        model = model_service.resolve_by_settings(model_req)
+        slot_name = model.get('alias') or model.get('model')
 
-        m_id = model.get('model_alias') or model.get('model') if isinstance(model, dict) else model
-        slot = f"{task_type}_{m_id}"
-
-        if slot not in self.slots:
-            self.slots[slot] = Runner(task_type, model, self.context)
+        if slot_name not in self.slots:
+            self.slots[slot_name] = Runner(task_type, model, self.context)
 
         try:
-            result = await self.slots[slot].run(payload)
+            result = await self.slots[slot_name].run(payload)
             return result
         except Exception as e:
             logger.error(f"❌ [GpuOrchestrator] Erro ao processar {task_type}: {str(e)}")
@@ -375,29 +352,20 @@ class GpuOrchestrator:
         """
         to_unload = []
         # Usamos list() para evitar erro de mudança de tamanho do dicionário durante a iteração
-        for slot, runner in list(self.slots.items()):
-            current_alias = runner.model.get("model_alias") or runner.model.get("model") if isinstance(runner.model, dict) else runner.model
-            if current_alias == model_alias:
-                to_unload.append((slot, runner))
+        for slot_name, runner in list(self.slots.items()):
+            if runner.model_tag == model_alias:
+                to_unload.append((slot_name, runner))
         
-        for slot, runner in to_unload:
-            if self.context.is_loaded(runner.task_type):
-                ctx_runner = self.context.get_runner(runner.task_type)
-                # Verifica se o runner no contexto é de fato ESTE runner
-                if ctx_runner == runner:
-                    logger.info(f"📦 [Orchestrator] Descarregando modelo {model_alias} da tarefa {runner.task_type} devido a atualização de config.")
-                    try:
-                        await runner.unload()
-                        
-                        # Limpa também o cache do ModelLoader para forçar recarga de metadados
-                        from ..model_loader import model_loader
-                        model_loader.delete_instance('gpu', model_alias)
-                        
-                    except Exception as e:
-                        logger.error(f"❌ [Orchestrator] Erro ao descarregar modelo {model_alias}: {e}")
-            
-            # Remove do cache de slots para que a próxima chamada crie um novo Runner com a config fresca
-            if slot in self.slots:
-                del self.slots[slot]
+        for slot_name, runner in to_unload:
+            if self.context.is_loaded(slot_name):
+                while not self.context.is_truly_idle(slot_name):
+                    await asyncio.sleep(1)
+
+
+                self.slots[slot_name].unload()
+                del self.slots[slot_name]
+                
+                from ..model_loader import model_loader
+                model_loader.delete_instance('gpu', model_alias)
 
 gpu_orchestrator = GpuOrchestrator()

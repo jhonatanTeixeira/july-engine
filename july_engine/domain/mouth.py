@@ -73,6 +73,7 @@ class Mouth:
         from ..engine_models.llm_api import LLMApi
         from ..engine_models.kokoro_tts import KokoroTTS
         from ..engine_models.qwen3_tts import FasterQwen3TTS
+        from ..engine_models.chatterbox_tts import ChatterboxTTS
         
         # 1. Extração e Limpeza de Texto
         raw_text = payload.get("input", payload.get("text", ""))
@@ -106,10 +107,27 @@ class Mouth:
                 return await self._strategy.run(
                     clean_text, voice_id, language, stream=True, semitones=semitones
                 )
-            
-            # (Adicione aqui o Chatterbox se for usar o generator dele)
-            # elif isinstance(self._strategy, ChatterboxTTS):
-            #     return await self._strategy.run(clean_text, voice_id, language, stream=True, ...)
+            elif isinstance(self._strategy, ChatterboxTTS):
+                return await self._strategy.run(
+                    clean_text, voice_id, language, stream=True, semitones=semitones
+                )
+            elif isinstance(self._strategy, FasterQwen3TTS):
+                generator = self._strategy.run(
+                    clean_text, voice_id, language, temperature=temperature, stream=True
+                )
+                async def async_qwen_streamer():
+                    import asyncio
+                    def get_next():
+                        try:
+                            return next(generator)
+                        except StopIteration:
+                            return None
+                    while True:
+                        chunk = await asyncio.to_thread(get_next)
+                        if chunk is None:
+                            break
+                        yield chunk
+                return async_qwen_streamer()
 
             # --- Rota B: Fallback Chunking (Para XTTS2, Piper e APIs engessadas) ---
             # Aqui mantemos a sua lógica brilhante de poupar RAM cortando a frase!
@@ -127,8 +145,6 @@ class Mouth:
                         audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
                     elif isinstance(self._strategy, Piper):
                         audio_chunk = self._strategy.run(sentence, voice_id)
-                    elif isinstance(self._strategy, FasterQwen3TTS):
-                        audio_chunk = self._strategy.run(sentence, voice_id, language, temperature=temperature)
 
                     if audio_chunk:
                         if inspect.iscoroutine(audio_chunk):
