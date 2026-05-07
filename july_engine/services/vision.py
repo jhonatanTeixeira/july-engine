@@ -217,3 +217,131 @@ class FaceService:
                     })
             results.append(faces_found)
         return results
+
+
+class CharacterExtractor:
+    def __init__(self, model_path='yolo11s-seg.pt', base_model_path='yolo11s.pt'):
+        from ultralytics import YOLO
+        try:
+            self.model = YOLO(model_path)
+            self.base_model = YOLO(base_model_path)
+        except Exception as e:
+            logger.error(f"Falha ao carregar modelos YOLO: {e}")
+            self.model = None
+            self.base_model = None
+
+    def extract_people(self, image: Image.Image) -> list[dict]:
+        """Detecta pessoas reais em uma imagem usando o modelo COCO padrão."""
+        if self.base_model is None:
+            return []
+            
+        arr = np.array(image.convert("RGB"))
+        results = self.base_model(arr, classes=[0], conf=0.3, verbose=False) # 0 = person
+        
+        crops = []
+        for result in results:
+            if result.boxes is None: continue
+            for box in result.boxes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                conf = float(box.conf[0])
+                crop_img = image.crop((x1, y1, x2, y2))
+                crops.append({
+                    "crop": crop_img,
+                    "confidence": conf,
+                    "bbox": [x1, y1, x2, y2],
+                    "method": "yolo_people"
+                })
+        return crops
+
+    def extract_characters(self, image: Image.Image) -> list[dict]:
+        """
+        Extrai personagens/sujeitos principais de ilustrações.
+        Estratégia:
+        1. Tenta detecção YOLO (funciona para pessoas reais)
+        2. Fallback: segmentação por saliência (GrabCut) para ilustrações
+        """
+        if self.model is None:
+            return self._grabcut_fallback(image)
+
+        arr = np.array(image.convert("RGB"))
+        results = self.model(arr, conf=0.25, verbose=False)
+        
+        crops = []
+        person_boxes = []
+        
+        for result in results:
+            if result.boxes is None: continue
+            for i, box in enumerate(result.boxes):
+                cls = int(box.cls[0])
+                conf = float(box.conf[0])
+                
+                if cls == 0:  # person detectada
+                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                    person_boxes.append((x1, y1, x2, y2, conf))
+                    
+                    # Se tem máscara de segmentação, usa ela
+                    if hasattr(result, 'masks') and result.masks is not None:
+                        mask = result.masks.data[i].cpu().numpy()
+                        mask = cv2.resize(mask, (arr.shape[1], arr.shape[0]))
+                        mask_uint8 = (mask * 255).astype(np.uint8)
+                        
+                        # Recortar com fundo transparente
+                        rgba = cv2.cvtColor(arr, cv2.COLOR_RGB2RGBA)
+                        rgba[:, :, 3] = mask_uint8
+                        crop_img = Image.fromarray(rgba).crop((x1, y1, x2, y2))
+                    else:
+                        crop_img = image.crop((x1, y1, x2, y2))
+                    
+                    crops.append({
+                        "crop": crop_img,
+                        "confidence": conf,
+                        "bbox": [x1, y1, x2, y2],
+                        "method": "yolo",
+                    })
+        
+        if not person_boxes:
+            crops += self._grabcut_fallback(image)
+            
+        return crops
+
+    def _grabcut_fallback(self, image: Image.Image) -> list[dict]:
+        """GrabCut centrado: assume que o personagem principal está no centro da imagem."""
+        arr = np.array(image.convert("RGB"))
+        h, w = arr.shape[:2]
+        
+        margin_x = int(w * 0.20)
+        margin_y = int(h * 0.10)
+        rect = (margin_x, margin_y, w - 2 * margin_x, h - 2 * margin_y)
+        
+        mask = np.zeros((h, w), np.uint8)
+        bgd_model = np.zeros((1, 65), np.float64)
+        fgd_model = np.zeros((1, 65), np.float64)
+        
+        arr_bgr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+        try:
+            cv2.grabCut(arr_bgr, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+        except Exception as e:
+            logger.error(f"Erro no GrabCut: {e}")
+            return []
+        
+        fg_mask = np.where((mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+        
+        contours, _ = cv2.findContours(fg_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return []
+        
+        largest = max(contours, key=cv2.contourArea)
+        x, y, bw, bh = cv2.boundingRect(largest)
+        
+        rgba = cv2.cvtColor(arr, cv2.COLOR_RGB2RGBA)
+        rgba[:, :, 3] = fg_mask
+        crop_img = Image.fromarray(rgba).crop((x, y, x + bw, y + bh))
+        
+        return [{
+            "crop": crop_img,
+            "confidence": 0.0,
+            "bbox": [x, y, x + bw, y + bh],
+            "method": "grabcut_fallback",
+        }]
+
+character_extractor = CharacterExtractor()

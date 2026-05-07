@@ -379,3 +379,24 @@ async def smart_search_rag(
         logger.error(f"Error in smart_search_rag: {e}", exc_info=True)
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@router.post("/utils/extract-pdf")
+async def extract_pdf_route(
+    file: UploadFile = File(...)
+):
+    """Extrai texto e ilustração de cada página de um PDF e transmite via SSE/NDJSON."""
+    from july_engine.services.pdf_extractor import extract_pdf
+    import dataclasses
+    import json
+    from fastapi.responses import StreamingResponse
+
+    async def sse_generator():
+        try:
+            pdf_bytes = await file.read()
+            # yield events as NDJSON
+            for event in extract_pdf(pdf_bytes):
+                yield f"{json.dumps(event)}\n"
+        except Exception as e:
+            logger.error(f"Error extracting PDF: {e}", exc_info=True)
+            yield f"{json.dumps({'type': 'error', 'message': str(e)})}\n"
+
+    return StreamingResponse(sse_generator(), media_type="application/x-ndjson")

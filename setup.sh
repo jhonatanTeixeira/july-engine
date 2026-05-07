@@ -3,6 +3,11 @@
 # Exit on error
 set -e
 
+if [ "$SETUP_UBUNTU" = "true" ]; then
+    echo "Instalando dependências de OCR do Tesseract..."
+    sudo apt install -y tesseract-ocr tesseract-ocr-por
+fi
+
 # Verifica qual ambiente estamos configurando para exibir a mensagem correta
 echo "-------------------------------------------------------"
 if [ "$WITH_VULKAN" = "true" ]; then

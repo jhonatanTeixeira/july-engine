@@ -76,7 +76,7 @@ class PersistenceBackend(ABC):
         preset = next((p for p in text_presets if p.get("alias") == model_alias), None)
         
         if not preset:
-            setting = next((s for s in self.get_all_settings() if s.get('value', {}).get('model') == model_alias), None)
+            setting = next((s for s in self.get_all_settings() if s.get('key') != 'TEXT_PRESETS' and s.get('value', {}).get('model') == model_alias), None)
 
             if setting:
                 return setting.get('value', {})
