@@ -17,8 +17,8 @@ else
 fi
 echo "-------------------------------------------------------"
 
-WHEELS_DIR="./vendor/llama-cpp-python/dist"
-SUBMODULE_DIR="./vendor/llama-cpp-python"
+WHEELS_DIR="../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist"
+SUBMODULE_DIR="../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python"
 # Define CUDA_ARCH com o valor da variável de ambiente, 
 # ou usa "86" (RTX 3050) como padrão se estiver vazia.
 CUDA_ARCH="${CUDA_ARCH:-86}"
