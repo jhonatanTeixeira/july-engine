@@ -134,7 +134,7 @@ class Runner:
             return self.model_loader.get_mouth('gpu', model_tag)
         if self.task_type == "stt": 
             return self.model_loader.get_ears('gpu', model_tag)
-        if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
+        if self.task_type in ["pix2pix", "image_generation", "image_resize", "image_remove_background"]:
             return self.model_loader.get_presence('gpu', model_tag)
 
         return self.model_loader.get_memory('gpu', model_tag)
@@ -179,6 +179,8 @@ class Runner:
             result = domain.edit(payload)
         elif task_type == "image_resize": 
             result = domain.resize(payload)
+        elif task_type == "image_remove_background":
+            result = await domain.remove_background(payload)
 
         if inspect.iscoroutine(result):
             result = await result

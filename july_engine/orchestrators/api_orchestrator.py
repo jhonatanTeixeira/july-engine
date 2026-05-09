@@ -75,6 +75,9 @@ class ApiOrchestrator:
             elif task_type == "image_resize":
                 presence = model_loader.get_presence(backend, model_tag)
                 return await presence.resize(payload)
+            elif task_type == "image_remove_background":
+                presence = model_loader.get_presence(backend, model_tag)
+                return await presence.remove_background(payload)
             elif task_type == "search_web":
                 world = model_loader.get_world(backend, model_tag)
                 return await world.search_web(payload)

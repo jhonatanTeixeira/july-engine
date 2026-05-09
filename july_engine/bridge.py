@@ -361,14 +361,24 @@ class Bridge:
     async def process_image_resize(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
         start_time = time.time()
         payload['headers'] = headers
-        
+
         result = await inference_helper.process("image_resize", payload)
-        
+
         gen_time = time.time() - start_time
         interaction_id = self._extract_interaction_id(headers)
         event_manager.emit("image", generation_time=gen_time, interaction_id=interaction_id)
         return result
 
+    async def process_image_remove_background(self, payload: Dict[str, Any], headers: Dict[str, str]) -> str:
+        start_time = time.time()
+        payload['headers'] = headers
+
+        result = await inference_helper.process("image_remove_background", payload)
+
+        gen_time = time.time() - start_time
+        interaction_id = self._extract_interaction_id(headers)
+        event_manager.emit("image", generation_time=gen_time, interaction_id=interaction_id)
+        return result
     async def process_image_generation(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         start_time = time.time()
         payload['headers'] = headers

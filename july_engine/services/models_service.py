@@ -31,6 +31,7 @@ class ModelsService:
             "pix2pix": "IMAGE_EDIT",
             "image_resize": "RESIZE",
             "image_generation": "IMAGE_CREATE",
+            "image_remove_background": "VISION",
             "search_web": "WEB_SEARCH",
             "search_code": "REPOSITORY_SEARCH",
             # RAG / Memory Tasks

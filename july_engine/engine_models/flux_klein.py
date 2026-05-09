@@ -137,7 +137,7 @@ class FluxKleinNode:
 
         try:
             if input_image_data:
-                logger.info(f"FluxKleinNode: Modo EDIÇÃO (Img2Img) ativado. (Strength padrão do pipeline)")
+                logger.info(f"FluxKleinNode: Modo EDIÇÃO (Img2Img) ativado. Target: {width}x{height}")
                 
                 if isinstance(input_image_data, str):
                     if "base64," in input_image_data:
@@ -146,13 +146,24 @@ class FluxKleinNode:
                     init_image = Image.open(BytesIO(image_bytes)).convert("RGB")
                 else:
                     init_image = input_image_data
+                
+                logger.info(f"FluxKleinNode: Original init_image size: {init_image.width}x{init_image.height}")
                     
-                init_image = init_image.resize((width, height), Image.LANCZOS)
+                # Flux requires multiples of 8 or 16 for stability
+                width = (width // 8) * 8
+                height = (height // 8) * 8
+                
+                if init_image.width != width or init_image.height != height:
+                    logger.info(f"FluxKleinNode: Resizing init_image to match target {width}x{height}")
+                    init_image = init_image.resize((width, height), Image.LANCZOS)
                 
                 kwargs_infer["image"] = init_image
+                kwargs_infer["width"] = width
+                kwargs_infer["height"] = height
                 
                 # Executa o pipeline Img2Img Clonado
                 result_image = self.model_i2i(**kwargs_infer).images[0]
+                logger.info(f"FluxKleinNode: Result size: {result_image.width}x{result_image.height}")
             else:
                 logger.info(f"FluxKleinNode: Modo GERAÇÃO (Text2Img) ativado. Tamanho: {width}x{height}")
                 kwargs_infer["width"] = width

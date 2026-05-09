@@ -197,6 +197,27 @@ async def describe_images(
     return JSONResponse(content={"descriptions": descriptions})
 
 
+@router.post("/vision/images/remove-background")
+async def remove_background(
+    http_request: Request,
+    file: UploadFile = File(...),
+    model: Optional[str] = Form(None)
+):
+    headers = dict(http_request.headers)
+    
+    bytes_data = await file.read()
+    image_b64 = base64.b64encode(bytes_data).decode('utf-8')
+        
+    payload = {
+        "image": image_b64,
+        "model": model
+    }
+    
+    result = await bridge.process_image_remove_background(payload, headers)
+    
+    return JSONResponse(content={"image": result})
+
+
 @router.post("/rag")
 async def add_rag(
     http_request: Request,

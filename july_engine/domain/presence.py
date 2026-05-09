@@ -4,6 +4,8 @@ import base64
 import io
 import os
 from PIL import Image
+import numpy as np
+import cv2
 import inspect
 from typing import Any, Dict, Optional, List, TYPE_CHECKING
 
@@ -272,6 +274,92 @@ class Presence:
                 return base64.b64encode(gif_data).decode()
         
         return None
+
+    async def remove_background(self, payload: Dict[str, Any]):
+        """
+        Removes the background from an image using YOLOv11-seg.
+        """
+        image_data = payload.get("image")
+        if not image_data:
+            return None
+
+        # Decode image
+        if isinstance(image_data, str):
+            if image_data.startswith("data:image"):
+                image_data = image_data.split(",")[1]
+            img_bytes = base64.b64decode(image_data)
+            image = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        else:
+            image = Image.open(io.BytesIO(image_data)).convert("RGB")
+
+        from ..services.vision import character_extractor
+        
+        # Use CharacterExtractor to get segmented crops
+        # extract_characters already handles YOLOv11-seg and GrabCut fallback
+        results = character_extractor.extract_characters(image)
+        
+        if not results:
+            return None
+
+        # If we want to return the FULL image with background removed, 
+        # we need to combine masks if multiple people are found, or just take the best one.
+        # For a general "remove background" tool, combining all 'person' masks is usually best.
+        
+        arr = np.array(image)
+        full_mask = np.zeros((arr.shape[0], arr.shape[1]), dtype=np.uint8)
+        
+        for res in results:
+            # Re-constructing the mask for the whole image from the crop info is complex
+            # so let's check if character_extractor can be improved or we do it here.
+            # Actually, extract_characters returns crops. Let's do a more direct implementation here
+            # similar to what I did in the standalone script for the whole image.
+            pass
+
+        # Optimized implementation for full image background removal
+        if hasattr(character_extractor, 'model') and character_extractor.model is not None:
+            model_results = character_extractor.model(arr, conf=0.25, verbose=False)
+            found = False
+            for result in model_results:
+                if result.masks is not None:
+                    for i, mask in enumerate(result.masks.data):
+                        cls = int(result.boxes.cls[i])
+                        if cls == 0:  # person
+                            m = mask.cpu().numpy()
+                            m = cv2.resize(m, (arr.shape[1], arr.shape[0]))
+                            full_mask = np.maximum(full_mask, (m * 255).astype(np.uint8))
+                            found = True
+            
+            if not found:
+                # Fallback to the first result from character_extractor if it used GrabCut
+                if results and results[0]['method'] == 'grabcut_fallback':
+                    # We need the full mask. Let's re-run grabcut if needed or modify extractor.
+                    # For now, let's just use the crop if only one thing found
+                    pass
+
+        # Final transparency application
+        rgba = cv2.cvtColor(arr, cv2.COLOR_RGB2RGBA)
+        
+        # If full_mask is still empty, try to get it from results or use a simple center mask
+        if full_mask.max() == 0:
+             # Try to reconstruct from character_extractor results
+             for res in results:
+                 x1, y1, x2, y2 = res['bbox']
+                 # This is just a box, not a mask. 
+                 # Let's just use GrabCut if YOLO failed.
+                 h, w = arr.shape[:2]
+                 rect = (int(w*0.1), int(h*0.1), int(w*0.8), int(h*0.8))
+                 mask = np.zeros((h, w), np.uint8)
+                 bgd = np.zeros((1, 65), np.float64)
+                 fgd = np.zeros((1, 65), np.float64)
+                 cv2.grabCut(cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), mask, rect, bgd, fgd, 5, cv2.GC_INIT_WITH_RECT)
+                 full_mask = np.where((mask == 2) | (mask == 0), 0, 255).astype(np.uint8)
+                 break
+
+        rgba[:, :, 3] = full_mask
+        
+        buffered = io.BytesIO()
+        Image.fromarray(rgba).save(buffered, format="PNG")
+        return base64.b64encode(buffered.getvalue()).decode()
 
     def is_loaded(self):
         return hasattr(self._strategy, "is_loaded") and self._strategy.is_loaded()

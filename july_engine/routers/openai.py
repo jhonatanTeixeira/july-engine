@@ -186,6 +186,8 @@ async def create_image_edit(
     image: UploadFile = File(...),
     prompt: str = Form(...),
     model: Optional[str] = Form(None),
+    size: Optional[str] = Form(None),
+    n: Optional[int] = Form(1),
 ):
     headers = dict(http_request.headers)
     image_bytes = await image.read()
@@ -193,7 +195,9 @@ async def create_image_edit(
     payload = {
         "image": image_data,
         "prompt": prompt,
-        "model": model
+        "model": model,
+        "size": size,
+        "n": n
     }
     return await bridge.process_image_edit(payload, headers)
 
