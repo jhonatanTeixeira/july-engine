@@ -121,8 +121,8 @@ class CpuOrchestrator:
                 presence = model_loader.get_presence(backend, model_tag)
                 return asyncio.run(presence.resize(payload))
             elif task_type == "image_remove_background":
-                presence = model_loader.get_presence(backend, model_tag)
-                return asyncio.run(presence.remove_background(payload))
+                eyes = model_loader.get_presence(backend, model_tag)
+                return asyncio.run(eyes.remove_background(payload))
             else:
                 raise ValueError(f"Unknown CPU task type: {task_type}")
         except Exception as e:

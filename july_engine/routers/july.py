@@ -31,12 +31,49 @@ class SmartSearchRequest(BaseModel):
     top_k: int = 5
     max_split_questions: int = 3
     collection: str = "july_memory"
+    filter: Optional[Dict[str, Any]] = None
     structured_response: Optional[bool] = False
     stream_response: Optional[bool] = False
 
 
 class SmartSearchResponse(BaseModel):
     results: List[Dict[str, Any]]
+
+
+class RagAddRequest(BaseModel):
+    text: str
+    collection: str = "july_memory"
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RagDocument(BaseModel):
+    text: str
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RagAddBatchRequest(BaseModel):
+    documents: List[RagDocument]
+    collection: str = "july_memory"
+
+
+class RagSearchRequest(BaseModel):
+    query: str
+    collection: str = "july_memory"
+    top_k: int = 3
+    filter: Optional[Dict[str, Any]] = None
+
+
+class RagAddVectorRequest(BaseModel):
+    vector: List[float]
+    collection: str = "july_memory"
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class RagUpdateRequest(BaseModel):
+    id: str
+    vector: List[float]
+    collection: str = "july_memory"
+    metadata: Optional[Dict[str, Any]] = None
 
 
 async def save_upload_stream(upload_file: UploadFile, dest_folder: str = "storage/temp") -> str:
@@ -221,16 +258,12 @@ async def remove_background(
 @router.post("/rag")
 async def add_rag(
     http_request: Request,
-    payload: dict
+    payload: RagAddRequest
 ):
-    """Adiciona um texto/descrição ao banco vetorial da Engine."""
+    """Adiciona um texto/descrição ao banco vetorial da Engine com metadados."""
     headers = dict(http_request.headers)
-
-    if not payload.get("text"):
-        return JSONResponse(status_code=400, content={"error": "O campo 'text' é obrigatório no payload."})
-
     try:
-        result = await bridge.process_rag_add(payload, headers)
+        result = await bridge.process_rag_add(payload.model_dump(), headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -239,37 +272,26 @@ async def add_rag(
 @router.post("/rag/batch")
 async def add_rag_batch(
     http_request: Request,
-    payload: dict
+    payload: RagAddBatchRequest
 ):
-    """Insere múltiplos documentos no RAG em uma única chamada."""
+    """Insere múltiplos documentos no RAG em uma única chamada com metadados."""
     headers = dict(http_request.headers)
-
-    if not payload.get("documents"):
-        return JSONResponse(status_code=400, content={"error": "O campo 'documents' é obrigatório e não pode estar vazio."})
-
     try:
-        result = await bridge.process_rag_batch_add(payload, headers)
+        result = await bridge.process_rag_batch_add(payload.model_dump(), headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@router.get("/rag")
+@router.post("/rag/search")
 async def search_rag(
     http_request: Request,
-    query: Optional[str] = None,
-    collection: str = "july_memory",
-    top_k: int = 3
+    payload: RagSearchRequest
 ):
-    """Busca avançada de contexto via Texto que retorna IDs, Distâncias e Metadados."""
+    """Busca avançada de contexto via Texto com suporte a filtros de metadados."""
     headers = dict(http_request.headers)
-
-    if not query:
-        return JSONResponse(status_code=400, content={"error": "O parâmetro 'query' via query string é obrigatório."})
-
     try:
-        payload = {"query": query, "collection": collection, "top_k": top_k}
-        result = await bridge.process_rag_search(payload, headers)
+        result = await bridge.process_rag_search(payload.model_dump(), headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -278,16 +300,12 @@ async def search_rag(
 @router.post("/rag/vector")
 async def add_rag_vector(
     http_request: Request,
-    payload: dict
+    payload: RagAddVectorRequest
 ):
-    """Adiciona um vetor matemático bruto (ex: Tracking de Rostos) com metadados."""
+    """Adiciona um vetor matemático bruto com metadados."""
     headers = dict(http_request.headers)
-    
-    if not payload.get("vector"):
-         return JSONResponse(status_code=400, content={"error": "O campo 'vector' é obrigatório."})
-         
     try:
-        result = await bridge.process_rag_vector_add(payload, headers)
+        result = await bridge.process_rag_vector_add(payload.model_dump(), headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -296,16 +314,12 @@ async def add_rag_vector(
 @router.put("/rag/update")
 async def update_rag_embedding(
     http_request: Request,
-    payload: dict
+    payload: RagUpdateRequest
 ):
-    """Substitui um Vetor Específico (usado para Tracking de Rosto)"""
+    """Substitui um Vetor Específico e seus metadados."""
     headers = dict(http_request.headers)
-    
-    if not payload.get("id") or not payload.get("vector"):
-         return JSONResponse(status_code=400, content={"error": "Forneça 'id' e 'vector'."})
-         
     try:
-        result = await bridge.process_rag_update(payload, headers)
+        result = await bridge.process_rag_update(payload.model_dump(), headers)
         return JSONResponse(content=result)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -317,7 +331,7 @@ async def delete_rag_single(
     request: Request,
     collection: str = "july_memory"
 ):
-    """Deleta um único registro do RAG via URL padrão REST."""
+    """Deleta um único registro do RAG."""
     headers = dict(request.headers)
     try:
         payload = {"ids": [item_id], "collection": collection}

@@ -588,7 +588,7 @@ class Bridge:
         return result
 
     async def process_rag_search(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-        """Busca contexto no RAG orquestrado."""
+        """Busca contexto no RAG orquestrado com suporte a filtros de metadados."""
         payload['headers'] = headers
         result = await inference_helper.process("rag_search", payload)
         normalized = self._normalize_object(result)
@@ -602,7 +602,7 @@ class Bridge:
 
 
     async def process_rag_update(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-        """Atualiza a coordenada geométrica de um vetor orquestrado."""
+        """Atualiza a coordenada geométrica e metadados de um vetor orquestrado."""
         payload['headers'] = headers
         success = await inference_helper.process("rag_update", payload)
         return {"success": success}
@@ -614,7 +614,7 @@ class Bridge:
         return {"deleted_count": count}
 
     async def process_rag_list(self, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-        """Lista metadados de uma coleção orquestrada."""
+        """Lista metadados de uma coleção orquestrada com suporte a filtros."""
         payload['headers'] = headers
         results = await inference_helper.process("rag_list", payload)
         return {"results": results}

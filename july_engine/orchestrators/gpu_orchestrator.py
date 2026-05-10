@@ -134,7 +134,9 @@ class Runner:
             return self.model_loader.get_mouth('gpu', model_tag)
         if self.task_type == "stt": 
             return self.model_loader.get_ears('gpu', model_tag)
-        if self.task_type in ["pix2pix", "image_generation", "image_resize", "image_remove_background"]:
+        if self.task_type == "image_remove_background":
+            return self.model_loader.get_presence('gpu', model_tag)
+        if self.task_type in ["pix2pix", "image_generation", "image_resize"]:
             return self.model_loader.get_presence('gpu', model_tag)
 
         return self.model_loader.get_memory('gpu', model_tag)

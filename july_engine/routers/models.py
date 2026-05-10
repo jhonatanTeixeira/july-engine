@@ -351,7 +351,7 @@ async def update_model_metadata(model_alias: str, request: UpdateMetadataRequest
     
     return {"status": "success", "model": model_data}
 
-@router.delete("/{model_alias}")
+@router.delete("/gguf/{model_alias}")
 async def delete_model(model_alias: str):
     from ..orchestrators.gpu_orchestrator import gpu_orchestrator
     db = load_models_db()

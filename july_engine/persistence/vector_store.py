@@ -149,7 +149,7 @@ class VectorStore:
             })
             self._save_in_memory()
 
-    def search(self, query_embedding: List[float], top_k: int = 3, collection: str = "july_memory", model_tag: str = None) -> List[str]:
+    def search(self, query_embedding: List[float], top_k: int = 3, collection: str = "july_memory", model_tag: str = None, filter: Dict[str, Any] = None) -> List[str]:
         full_name = self._get_full_name(collection, model_tag)
         
         if self.db_type == "chroma":
@@ -157,7 +157,8 @@ class VectorStore:
                 coll = self.client.get_collection(name=full_name)
                 results = coll.query(
                     query_embeddings=[query_embedding],
-                    n_results=top_k
+                    n_results=top_k,
+                    where=filter
                 )
                 return results["documents"][0] if results["documents"] else []
             except Exception:
@@ -169,18 +170,41 @@ class VectorStore:
                 table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
                     emb_str = f"[{','.join(map(str, query_embedding))}]"
-                    result = conn.execute(
-                        sa_text(f"SELECT content FROM {table_name} ORDER BY embedding <=> '{emb_str}' LIMIT :limit"),
-                        {"limit": top_k}
-                    )
+                    
+                    sql = f"SELECT content FROM {table_name}"
+                    params = {"limit": top_k}
+                    
+                    if filter:
+                        where_clauses = []
+                        for key, value in filter.items():
+                            where_clauses.append(f"metadata->>'{key}' = :val_{key}")
+                            params[f"val_{key}"] = str(value)
+                        sql += " WHERE " + " AND ".join(where_clauses)
+                    
+                    sql += f" ORDER BY embedding <=> '{emb_str}' LIMIT :limit"
+                    
+                    result = conn.execute(sa_text(sql), params)
                     return [row[0] for row in result]
             except Exception as e:
                 logger.error(f"Error searching pgvector table {full_name}: {e}")
                 return []
                 
         else:
-            # In-memory filtered by full_name
+            # In-memory filtered by full_name and metadata
             subset = [item for item in self.memory_data if item.get("collection") == full_name]
+            
+            if filter:
+                new_subset = []
+                for item in subset:
+                    match = True
+                    for k, v in filter.items():
+                        if item.get("metadata", {}).get(k) != v:
+                            match = False
+                            break
+                    if match:
+                        new_subset.append(item)
+                subset = new_subset
+
             if not subset:
                 return []
                 
@@ -200,7 +224,7 @@ class VectorStore:
             scored.sort(key=lambda x: x[0], reverse=True)
             return [item[1] for item in scored[:top_k]]
         
-    def search_with_details(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory", model_tag: str = None) -> List[Dict[str, Any]]:
+    def search_with_details(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory", model_tag: str = None, filter: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         full_name = self._get_full_name(collection, model_tag)
         
         if self.db_type == "chroma":
@@ -209,6 +233,7 @@ class VectorStore:
                 results = coll.query(
                     query_embeddings=[query_embedding],
                     n_results=top_k,
+                    where=filter,
                     include=["embeddings", "metadatas", "distances", "documents"]
                 )
                 
@@ -232,10 +257,20 @@ class VectorStore:
                 table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
                     emb_str = f"[{','.join(map(str, query_embedding))}]"
-                    result = conn.execute(
-                        sa_text(f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content, embedding FROM {table_name} ORDER BY distance LIMIT :limit"),
-                        {"limit": top_k}
-                    )
+                    
+                    sql = f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content, embedding FROM {table_name}"
+                    params = {"limit": top_k}
+                    
+                    if filter:
+                        where_clauses = []
+                        for key, value in filter.items():
+                            where_clauses.append(f"metadata->>'{key}' = :val_{key}")
+                            params[f"val_{key}"] = str(value)
+                        sql += " WHERE " + " AND ".join(where_clauses)
+                        
+                    sql += f" ORDER BY distance LIMIT :limit"
+                    
+                    result = conn.execute(sa_text(sql), params)
                     matches = []
                     for row in result:
                         matches.append({
@@ -252,6 +287,19 @@ class VectorStore:
         else:
             # In-memory
             subset = [item for item in self.memory_data if item.get("collection") == full_name]
+            
+            if filter:
+                new_subset = []
+                for item in subset:
+                    match = True
+                    for k, v in filter.items():
+                        if item.get("metadata", {}).get(k) != v:
+                            match = False
+                            break
+                    if match:
+                        new_subset.append(item)
+                subset = new_subset
+
             matches = []
             if not subset:
                 return matches
@@ -277,36 +325,46 @@ class VectorStore:
             matches.sort(key=lambda x: x["distance"])
             return matches[:top_k]
 
-    def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory", model_tag: str = None):
+    def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory", model_tag: str = None, metadata: Dict[str, Any] = None):
         full_name = self._get_full_name(collection, model_tag)
         
         if self.db_type == "chroma":
             try:
                 coll = self.client.get_collection(name=full_name)
-                coll.update(
-                    ids=[doc_id],
-                    embeddings=[new_embedding]
-                )
+                update_args = {"ids": [doc_id], "embeddings": [new_embedding]}
+                if metadata:
+                    update_args["metadatas"] = [metadata]
+                coll.update(**update_args)
             except Exception as e:
                 logger.error(f"Error updating ChromaDB collection {full_name}: {e}")
 
         elif self.db_type == "pgvector":
             try:
                 from sqlalchemy import text as sa_text
+                import json
                 table_name = f"rag_{full_name}"
                 with self.engine.begin() as conn:
                     emb_str = f"[{','.join(map(str, new_embedding))}]"
-                    conn.execute(
-                        sa_text(f"UPDATE {table_name} SET embedding = :emb WHERE id = :id"),
-                        {"emb": emb_str, "id": doc_id}
-                    )
+                    
+                    if metadata:
+                        conn.execute(
+                            sa_text(f"UPDATE {table_name} SET embedding = :emb, metadata = :meta WHERE custom_id = :id OR id::text = :id"),
+                            {"emb": emb_str, "meta": json.dumps(metadata), "id": doc_id}
+                        )
+                    else:
+                        conn.execute(
+                            sa_text(f"UPDATE {table_name} SET embedding = :emb WHERE custom_id = :id OR id::text = :id"),
+                            {"emb": emb_str, "id": doc_id}
+                        )
             except Exception as e:
                 logger.error(f"Error updating pgvector table {table_name}: {e}")
         else:
             # In-memory
             for item in self.memory_data:
-                if item.get("id") == doc_id and item.get("collection") == full_name:
+                if (item.get("id") == doc_id or item.get("custom_id") == doc_id) and item.get("collection") == full_name:
                     item["embedding"] = new_embedding
+                    if metadata:
+                        item["metadata"] = metadata
                     break
             self._save_in_memory()
 
@@ -346,15 +404,15 @@ class VectorStore:
 
         return deleted_count
 
-    def list_metadata(self, collection: str = "july_memory", model_tag: str = None) -> List[Dict[str, Any]]:
-        """Lista todos os IDs e Metadados de uma coleção (sem vetores)."""
+    def list_metadata(self, collection: str = "july_memory", model_tag: str = None, filter: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Lista todos os IDs e Metadados de uma coleção (sem vetores) com suporte a filtro."""
         full_name = self._get_full_name(collection, model_tag)
         
         if self.db_type == "chroma":
             try:
                 coll = self.client.get_collection(name=full_name)
                 # Buscamos tudo sem incluir o embedding
-                results = coll.get(include=["metadatas", "documents"])
+                results = coll.get(include=["metadatas", "documents"], where=filter)
                 
                 output = []
                 for i in range(len(results["ids"])):
@@ -373,7 +431,17 @@ class VectorStore:
                 from sqlalchemy import text as sa_text
                 table_name = f"rag_{full_name}"
                 with self.engine.connect() as conn:
-                    result = conn.execute(sa_text(f"SELECT id, custom_id, metadata, content FROM {table_name}"))
+                    sql = f"SELECT id, custom_id, metadata, content FROM {table_name}"
+                    params = {}
+                    
+                    if filter:
+                        where_clauses = []
+                        for key, value in filter.items():
+                            where_clauses.append(f"metadata->>'{key}' = :val_{key}")
+                            params[f"val_{key}"] = str(value)
+                        sql += " WHERE " + " AND ".join(where_clauses)
+                        
+                    result = conn.execute(sa_text(sql), params)
                     output = []
                     for row in result:
                         output.append({
@@ -388,13 +456,25 @@ class VectorStore:
                 return []
         else:
             # In-memory
+            subset = [i for i in self.memory_data if i.get("collection") == full_name]
+            if filter:
+                new_subset = []
+                for item in subset:
+                    match = True
+                    for k, v in filter.items():
+                        if item.get("metadata", {}).get(k) != v:
+                            match = False
+                            break
+                    if match:
+                        new_subset.append(item)
+                subset = new_subset
+                
             return [
                 {
                     "id": i.get("id"),
                     "metadata": i.get("metadata", {}),
                     "document": i.get("content", "")
                 }
-                for i in self.memory_data if i.get("collection") == full_name
+                for i in subset
             ]
-
 vector_store = VectorStore()

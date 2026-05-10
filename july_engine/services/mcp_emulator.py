@@ -18,23 +18,44 @@ class Tool:
     arguments: str
 
 class Chunk:
-    def __init__(self, raw_chunk: dict):
-        self.raw_chunk = dict(raw_chunk)
+    def __init__(self, raw_chunk: Any):
+        # Store as dict for easier manipulation, but keep original if needed
+        if hasattr(raw_chunk, "model_dump"): # Pydantic V2
+            self.raw_chunk = raw_chunk.model_dump()
+        elif hasattr(raw_chunk, "dict"): # Pydantic V1
+            self.raw_chunk = raw_chunk.dict()
+        else:
+            self.raw_chunk = dict(raw_chunk)
         
-        delta = raw_chunk.get('choices', [{}])[0].get("delta", {})
+        self.id = self.raw_chunk.get("id")
+        self.model = self.raw_chunk.get("model")
+        self.object = self.raw_chunk.get("object")
+        self.created = self.raw_chunk.get("created")
+        self.usage = self.raw_chunk.get("usage")
         
-        self.content = delta.get("content", "") or ""
-        self.reasoning_content = delta.get("reasoning_content", "") or ""
+        choices = self.raw_chunk.get('choices', [{}])
+        delta = choices[0].get("delta", {}) if isinstance(choices[0], dict) else getattr(choices[0], "delta", {})
+        
+        self.content = delta.get("content", "") or "" if isinstance(delta, dict) else getattr(delta, "content", "") or ""
+        self.reasoning_content = delta.get("reasoning_content", "") or "" if isinstance(delta, dict) else getattr(delta, "reasoning_content", "") or ""
         self.is_reasoning = True if self.reasoning_content else False
+        self.finish_reason = choices[0].get("finish_reason") if isinstance(choices[0], dict) else getattr(choices[0], "finish_reason", None)
         
     @classmethod
-    def from_str(cls, text):
-        return cls({"choices": [{"delta": {"content": text}}]})
+    def from_str(cls, text, metadata=None):
+        base = {"choices": [{"delta": {"content": text}}]}
+        if metadata:
+            base.update(metadata)
+        return cls(base)
 
-    @property
-    def delta(self):
-        """Reconstrói o objeto delta no formato OpenAI-Compatible"""
-        return self.raw_chunk
+    def clean_delta(self):
+        """Returns the chunk without finish_reason and usage."""
+        clean = json.loads(json.dumps(self.raw_chunk)) # Deep copy as dict
+        if "choices" in clean:
+            for choice in clean["choices"]:
+                choice.pop("finish_reason", None)
+        clean.pop("usage", None)
+        return clean
 
 
 class XMLStreamParser:
@@ -46,22 +67,39 @@ class XMLStreamParser:
         self.stream = stream
         self.buffer = ""
         self.open_tag = re.compile(r"<([a-zA-Z0-9_-]+)>")
+        self.last_metadata = {}
+        self.last_usage = None
 
     async def __aiter__(self):
         buffer: str = ''
         tag_opened: str = None
-        arguments: str = None
         is_buffering = False
         
-        async for chunk in self.stream:
-            delta = Chunk(chunk)
+        async for chunk_raw in self.stream:
+            delta = Chunk(chunk_raw)
             
+            # Capture metadata/usage from every single chunk
+            if delta.id:
+                self.last_metadata = {
+                    "id": delta.id, "model": delta.model, 
+                    "object": delta.object, "created": delta.created
+                }
+            if delta.usage:
+                self.last_usage = delta.usage
+
             if delta.is_reasoning:
                 yield delta
                 continue
             
-            if '<' in delta.content and not is_buffering:
+            if not is_buffering and '<' in delta.content:
+                parts = delta.content.split('<', 1)
+                before = parts[0]
+                if before:
+                    yield Chunk.from_str(before, metadata=self.last_metadata)
+                
                 is_buffering = True
+                buffer = '<' + parts[1]
+                continue
 
             if is_buffering:
                 buffer += delta.content
@@ -70,15 +108,9 @@ class XMLStreamParser:
             
             if is_buffering and not tag_opened and (match := self.open_tag.search(buffer)):
                 tag_opened = match.group(1)
-                before, after = buffer.split(f'<{tag_opened}>', 1)
-
-                if before:
-                    yield Chunk.from_str(before)
-
-                # buffer = after
 
             if is_buffering and not tag_opened and re.search(r'<\s+', buffer):
-                yield Chunk.from_str(buffer)
+                yield Chunk.from_str(buffer, metadata=self.last_metadata)
                 is_buffering = False
                 buffer = ''
 
@@ -86,20 +118,20 @@ class XMLStreamParser:
                 is_buffering = False
 
                 before, after = buffer.split(f'</{tag_opened}>', 1)
-
-                if after:
-                    yield Chunk.from_str(after)
                 
                 match = re.search(rf"<{tag_opened}>([\s\S\n]*?)<\/{tag_opened}>", buffer, re.MULTILINE)
                 yield Tool(name=tag_opened, arguments=match.group(1))
 
+                if after:
+                    yield Chunk.from_str(after, metadata=self.last_metadata)
+                
                 tag_opened = None
                 buffer = ''
                         
             await asyncio.sleep(0)
         
         if buffer:
-            yield Chunk.from_str(buffer)
+            yield Chunk.from_str(buffer, metadata=self.last_metadata)
             await asyncio.sleep(0)
 
 
@@ -162,7 +194,7 @@ class McpEmulator:
             for tool in tools_whitelist:
                 tools.append(self.indexed_tools[tool])
         
-        if 'tools' in payload and payload['tools']:
+        if payload.get('tools'):
             xml_tags = self.json_tools_to_xml_prompt(payload['tools'])
             
         messages = payload.get("messages", [])
@@ -375,18 +407,24 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                 requires_second_call = False
                 enable_internal_mcp = original_payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
                 tool_index = 0
-                last_usage = None
                 
                 # O Parser consome a rede neural, nós consumimos o Parser!
-                async for item in XMLStreamParser(response):
+                parser = XMLStreamParser(response)
+                async for item in parser:
                     if isinstance(item, Chunk):
                         if not item.is_reasoning:
                             first_response += item.content
 
-                        if "usage" in item.delta and item.delta["usage"]:
-                            last_usage = item.delta["usage"]
-
-                        yield item.delta
+                        # Only yield if there's actual content or reasoning to show
+                        # This avoids the "null" chunks that are just placeholders for stop reasons
+                        clean = item.clean_delta()
+                        delta = clean.get("choices", [{}])[0].get("delta", {})
+                        
+                        has_content = delta.get("content") is not None
+                        has_tool_calls = delta.get("tool_calls") is not None
+                        
+                        if has_content or item.is_reasoning or has_tool_calls:
+                            yield clean
                         
                     elif isinstance(item, Tool):
                         tools_executed = True
@@ -404,7 +442,7 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                             args = self._build_args(item.name, item.arguments)
                             
                             # Yield 1: Function name
-                            yield {
+                            name_chunk = {
                                 "choices": [{
                                     "index": 0,
                                     "delta": {
@@ -420,9 +458,11 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                     }
                                 }]
                             }
+                            if parser.last_metadata: name_chunk.update(parser.last_metadata)
+                            yield name_chunk
 
                             # Yield 2: Function arguments
-                            yield {
+                            args_chunk = {
                                 "choices": [{
                                     "index": 0,
                                     "delta": {
@@ -435,6 +475,9 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                                     }
                                 }]
                             }
+                            if parser.last_metadata: args_chunk.update(parser.last_metadata)
+                            yield args_chunk
+
                             tool_index += 1
                             tools_executed = True
                             continue
@@ -464,12 +507,16 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                         display_name = status_map.get(item.name, f"calling {item.name}")
                         
                         # Yield start status
-                        yield {"status_update": display_name}
+                        status_chunk = {"status_update": display_name}
+                        if parser.last_metadata: status_chunk.update(parser.last_metadata)
+                        yield status_chunk
                         
                         llm, user = await self.internal_mcp.execute_tool(item.name, args)
                         
                         # Yield end status
-                        yield {"status_update": ""} # Empty string to clear status
+                        clear_status = {"status_update": ""} 
+                        if parser.last_metadata: clear_status.update(parser.last_metadata)
+                        yield clear_status
                         
                         is_faf = self.indexed_tools.get(item.name, {}).get("fire-and-forget", False)
                         
@@ -499,8 +546,9 @@ To execute a tool, you MUST output the EXACT XML block structure shown in the "U
                             "finish_reason": "tool_calls"
                         }]
                     }
-                    if last_usage:
-                        final_chunk["usage"] = last_usage
+                    if parser.last_metadata: final_chunk.update(parser.last_metadata)
+                    if parser.last_usage:
+                        final_chunk["usage"] = parser.last_usage
                     yield final_chunk
 
                 if tools_executed and requires_second_call:

@@ -89,6 +89,8 @@ class Brain:
             if mcp_option == "emulated":
                 payload.pop("tools", None)
 
+            print(payload)
+
         # Salva o payload com a injeção do XML já feita para o segundo turno (ReAct)
         import copy
         original_payload = copy.deepcopy(payload)

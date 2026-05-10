@@ -102,7 +102,7 @@ class Memory:
             return True
         return False
 
-    async def search(self, query: str, top_k: int = 3, collection: str = "july_memory") -> List[Dict[str, Any]]:
+    async def search(self, query: str, top_k: int = 3, collection: str = "july_memory", filter: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Searches the RAG database using the query embedding and returns details."""
         from ..persistence.vector_store import vector_store
         
@@ -116,7 +116,7 @@ class Memory:
             else:
                 embedding = embedding_result    # Array 1D (Local)
                 
-            return vector_store.search_with_details(embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
+            return vector_store.search_with_details(embedding, top_k=top_k, collection=collection, model_tag=self.model_tag, filter=filter)
             
         return []
 
@@ -151,10 +151,10 @@ class Memory:
         
         return True
 
-    async def search_with_details_vector(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory") -> List[Dict[str, Any]]:
+    async def search_with_details_vector(self, query_embedding: List[float], top_k: int = 1, collection: str = "july_memory", filter: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Busca RAG pulando o Text-Embedder e pedindo Metadados (PGVector)."""
         from ..persistence.vector_store import vector_store
-        return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection, model_tag=self.model_tag)
+        return vector_store.search_with_details(query_embedding, top_k=top_k, collection=collection, model_tag=self.model_tag, filter=filter)
 
     async def update_embedding(self, doc_id: str, new_embedding: List[float], collection: str = "july_memory"):
         """Atualiza a coordenada geométrica de um vetor existente pelo ID."""

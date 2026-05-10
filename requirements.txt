@@ -64,3 +64,5 @@ py-cpuinfo
 tf-keras==2.21.0
 PyMuPDF
 pytesseract
+rembg[gpu]
+onnxruntime-gpu

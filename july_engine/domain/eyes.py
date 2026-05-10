@@ -257,6 +257,8 @@ class Eyes:
             single_result = self._strategy.run(single_payload)
             logger.info("Eyes: Local VLM analysis completed.")
             return [str(single_result)]
+        
+        return []
 
     async def describe_person_faces(self, images: Union[Image.Image, List[Image.Image]], collection: str = "faces_embeddings") -> List[Dict[str, Any]]:
         """High-Performance batched face orchestrator."""
