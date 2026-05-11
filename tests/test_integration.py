@@ -42,6 +42,7 @@ async def client():
     backend.set_setting("VISION", {"model": "fastvlm", "backend": "gpu"})
     backend.set_setting("IMAGE_CREATE", {"model": "lcm", "backend": "gpu"})
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
+    backend.set_setting("RAG", {"embedding_engine": "bge_micro", "backend": "cpu"})
     
     text_presets = [
         {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
@@ -201,7 +202,6 @@ async def test_openai_streaming_reasoning(client):
         ],
         "stream": True
     }
-    headers = {"x-backend": "gpu"}
     
     reasoning_found = False
     content_found = False
@@ -377,3 +377,40 @@ async def test_video_description_strategies(client):
             assert len(narrative) > 0
     
     print("Video Description Strategies: OK")
+
+# --- RAG Integration ---
+@pytest.mark.anyio
+async def test_rag_integration(client):
+    print("\n[Test] Running RAG Integration...")
+    collection = "test_collection"
+    text = "The quick brown fox jumps over the lazy dog."
+    
+    # 1. Add to RAG
+    add_payload = {
+        "text": text,
+        "collection": collection,
+        "metadata": {"source": "test_fox"}
+    }
+    add_response = await client.post("/july/v1/rag", json=add_payload)
+    if add_response.status_code != 200:
+        print(f"Error Response: {add_response.text}")
+    assert add_response.status_code == 200
+    assert add_response.json()["success"] is True
+    
+    # 2. Search in RAG
+    search_payload = {
+        "query": "lazy dog",
+        "collection": collection,
+        "top_k": 1
+    }
+    search_response = await client.post("/july/v1/rag/search", json=search_payload)
+    assert search_response.status_code == 200
+    
+    results = search_response.json()
+    print(f"RAG search results: {results}")
+    assert len(results) > 0
+    # Check if the text matches (RagAdapter search returns results with 'content' or 'text')
+    found_text = results[0].get("content") or results[0].get("text")
+    print(f"RAG search result: {found_text}")
+    assert text in found_text
+    print("RAG Integration: OK")

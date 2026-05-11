@@ -25,11 +25,12 @@ class SearchAdapter(BaseModel):
       REPOSITORY_SEARCH → base_url, api_key
     """
 
-    def __init__(self, backend: str = "cpu", model_meta: Optional[dict] = None):
+    def __init__(self, task_type: str, backend: str = "cpu", model_meta: Optional[dict] = None):
         super().__init__(backend, model_meta)
         self._tavily = None
         self._google = None
         self._github = None
+        self.task_type = task_type
 
     # ------------------------------------------------------------------
     # Lazy sub-engine accessors
@@ -70,10 +71,12 @@ class SearchAdapter(BaseModel):
         pass
 
     async def run(self, payload: Dict[str, Any]):
-        task_type = payload.get("_task_type", "web_search")
+        task_type = self.task_type
         handler_name = _TASK_HANDLERS.get(task_type)
+
         if not handler_name:
             raise ValueError(f"SearchAdapter: unknown task_type '{task_type}'")
+        
         return await getattr(self, handler_name)(payload)
 
     # ------------------------------------------------------------------

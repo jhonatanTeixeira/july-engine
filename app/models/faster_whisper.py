@@ -17,7 +17,20 @@ class FasterWhisperModel(BaseModel):
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         if self.backend == "cpu":
             return 0
-        return 1000
+        
+        # Valores aproximados para Faster Whisper em float16
+        vram_map = {
+            "tiny": 250,
+            "base": 350,
+            "small": 600,
+            "medium": 1500,
+            "large": 3000,
+            "large-v1": 3000,
+            "large-v2": 3000,
+            "large-v3": 3000,
+            "large-v3-turbo": 2500,
+        }
+        return vram_map.get(self.model_size, 1500)
 
     def load(self, n_ctx=None, num_layers=None):
         if self._model is not None:

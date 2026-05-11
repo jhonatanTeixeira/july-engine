@@ -26,7 +26,7 @@ def _chat_adapter(task_type: str, backend: str, model_meta: dict):
 def _rag_adapter(task_type: str, backend: str, model_meta: dict):
     from .adapters.rag_adapter import RagAdapter
 
-    return RagAdapter(backend, model_meta)
+    return RagAdapter(task_type, backend, model_meta)
 
 def _tts_adapter(task_type: str, backend: str, model_meta: dict):
     from .adapters.tts_adapter import TTSAdapter
@@ -46,7 +46,7 @@ def _image_adapter(task_type: str, backend: str, model_meta: dict):
 
 def _search_adapter(task_type: str, backend: str, model_meta: dict):
     from .adapters.search_adapter import SearchAdapter
-    return SearchAdapter(backend, model_meta)
+    return SearchAdapter(task_type, backend, model_meta)
 
 
 _ENGINE_FACTORIES: Dict[str, Callable] = {
@@ -55,6 +55,14 @@ _ENGINE_FACTORIES: Dict[str, Callable] = {
     "tts": _tts_adapter,
     "stt": _stt_adapter,
     "embeddings": _rag_adapter,
+    "rag_add": _rag_adapter,
+    "rag_batch_add": _rag_adapter,
+    "rag_vector_add": _rag_adapter,
+    "rag_search": _rag_adapter,
+    "rag_update": _rag_adapter,
+    "rag_delete": _rag_adapter,
+    "rag_list": _rag_adapter,
+    "rag_smart_search": _rag_adapter,
     "image_generation": _image_adapter,
     "image_edit": _image_adapter,
     "image_resize": _image_adapter,

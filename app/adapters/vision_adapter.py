@@ -20,6 +20,8 @@ _TASK_HANDLERS = {
     "face_sync":         "_sync_faces_batch",
 }
 
+# Cache global de instâncias de modelos de visão para evitar carregamento duplo entre diferentes adapters
+_VISION_MODEL_CACHE: Dict[str, BaseModel] = {}
 
 class VisionAdapter(BaseModel):
     """
@@ -51,23 +53,32 @@ class VisionAdapter(BaseModel):
         return (self.meta.get("alias") or self.meta.get("model", "")).lower()
 
     def _get_vision_model(self):
-        engine = self._detect_engine()
+        if not self._vision_model:
+            engine = self._detect_engine()
+            cache_key = f"{self.backend}_{engine}"
 
-        if engine == "fastvlm":
-            from ..models.fastvlm import FastVLMModel
-            self._vision_model = FastVLMModel(backend=self.backend, model_meta=self.meta)
-        elif engine == "moondream":
-            from ..models.moondream import MoondreamModel
-            self._vision_model = MoondreamModel(backend=self.backend, model_meta=self.meta)
-        elif engine == "emotion":
-            from ..models.emotion import EmotionModel
-            from ..services.vision import FaceDetector
-            self._vision_model = EmotionModel(FaceDetector(), backend=self.backend)
-        elif engine == "tagger":
-            from ..models.tagger import TaggerModel
-            self._vision_model = TaggerModel()
-        else:
-            raise ValueError(f"no model found for metadata {self.meta}")
+            global _VISION_MODEL_CACHE
+            if cache_key in _VISION_MODEL_CACHE:
+                self._vision_model = _VISION_MODEL_CACHE[cache_key]
+                return self._vision_model
+
+            if engine == "fastvlm":
+                from ..models.fastvlm import FastVLMModel
+                self._vision_model = FastVLMModel(backend=self.backend, model_meta=self.meta)
+            elif engine == "moondream":
+                from ..models.moondream import MoondreamModel
+                self._vision_model = MoondreamModel(backend=self.backend, model_meta=self.meta)
+            elif engine == "emotion":
+                from ..models.emotion import EmotionModel
+                from ..services.vision import FaceDetector
+                self._vision_model = EmotionModel(FaceDetector(), backend=self.backend)
+            elif engine == "tagger":
+                from ..models.tagger import TaggerModel
+                self._vision_model = TaggerModel()
+            else:
+                raise ValueError(f"no model found for metadata {self.meta}")
+
+            _VISION_MODEL_CACHE[cache_key] = self._vision_model
 
         return self._vision_model
 
@@ -91,7 +102,11 @@ class VisionAdapter(BaseModel):
         return 0
 
     def load(self, n_ctx=None, num_layers=None):
+        if self.is_loaded():
+            return
+        
         m = self._get_vision_model()
+        
         if m:
             m.load()
 
@@ -352,7 +367,7 @@ class VisionAdapter(BaseModel):
             interval_sec=float(payload.get("interval_sec", 2.0)),
             frames_per_grid=int(payload.get("frames_per_grid", 4)),
             strategy=payload.get("strategy", "default"),
-            detect_changes=payload.get("detect_changes", "false") == "true",
+            detect_changes=payload.get("detect_changes", "false") == "true" ,
             headers=payload.get("headers", {}),
         )
 

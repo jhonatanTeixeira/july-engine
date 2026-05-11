@@ -31,9 +31,10 @@ class RagAdapter(BaseModel):
     perform without any routing in the bridge.
     """
 
-    def __init__(self, backend: str = "cpu", model_meta: Optional[dict] = None):
+    def __init__(self, task_type: str, backend: str = "cpu", model_meta: Optional[dict] = None):
         super().__init__(backend, model_meta)
         self._emb_model = None
+        self.task_type = task_type
 
     # ------------------------------------------------------------------
     # Lazy embedding model — only imported/created when first needed
@@ -74,7 +75,7 @@ class RagAdapter(BaseModel):
             self._emb_model.unload()
 
     async def run(self, payload: Dict[str, Any]):
-        task_type = payload.get("_task_type", "embeddings")
+        task_type = self.task_type
         handler_name = _TASK_HANDLERS.get(task_type)
 
         if not handler_name:

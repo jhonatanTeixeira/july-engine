@@ -208,6 +208,34 @@ class Bridge:
         """Alias para process_code_search usado pelos roteadores."""
         return await self.process_code_search(payload, headers)
 
+    # ------------------------------------------------------------------
+    # RAG (Memory)
+    # ------------------------------------------------------------------
+
+    async def process_rag_add(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_add", payload, headers)
+
+    async def process_rag_batch_add(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_batch_add", payload, headers)
+
+    async def process_rag_search(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_search", payload, headers)
+
+    async def process_rag_vector_add(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_vector_add", payload, headers)
+
+    async def process_rag_update(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_update", payload, headers)
+
+    async def process_rag_delete(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_delete", payload, headers)
+
+    async def process_rag_list(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_list", payload, headers)
+
+    async def process_rag_smart_search(self, payload: dict, headers: dict):
+        return await self._dispatch("rag_smart_search", payload, headers)
+
     async def process_search_and_scrape(self, results: list, query: str, headers: dict, describe_model: str = None):
         """Raspagem de URLs e sumarização via LLM."""
         from .services.scraper_service import scraper_service

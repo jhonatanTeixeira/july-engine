@@ -43,19 +43,17 @@ class TTSAdapter(BaseModel):
     # ------------------------------------------------------------------
 
     def _detect_engine(self) -> str:
-        explicit = self.meta.get("tts_engine", "")
-        if explicit:
-            return explicit
-        alias = (self.meta.get("alias") or self.meta.get("model", "")).lower()
-        for prefix, engine in _ALIAS_ENGINE_MAP:
-            if alias.startswith(prefix):
-                return engine
-        return "api"
+        if self.backend == "api":
+            return "api"
+        
+        return self.model_id.lower()
 
     def _get_tts_model(self):
         if self._tts_model is not None:
             return self._tts_model
+        
         engine = self._detect_engine()
+        
         if engine == "kokoro":
             from ..models.tts_kokoro import KokoroTTSModel
             self._tts_model = KokoroTTSModel(backend=self.backend, model_meta=self.meta)
@@ -71,6 +69,7 @@ class TTSAdapter(BaseModel):
         elif engine == "qwen3":
             from ..models.tts_qwen3 import FasterQwen3TTSModel
             self._tts_model = FasterQwen3TTSModel(backend=self.backend, model_meta=self.meta)
+        
         # "api" — no local model instance
         return self._tts_model
 
@@ -131,6 +130,7 @@ class TTSAdapter(BaseModel):
 
         if stream:
             return await self._dispatch_stream(engine, clean_text, tts_payload)
+        
         return await self._dispatch_sync(engine, tts_payload)
 
     # ------------------------------------------------------------------
