@@ -21,20 +21,20 @@ def anyio_backend():
 async def client():
     # Import inside fixture to ensure env vars are set
     from main import app
-    from july_engine.bridge import bridge
-    from july_engine.persistence.tinydb_backend import TinyDBBackend
-    from july_engine.persistence import persistence
+    from app.bridge import bridge
+    from app.persistence.tinydb_backend import TinyDBBackend
+    from app.persistence import persistence
     
-    # # Use a specific test database named 'testes.json'
-    # test_db_path = os.path.join("storage", "db", "testes.json")
-    # os.makedirs(os.path.dirname(test_db_path), exist_ok=True)
-    # if os.path.exists(test_db_path):
-    #     os.remove(test_db_path)
+    # Use a specific test database named 'testes.json'
+    test_db_path = os.path.join("storage", "db", "testes.json")
+    os.makedirs(os.path.dirname(test_db_path), exist_ok=True)
+    if os.path.exists(test_db_path):
+        os.remove(test_db_path)
     
-    # backend = TinyDBBackend(test_db_path)
-    # persistence._backend_instance = backend
+    backend = TinyDBBackend(test_db_path)
+    persistence._backend_instance = backend
     
-    backend = persistence.get_backend()
+    # backend = persistence.get_backend()
     
     # --- Inject Settings ---
     backend.set_setting("STT", {"model": "faster-whisper", "backend": "gpu"})

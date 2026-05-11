@@ -1,0 +1,144 @@
+import copy
+import logging
+import asyncio
+from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+
+from ..models.base_model import BaseModel
+
+if TYPE_CHECKING:
+    from ..models.gguf_adapter import GGUFAdapter
+
+logger = logging.getLogger("JulyEngine.Adapters.ChatAdapter")
+
+
+class ChatAdapter(BaseModel):
+    """
+    Adapter that unifies the internal XML tool calling logic (McpEmulator)
+    with the local GGUF model execution.
+    """
+
+    def __init__(self, backend="gpu", model_meta=None):
+        super().__init__(backend, model_meta)
+        self._strategy = None
+        self._mcp = None
+
+    def _get_strategy(self) -> BaseModel:
+        if not self._strategy:
+            if self.backend in ['cpu', 'gpu']:
+                from ..models.gguf_adapter import GGUFAdapter
+                self._strategy = GGUFAdapter(self.backend, self.meta)
+            else:
+                from ..models.llm_adapter import LLMAdapter
+                self._strategy = LLMAdapter(self.meta)
+
+        return self._strategy
+
+    def _get_mcp(self):
+        if not self._mcp:
+            from ..services.mcp_emulator import McpEmulator
+            from ..services.internal_mcp import internal_mcp
+            self._mcp = McpEmulator(internal_mcp)
+        return self._mcp
+
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        return await self._get_strategy().get_required_vram(payload)
+
+    def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
+        self._get_strategy().load(n_ctx=n_ctx, num_layers=num_layers)
+
+    def is_loaded(self) -> bool:
+        return self._strategy is not None and self._strategy.is_loaded()
+
+    def unload(self, model_name: Optional[str] = None):
+        if self._strategy:
+            self._strategy.unload()
+
+    async def chat(self, payload: dict):
+        """Alias para run() usado pelo McpEmulator."""
+        return await self.run(payload)
+
+    async def run(self, payload: Dict[str, Any]):
+        from ..services.helpers import MultiModalHelper
+
+        helper = MultiModalHelper(payload)
+
+        if not self.meta.get("is_vision"):
+            await helper.process_vision()
+
+        await helper.process_transcription()
+
+        original_payload = copy.deepcopy(payload)
+        mcp_option = payload.get("mcp_option", "none")
+        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
+
+        # Resolve MCP strategy
+        mcp_handler = self._resolve_mcp_handler(mcp_option, enable_internal_mcp)
+
+        # Execute local model
+        response = await self._get_strategy().run(payload)
+
+        if mcp_handler:
+            response = await mcp_handler.orchestrate(response, self, original_payload)
+
+        return self._ensure_string_content(response)
+
+    def _ensure_string_content(self, data: Any) -> Any:
+        """Garante que o campo content nunca seja None."""
+        if isinstance(data, dict) and "choices" in data:
+            for choice in data["choices"]:
+                if "message" in choice and choice["message"].get("content") is None:
+                    choice["message"]["content"] = ""
+        return data
+
+    def _resolve_mcp_handler(self, mcp_option: str, enable_internal_mcp: bool):
+        mcp = self._get_mcp()
+
+        if enable_internal_mcp:
+            if mcp_option == "internal":
+                return mcp.internal_mcp
+            if mcp_option == "external_only":
+                try:
+                    return mcp.external_mcp
+                except:
+                    return None
+            # Default to internal if unknown/none but header requested it
+            return mcp.internal_mcp
+        
+        return None
+
+    def _parse_reasoning_blocks(self, response: Any, stream: bool) -> Any:
+        if stream or response is None:
+            return response
+
+        try:
+            data = response
+            choices = data.get("choices", [])
+            if not choices or not isinstance(choices, list):
+                return response
+
+            message = choices[0].get("message")
+            if not message or not isinstance(message, dict):
+                return response
+
+            content = message.get("content") or ""
+            # Se for uma lista (visão), não tentamos parsear reasoning via string tags
+            if not isinstance(content, str) or "<think>" not in content:
+                return response
+
+            think_start = content.index("<think>")
+            think_end = content.find("</think>")
+
+            if think_end == -1:
+                # Unclosed block — leave as-is
+                return response
+
+            reasoning = content[think_start + 7: think_end].strip()
+            visible = content[think_end + 8:].strip()
+
+            choices[0]["message"]["content"] = visible or ""
+            choices[0]["message"]["reasoning_content"] = reasoning or ""
+            data["choices"] = choices
+            return data
+
+        except Exception:
+            return response

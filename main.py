@@ -50,25 +50,25 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from july_engine.bridge import bridge
-from july_engine.routers.openai import router as openai_router
-from july_engine.routers.anthropic import router as anthropic_router
-from july_engine.routers.models import router as models_router
-from july_engine.routers.calculator import router as calculator_router
-from july_engine.routers.monitoring import router as monitoring_router
-from july_engine.routers.voice import router as voice_router
-from july_engine.routers.search import router as search_router
-from july_engine.routers.july import router as july_router
+from app.bridge import bridge
+from app.routers.openai import router as openai_router
+from app.routers.anthropic import router as anthropic_router
+from app.routers.models import router as models_router
+from app.routers.calculator import router as calculator_router
+from app.routers.monitoring import router as monitoring_router
+from app.routers.voice import router as voice_router
+from app.routers.search import router as search_router
+from app.routers.july import router as july_router
 
-from july_engine.routers.settings_router import router as settings_router
-from july_engine.routers.services_router import router as services_router
-from july_engine.routers.mcps_router import router as mcps_router
-from july_engine.routers.webhooks_router import router as webhooks_router
-from july_engine.services.external_mcp import external_mcp_manager
-from july_engine.events import event_manager
+from app.routers.settings_router import router as settings_router
+from app.routers.services_router import router as services_router
+from app.routers.mcps_router import router as mcps_router
+from app.routers.webhooks_router import router as webhooks_router
+from app.services.external_mcp import external_mcp_manager
+from app.events import event_manager
 from fastapi.staticfiles import StaticFiles
 import uuid
-from july_engine.context import request_id_var, acquired_instances_var
+from app.context import request_id_var, acquired_instances_var
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
