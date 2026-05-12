@@ -35,20 +35,22 @@ class RagAdapter(BaseModel):
         super().__init__(backend, model_meta)
         self._emb_model = None
         self.task_type = task_type
+        print('task type', task_type)
 
-    # ------------------------------------------------------------------
-    # Lazy embedding model — only imported/created when first needed
-    # ------------------------------------------------------------------
+    def get_engine_type(self):
+        return "EMBEDDINGS"
 
     def _get_emb_model(self):
         if self._emb_model is None:
-            engine = self.meta.get("embedding_engine", "bge_micro")
+            engine = self.model_id.lower()
+
             if engine == "multilingual_e5":
                 from ..models.multilingual_e5 import MultilingualE5Model
                 self._emb_model = MultilingualE5Model(backend=self.backend, model_meta=self.meta)
             else:  # default: bge_micro
                 from ..models.bge_micro import BgeMicroModel
                 self._emb_model = BgeMicroModel(backend=self.backend, model_meta=self.meta)
+        
         return self._emb_model
 
     def _get_vector_store(self):
@@ -60,8 +62,6 @@ class RagAdapter(BaseModel):
     # ------------------------------------------------------------------
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        if "_task_type" in payload and not payload["_task_type"].startswith("rag_") and payload["_task_type"] != "embeddings":
-            return 0
         return await self._get_emb_model().get_required_vram(payload)
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):

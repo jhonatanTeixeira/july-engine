@@ -54,10 +54,6 @@ class SearchAdapter(BaseModel):
             self._github = GithubSearchModel(backend=self.backend, model_meta=self.meta)
         return self._github
 
-    # ------------------------------------------------------------------
-    # BaseModel interface (search engines are API-based, no VRAM residency)
-    # ------------------------------------------------------------------
-
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         return 0
 

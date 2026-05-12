@@ -7,9 +7,16 @@ logger = logging.getLogger("JulyEngine.Models.BaseModel")
 class BaseModel:
     def __init__(self, backend="gpu", model_meta=None):
         self.backend = backend
-        self.meta = model_meta or {}
-        # Tenta obter ID de várias formas comuns
-        self.model_id = self.meta.get("model") or self.meta.get("alias")
+        self.meta = model_meta
+
+        if not self.meta:
+            from ..services.models_service import model_service
+            self.meta = model_service.backend.get_setting(self.get_engine_type())
+        
+        self.model_id: str = self.meta.get("model") or self.meta.get("alias")
+
+    def get_engine_type(self):
+        pass
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         pass

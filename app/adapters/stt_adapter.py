@@ -7,6 +7,9 @@ class STTAdapter(BaseModel):
         super().__init__(backend, model_meta)
         self.model = None
 
+    def get_engine_type(self):
+        return "STT"
+
     def _ensure_model_instance(self):
         if self.model is None:
             from ..models.faster_whisper import FasterWhisperModel

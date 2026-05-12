@@ -38,6 +38,9 @@ class TTSAdapter(BaseModel):
         super().__init__(backend, model_meta)
         self._tts_model = None
 
+    def get_engine_type(self):
+        return "TTS"
+
     # ------------------------------------------------------------------
     # Sub-engine resolution
     # ------------------------------------------------------------------

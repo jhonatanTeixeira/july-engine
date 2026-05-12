@@ -42,8 +42,8 @@ async def client():
     backend.set_setting("VISION", {"model": "fastvlm", "backend": "gpu"})
     backend.set_setting("IMAGE_CREATE", {"model": "lcm", "backend": "gpu"})
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
-    backend.set_setting("RAG", {"embedding_engine": "bge_micro", "backend": "cpu"})
-    
+    backend.set_setting("EMBEDDINGS", {"model": "bge_micro", "backend": "cpu"})
+        
     text_presets = [
         {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
         {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option":  "emulated",},
@@ -396,6 +396,8 @@ async def test_rag_integration(client):
         print(f"Error Response: {add_response.text}")
     assert add_response.status_code == 200
     assert add_response.json()["success"] is True
+
+    print('add response', add_response)
     
     # 2. Search in RAG
     search_payload = {
