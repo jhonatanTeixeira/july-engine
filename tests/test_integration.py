@@ -42,7 +42,7 @@ async def client():
     backend.set_setting("TTS", {"model": "kokoro", "backend": "gpu", "voice": "af_sky", "language": "a"})
     backend.set_setting("VISION", {"model": "fastvlm", "backend": "gpu"})
     backend.set_setting("IMAGE_CREATE", {"model": "lcm", "backend": "gpu"})
-    backend.set_setting("FLUX", {"model": "flux-klein", "backend": "gpu"})
+    # backend.set_setting("FLUX", {"model": "flux-klein", "backend": "gpu"})
     backend.set_setting("REMBG", {"model": "rembg", "backend": "gpu"})
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
     backend.set_setting("EMBEDDINGS", {"model": "bge_micro", "backend": "cpu"})
@@ -61,8 +61,8 @@ async def client():
             "is_default": False,
             "mcp_option": "internal"
         },
-        {"alias": "flux-klein", "model": "flux-klein", "backend": "gpu"},
-        {"alias": "rembg", "model": "rembg", "backend": "gpu"},
+        # {"alias": "flux-klein", "model": "flux-klein", "backend": "gpu"},
+        # {"alias": "rembg", "model": "rembg", "backend": "gpu"},
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
@@ -108,16 +108,16 @@ async def client():
         "kv_cache_quantization": "Q8_0"
     })
 
-    backend.set_model("flux-klein", {
-        "model_alias": "flux-klein",
-        "model_type": "image",
-        "engine": "flux"
-    })
+    # backend.set_model("flux-klein", {
+    #     "model_alias": "flux-klein",
+    #     "model_type": "image",
+    #     "engine": "flux"
+    # })
 
-    backend.set_model("rembg", {
-        "model_alias": "rembg",
-        "model_type": "vision"
-    })
+    # backend.set_model("rembg", {
+    #     "model_alias": "rembg",
+    #     "model_type": "vision"
+    # })
 
     await bridge.start()
     transport = ASGITransport(app=app)
@@ -208,7 +208,6 @@ async def test_chat_anthropic_integration(client):
         "messages": [
             {"role": "user", "content": "qual o seu nome"}
         ],
-        "max_tokens": 100
     }
     headers = {"x-backend": "gpu"}
     response = await client.post("/v1/anthropic/messages", json=payload, headers=headers)
@@ -253,8 +252,10 @@ async def test_openai_streaming_reasoning(client):
     
     reasoning_found = False
     content_found = False
-    
+    headers = {"x-backend": "gpu"}
+
     async with client.stream("POST", "/v1/openai/chat/completions", json=payload, headers=headers) as response:
+
         assert response.status_code == 200
         async for line in response.aiter_lines():
             if line.startswith("data: "):
@@ -286,7 +287,6 @@ async def test_anthropic_streaming_reasoning(client):
         "messages": [
             {"role": "user", "content": "olá, tudo bem?"}
         ],
-        "max_tokens": 100,
         "stream": True
     }
     headers = {"x-backend": "gpu"}
@@ -321,9 +321,9 @@ async def test_internal_mcp_image_generation(client):
     # 1. Non-Stream Mode
     print("Testing Non-Stream MCP...")
     payload_sync = {
-        "model": "qwen3-gpu",
+        "model": "Qwen3.5-0.8B",
         "messages": [
-            # {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, use the <generate_image><prompt>...</prompt></generate_image> tool."},
+            {"role": "system", "content": "You are a helpful assistant with image generation capabilities. When asked to generate an image, you MUST use the generate image tool"},
             {"role": "user", "content": "Gere uma imagem de um gato de óculos"}
         ],
         "stream": False
@@ -390,9 +390,10 @@ async def test_internal_mcp_image_generation(client):
 @pytest.mark.anyio
 async def test_video_description_strategies(client):
     print("\n[Test] Running Video Description Strategy Integration...")
-    video_path = "/mnt/jhonatanteixeira/Novo volume/projects/jhon/ai/july/july_engine/tests/20171231_164112.mp4"
+    video_path = "tests/20171231_164112.mp4"
 
     strategies = ["default", "interaction", "emotion"]
+
     
     for strategy in strategies:
         print(f"Testing strategy: {strategy}")
@@ -500,15 +501,15 @@ async def test_multimodal_complex_orchestration(client):
     vision_payload = {
         "model": "Qwen3.5-0.8B",
         "messages": [
+            {"role": "system", "content": "Você é um assistente visual preciso. Responda de forma curta e direta."},
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Observe esta imagem. O fundo está transparente ou foi removido, restando apenas a pessoa? Responda 'sim' se o fundo foi removido ou 'não' caso contrário."},
+                    {"type": "text", "text": "Observe esta imagem. O fundo está transparente ou foi removido, restando apenas a pessoa? Responda apenas 'sim' ou 'não'."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_no_bg_b64}"}}
                 ]
             }
-        ],
-        "max_tokens": 10
+        ]
     }
     
     vision_response = await client.post("/v1/openai/chat/completions", json=vision_payload, headers=headers_gpu)

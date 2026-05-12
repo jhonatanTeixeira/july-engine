@@ -7,14 +7,20 @@ logger = logging.getLogger("JulyEngine.Models.BaseModel")
 class BaseModel:
     def __init__(self, backend="gpu", model_meta=None):
         self.backend = backend
-        self.meta = model_meta
+        self.meta: dict = model_meta
 
         if not self.meta:
             from ..services.models_service import model_service
-            self.meta = model_service.backend.get_setting(self.get_engine_type())
-        
-        self.model_id: str = self.meta.get("model") or self.meta.get("alias")
+            engine_type = self.get_engine_type()
+            if engine_type:
+                self.meta = model_service.backend.get_setting(engine_type)
 
+            # Garante que meta seja pelo menos um dicionário vazio
+            if self.meta is None:
+                self.meta = {}
+
+        self.model_id: str = self.meta.get("model") or self.meta.get("alias")
+        
     @classmethod
     def get_engine_type(cls):
         return None

@@ -5,6 +5,7 @@ import base64
 import logging
 import asyncio
 import json
+from dataclasses import asdict
 from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, Request, UploadFile, File, Form, HTTPException, Body
 from fastapi.sse import EventSourceResponse
@@ -132,7 +133,15 @@ async def describe_video(
         # Agora o nome deixa claro que vamos invocar o VLM (Olhos), e não o STT (Ouvidos)
         result = await bridge.process_video_description(payload, headers)
         
-        return JSONResponse(content={"visual_narrative": result})
+        # Serializa o dataclass VideoAggregate para dicionário
+        serializable_result = asdict(result) if hasattr(result, "__dataclass_fields__") else result
+        
+        # Converte datetime para string para serialização JSON
+        if isinstance(serializable_result, dict) and "processed_at" in serializable_result:
+            if isinstance(serializable_result["processed_at"], datetime):
+                serializable_result["processed_at"] = serializable_result["processed_at"].isoformat()
+        
+        return JSONResponse(content={"visual_narrative": serializable_result})
     finally:
         if os.path.exists(saved_video_path):
             os.remove(saved_video_path)

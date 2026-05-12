@@ -71,12 +71,31 @@ class ChatAdapter(BaseModel):
 
         await helper.process_transcription()
 
-        original_payload = copy.deepcopy(payload)
-        mcp_option = payload.get("mcp_option", "none")
-        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
+        mcp_option = self.meta.get("mcp_option", "emulated")
 
-        # Resolve MCP strategy
-        mcp_handler = self._resolve_mcp_handler(mcp_option, enable_internal_mcp)
+        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
+        tools_whitelist = payload.pop("tools_whitelist", [])
+        mcp_handler = None
+        
+        if enable_internal_mcp:
+            if mcp_option == "internal":
+                mcp_handler = self._get_mcp().internal_mcp
+            elif mcp_option == "external_only":
+                from ..services.external_mcp import external_mcp_manager
+                mcp_handler = external_mcp_manager
+            else: # emulated
+                mcp_handler = self._get_mcp()
+        elif mcp_option == "emulated":
+            # Special case: Enable McpEmulator only for XML/OpenAI conversion (no internal execution)
+            mcp_handler = self._get_mcp()
+            
+        if mcp_handler:
+            mcp_handler.inject_tools(payload, tools_whitelist)
+            
+            if mcp_option == "emulated":
+                payload.pop("tools", None)
+
+        original_payload = copy.deepcopy(payload)
 
         # Execute local model
         response = await self._get_strategy().run(payload)
@@ -101,13 +120,13 @@ class ChatAdapter(BaseModel):
             if mcp_option == "internal":
                 return mcp.internal_mcp
             if mcp_option == "external_only":
-                try:
-                    return mcp.external_mcp
-                except:
-                    return None
-            # Default to internal if unknown/none but header requested it
+                from ..services.external_mcp import ExternalMCPManager
+                return ExternalMCPManager()
+                
             return mcp.internal_mcp
-        
+        elif mcp_option == "emulated":
+            return mcp
+
         return None
 
     def _parse_reasoning_blocks(self, response: Any, stream: bool) -> Any:

@@ -141,7 +141,9 @@ class XMLStreamParser:
 
 class McpEmulator:
     def __init__(self, internal_mcp):
-        self.internal_mcp = internal_mcp
+        from .internal_mcp import InternalMCP
+        
+        self.internal_mcp: InternalMCP = internal_mcp
         self.full_tag = re.compile(r"<([a-zA-Z_]+)>(.*?)</\1>", re.DOTALL)
         self.indexed_tools = {t['function']['name']: t for t in internal_mcp.get_tools()}
         self.xml_tags = self.json_tools_to_xml_prompt(internal_mcp.get_tools())
