@@ -32,6 +32,10 @@ class SearchAdapter(BaseModel):
         self._github = None
         self.task_type = task_type
 
+    @classmethod
+    def get_engine_type(cls):
+        return "WEB_SEARCH"
+
     # ------------------------------------------------------------------
     # Lazy sub-engine accessors
     # ------------------------------------------------------------------

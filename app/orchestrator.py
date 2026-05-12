@@ -268,16 +268,37 @@ class Orchestrator:
         pass
 
     async def submit_task(self, task_type: str, payload: dict):
-        from .services.models_service import model_service
-        
         model_alias = payload.get("model")
-        model_meta = model_service.resolve_by_settings(model_alias)
+        model_meta = self._resolve_model(task_type, model_alias)
         
         if not model_meta:
-            raise ValueError(f"Orchestrator: Model '{model_alias}' not found in persistence.")
+            raise ValueError(f"Orchestrator: Model '{model_alias}' for task '{task_type}' not found.")
 
         runner = Runner(task_type, model_meta, self.context)
         return await runner.run(payload)
+
+    def _resolve_model(self, task_type: str, model_alias: str) -> dict:
+        """Resolve metadados do modelo de forma genérica baseada no tipo de engine do adapter."""
+        from .model_loader import _ADAPTER_REGISTRY
+        from .services.models_service import model_service
+        
+        registry_func = _ADAPTER_REGISTRY.get(task_type)
+        if not registry_func:
+            return {}
+            
+        adapter_cls = registry_func()
+        engine_type = adapter_cls.get_engine_type()
+        
+        # Se não houver alias e for uma engine especializada (STT, TTS, EMBEDDINGS...)
+        # tentamos carregar a configuração padrão dessa engine diretamente.
+        if not model_alias and engine_type and engine_type != "TEXT_PRESETS":
+            config = model_service.backend.get_setting(engine_type)
+            if isinstance(config, dict):
+                # Mescla com os dados base do modelo (ex: path, engine...)
+                return (model_service.get(config.get("model")) or {}) | config
+        
+        # Fallback para a resolução padrão (TEXT_PRESETS ou busca global por alias)
+        return model_service.resolve_by_settings(model_alias)
 
     async def unload_model(self, model_alias: str):
         slots_to_remove = []

@@ -7,7 +7,8 @@ class STTAdapter(BaseModel):
         super().__init__(backend, model_meta)
         self.model = None
 
-    def get_engine_type(self):
+    @classmethod
+    def get_engine_type(cls):
         return "STT"
 
     def _ensure_model_instance(self):
@@ -25,7 +26,7 @@ class STTAdapter(BaseModel):
         model = self._ensure_model_instance()
         model.load(n_ctx=n_ctx, num_layers=num_layers)
 
-    async def run(self, payload: Dict[str, Any], **kwargs):
+    def run(self, payload: Dict[str, Any], **kwargs):
         if not self.is_loaded():
             self.load()
             

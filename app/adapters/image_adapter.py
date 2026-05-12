@@ -43,6 +43,10 @@ class ImageAdapter(BaseModel):
         self._strategy = None
         self.task_type = task_type
 
+    @classmethod
+    def get_engine_type(cls):
+        return "IMAGE_CREATE"
+
     # ------------------------------------------------------------------
     # Strategy resolution
     # ------------------------------------------------------------------

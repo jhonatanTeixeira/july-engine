@@ -22,6 +22,10 @@ class ChatAdapter(BaseModel):
         self._strategy = None
         self._mcp = None
 
+    @classmethod
+    def get_engine_type(cls):
+        return "TEXT_PRESETS"
+
     def _get_strategy(self) -> BaseModel:
         if not self._strategy:
             if self.backend in ['cpu', 'gpu']:

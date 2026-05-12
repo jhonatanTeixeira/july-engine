@@ -15,8 +15,9 @@ class BaseModel:
         
         self.model_id: str = self.meta.get("model") or self.meta.get("alias")
 
-    def get_engine_type(self):
-        pass
+    @classmethod
+    def get_engine_type(cls):
+        return None
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         pass

@@ -42,7 +42,8 @@ class VisionAdapter(BaseModel):
         self._vision_model = None
         self._face_service = None
 
-    def get_engine_type(self):
+    @classmethod
+    def get_engine_type(cls):
         return "VISION"
 
     # ------------------------------------------------------------------

@@ -1,108 +1,112 @@
 from __future__ import annotations
 import logging
 import threading
-from typing import Callable, Dict, Any
+from typing import Callable, Dict, Any, Optional, Type
 
 logger = logging.getLogger("JulyEngine.ModelLoader")
 
 # ---------------------------------------------------------------------------
-# Lazy registry
-#
-# Values are zero-arg factory functions that import and return the class only
-# when first needed.  Nothing heavy is imported at module load time, so
-# environments that lack optional libs (torch, TTS, kokoro, …) won't break
-# during API startup.
-#
-# To register a new engine:
-#   1. Implement BaseModel in app/models/ or app/adapters/
-#   2. Add a factory lambda here — nothing else needs to change.
+# Lazy registry for Adapter Classes
 # ---------------------------------------------------------------------------
 
-def _chat_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_chat_adapter():
     from .adapters.chat_adapter import ChatAdapter
+    return ChatAdapter
 
-    return ChatAdapter(backend, model_meta)
-
-def _rag_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_rag_adapter():
     from .adapters.rag_adapter import RagAdapter
+    return RagAdapter
 
-    return RagAdapter(task_type, backend, model_meta)
-
-def _tts_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_tts_adapter():
     from .adapters.tts_adapter import TTSAdapter
-    return TTSAdapter(backend, model_meta)
+    return TTSAdapter
 
-def _stt_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_stt_adapter():
     from .adapters.stt_adapter import STTAdapter
-    return STTAdapter(backend, model_meta)
+    return STTAdapter
 
-def _vision_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_vision_adapter():
     from .adapters.vision_adapter import VisionAdapter
-    return VisionAdapter(task_type, backend, model_meta)
+    return VisionAdapter
 
-def _image_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_image_adapter():
     from .adapters.image_adapter import ImageAdapter
-    return ImageAdapter(task_type, backend, model_meta)
+    return ImageAdapter
 
-def _search_adapter(task_type: str, backend: str, model_meta: dict):
+def _get_search_adapter():
     from .adapters.search_adapter import SearchAdapter
-    return SearchAdapter(task_type, backend, model_meta)
+    return SearchAdapter
 
 
-_ENGINE_FACTORIES: Dict[str, Callable] = {
-    "text_chat": _chat_adapter,
-    "vision_chat": _vision_adapter,
-    "tts": _tts_adapter,
-    "stt": _stt_adapter,
-    "embeddings": _rag_adapter,
-    "rag_add": _rag_adapter,
-    "rag_batch_add": _rag_adapter,
-    "rag_vector_add": _rag_adapter,
-    "rag_search": _rag_adapter,
-    "rag_update": _rag_adapter,
-    "rag_delete": _rag_adapter,
-    "rag_list": _rag_adapter,
-    "rag_smart_search": _rag_adapter,
-    "image_generation": _image_adapter,
-    "image_edit": _image_adapter,
-    "image_resize": _image_adapter,
-    "image_remove_background": _image_adapter,
-    "web_search": _search_adapter,
-    "code_search": _search_adapter,
-    "video_description": _vision_adapter
+_ADAPTER_REGISTRY: Dict[str, Callable[[], Type]] = {
+    "text_chat": _get_chat_adapter,
+    "vision_chat": _get_vision_adapter,
+    "tts": _get_tts_adapter,
+    "stt": _get_stt_adapter,
+    "embeddings": _get_rag_adapter,
+    "rag_add": _get_rag_adapter,
+    "rag_batch_add": _get_rag_adapter,
+    "rag_vector_add": _get_rag_adapter,
+    "rag_search": _get_rag_adapter,
+    "rag_update": _get_rag_adapter,
+    "rag_delete": _get_rag_adapter,
+    "rag_list": _get_rag_adapter,
+    "rag_smart_search": _get_rag_adapter,
+    "image_generation": _get_image_adapter,
+    "image_edit": _get_image_adapter,
+    "image_resize": _get_image_adapter,
+    "image_remove_background": _get_image_adapter,
+    "web_search": _get_search_adapter,
+    "code_search": _get_search_adapter,
+    "video_description": _get_vision_adapter
 }
 
 
 class ModelLoader:
     def __init__(self):
         self.instances: Dict[str, Any] = {}
-        self._class_cache: Dict[str, type] = {}
         self.lock = threading.Lock()
 
     def get(self, task_type: str, backend: str, model_meta: dict):
         """
-        Returns a cached model instance for (backend, model_tag).
-        The class is resolved from model_meta["engine"] via lazy factory;
-        the instance is cached so the same model isn't loaded twice.
+        Returns a cached model instance for (task_type, backend, model_tag).
+        The instance is created using the resolved adapter class.
         """
         model_tag = model_meta.get("alias") or model_meta.get("model")
-        key = f"{backend}_{model_tag}"
+        key = f"{task_type}_{backend}_{model_tag}"
 
         with self.lock:
             if key in self.instances:
                 return self.instances[key]
             
-            factory = _ENGINE_FACTORIES.get(task_type)
-            instance = factory(task_type, backend, model_meta)
+            # Resolve a classe do adapter
+            registry_func = _ADAPTER_REGISTRY.get(task_type)
+            if not registry_func:
+                raise ValueError(f"ModelLoader: unknown task_type '{task_type}'")
+            
+            adapter_cls = registry_func()
+            
+            # Instanciação cirúrgica baseada na assinatura do adapter
+            # (Alguns pedem task_type no construtor, outros não)
+            if adapter_cls.__name__ in ("RagAdapter", "VisionAdapter", "ImageAdapter", "SearchAdapter"):
+                instance = adapter_cls(task_type=task_type, backend=backend, model_meta=model_meta)
+            else:
+                instance = adapter_cls(backend=backend, model_meta=model_meta)
+                
             self.instances[key] = instance
-            logger.info(f"[ModelLoader] model={model_tag} backend={backend}")
+            logger.info(f"[ModelLoader] model={model_tag} backend={backend} task={task_type}")
 
             return instance
 
     def delete_instance(self, backend: str, model_alias: str):
-        key = f"{backend}_{model_alias}"
+        """Remove todas as instâncias que casam com o backend e alias fornecidos."""
+        suffix = f"_{backend}_{model_alias}"
+        
         with self.lock:
-            self.instances.pop(key, None)
+            keys_to_del = [k for k in self.instances.keys() if k.endswith(suffix)]
+            for k in keys_to_del:
+                logger.info(f"[ModelLoader] Deleting instance cache key: {k}")
+                self.instances.pop(k, None)
 
 
 model_loader = ModelLoader()

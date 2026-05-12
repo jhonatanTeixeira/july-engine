@@ -35,22 +35,26 @@ class RagAdapter(BaseModel):
         super().__init__(backend, model_meta)
         self._emb_model = None
         self.task_type = task_type
-        print('task type', task_type)
 
-    def get_engine_type(self):
+    @classmethod
+    def get_engine_type(cls):
         return "EMBEDDINGS"
+
+    # ------------------------------------------------------------------
+    # Lazy embedding model — only imported/created when first needed
+    # ------------------------------------------------------------------
 
     def _get_emb_model(self):
         if self._emb_model is None:
-            engine = self.model_id.lower()
-
+            # self.model_id já vem resolvido do BaseModel (meta["model"])
+            engine = self.model_id
+            
             if engine == "multilingual_e5":
                 from ..models.multilingual_e5 import MultilingualE5Model
                 self._emb_model = MultilingualE5Model(backend=self.backend, model_meta=self.meta)
             else:  # default: bge_micro
                 from ..models.bge_micro import BgeMicroModel
                 self._emb_model = BgeMicroModel(backend=self.backend, model_meta=self.meta)
-        
         return self._emb_model
 
     def _get_vector_store(self):
@@ -62,6 +66,8 @@ class RagAdapter(BaseModel):
     # ------------------------------------------------------------------
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
+        if "_task_type" in payload and not payload["_task_type"].startswith("rag_") and payload["_task_type"] != "embeddings":
+            return 0
         return await self._get_emb_model().get_required_vram(payload)
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
@@ -76,6 +82,7 @@ class RagAdapter(BaseModel):
 
     async def run(self, payload: Dict[str, Any]):
         task_type = self.task_type
+        logger.info(f"RagAdapter: running task_type='{task_type}'")
         handler_name = _TASK_HANDLERS.get(task_type)
 
         if not handler_name:
@@ -265,6 +272,7 @@ class RagAdapter(BaseModel):
 
         for q in queries:
             try:
+                # Use internal search method explicitly
                 results = await self._rag_search({"query": q, "top_k": top_k, "collection": collection})
                 for r in results:
                     rid = r.get("id")
@@ -305,9 +313,13 @@ class RagAdapter(BaseModel):
             answer = await self._llm_call(rel_payload, llm_model)
             return "YES" in (answer or "").upper()
 
-        for item in raw_results:
-            if await check_relevance(item):
-                final_results.append({k: v for k, v in item.items() if k != "embedding"})
+        if llm_model:
+            for item in raw_results:
+                if await check_relevance(item):
+                    final_results.append({k: v for k, v in item.items() if k != "embedding"})
+        else:
+            # If no LLM model for filtering, return raw results (deduplicated)
+            final_results = [{k: v for k, v in item.items() if k != "embedding"} for item in raw_results]
 
         # -- 4. Optional structured answer --
         if structured and final_results:
