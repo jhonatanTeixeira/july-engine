@@ -45,13 +45,16 @@ class BgRemoverModel(BaseModel):
         from PIL import Image
         from rembg import remove
 
-        image_b64 = payload.get("image", "")
+        image_data = payload.get("image", "")
 
         if self._session is None:
             self.load()
 
-        img_bytes = base64.b64decode(image_b64)
-        pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
+        if isinstance(image_data, Image.Image):
+            pil_img = image_data.convert("RGBA")
+        else:
+            img_bytes = base64.b64decode(image_data)
+            pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGBA")
 
         output: Image.Image = remove(pil_img, session=self._session)
 

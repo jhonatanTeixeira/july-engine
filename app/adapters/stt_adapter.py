@@ -26,7 +26,7 @@ class STTAdapter(BaseModel):
         model = self._ensure_model_instance()
         model.load(n_ctx=n_ctx, num_layers=num_layers)
 
-    def run(self, payload: Dict[str, Any], **kwargs):
+    async def run(self, payload: Dict[str, Any], **kwargs):
         if not self.is_loaded():
             self.load()
             

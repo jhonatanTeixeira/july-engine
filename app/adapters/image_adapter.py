@@ -114,7 +114,7 @@ class ImageAdapter(BaseModel):
         elif engine == "flux":
             try:
                 from ..models.flux_klein import FluxKleinPipeline
-                self._strategy = FluxKleinPipeline(device="cuda" if self.backend == "gpu" else "cpu", use_sequential_offload=True)
+                self._strategy = FluxKleinPipeline(backend=self.backend, model_meta=self.meta)
             except Exception as e:
                 logger.warning(f"ImageAdapter: flux-klein model could not be loaded: {str(e)}")
                 self._strategy = None

@@ -6,6 +6,7 @@ os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
 
 import pytest
 import json
+import base64
 from httpx import AsyncClient, ASGITransport
 
 # Force the environment to test
@@ -41,6 +42,8 @@ async def client():
     backend.set_setting("TTS", {"model": "kokoro", "backend": "gpu", "voice": "af_sky", "language": "a"})
     backend.set_setting("VISION", {"model": "fastvlm", "backend": "gpu"})
     backend.set_setting("IMAGE_CREATE", {"model": "lcm", "backend": "gpu"})
+    backend.set_setting("FLUX", {"model": "flux-klein", "backend": "gpu"})
+    backend.set_setting("REMBG", {"model": "rembg", "backend": "gpu"})
     backend.set_setting("WEB_SEARCH", {"model": "tavily", "backend": "api"})
     backend.set_setting("EMBEDDINGS", {"model": "bge_micro", "backend": "cpu"})
         
@@ -48,6 +51,18 @@ async def client():
         {"alias": "qwen3-cpu", "model": "qwen3-0.6b", "backend": "cpu"},
         {"alias": "qwen3-gpu", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option":  "emulated",},
         {"alias": "qwen3-gpu-mcp", "model": "qwen3-0.6b", "backend": "gpu", "mcp_option": "emulated"},
+        {
+            "alias": "Qwen3.5-0.8B",
+            "model": "Qwen3.5-0.8B",
+            "api_key": "",
+            "backend": "gpu",
+            "base_url": "",
+            "is_vision": True,
+            "is_default": False,
+            "mcp_option": "internal"
+        },
+        {"alias": "flux-klein", "model": "flux-klein", "backend": "gpu"},
+        {"alias": "rembg", "model": "rembg", "backend": "gpu"},
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
@@ -69,6 +84,39 @@ async def client():
         "force_reasoning": None,
         "file_path": "C:\\Users\\jhona/.cache/huggingface/hub\\models--appleyu--Qwen3-0.6B-FP16-gguf\\snapshots\\421187a1573b0ac2be5466d7b45da087c5ee3367\\Qwen3-0.6B-FP16.gguf",
         "mmproj_path": None
+    })
+
+    backend.set_model("Qwen3.5-0.8B", {
+        "filename": "Qwen3.5-0.8B-Q4_K_M.gguf", 
+        "model_id": "unsloth/Qwen3.5-0.8B-GGUF", 
+        "template": "qwen", 
+        "file_path": "/home/jhonatanteixeira/.cache/huggingface/hub/models--unsloth--Qwen3.5-0.8B-GGUF/snapshots/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/Qwen3.5-0.8B-Q4_K_M.gguf", 
+        "is_vision": True, 
+        "mmproj_id": "unsloth/Qwen3.5-0.8B-GGUF", 
+        "n_seq_max": 1, 
+        "flash_attn": True, 
+        "kv_unified": False, 
+        "logits_all": False, 
+        "model_type": "vision", 
+        "num_layers": -1, 
+        "mmproj_path": "/home/jhonatanteixeira/.cache/huggingface/hub/models--unsloth--Qwen3.5-0.8B-GGUF/snapshots/6ab461498e2023f6e3c1baea90a8f0fe38ab64d0/mmproj-F16.gguf", 
+        "model_alias": "Qwen3.5-0.8B", 
+        "offload_kqv": False, 
+        "context_window": 8192, 
+        "force_reasoning": True, 
+        "mmproj_filename": "mmproj-F16.gguf", 
+        "kv_cache_quantization": "Q8_0"
+    })
+
+    backend.set_model("flux-klein", {
+        "model_alias": "flux-klein",
+        "model_type": "image",
+        "engine": "flux"
+    })
+
+    backend.set_model("rembg", {
+        "model_alias": "rembg",
+        "model_type": "vision"
     })
 
     await bridge.start()
@@ -416,3 +464,59 @@ async def test_rag_integration(client):
     print(f"RAG search result: {found_text}")
     assert text in found_text
     print("RAG Integration: OK")
+
+# --- Multimodal Complex Orchestration ---
+@pytest.mark.anyio
+async def test_multimodal_complex_orchestration(client):
+    print("\n[Test] Running Multimodal Complex Orchestration...")
+    headers_gpu = {"x-backend": "gpu"}
+    
+    # 1. Generate Image with Flux-Klein
+    print("Step 1: Generating image with flux-klein (GPU)...")
+    gen_payload = {
+        "model": "flux-klein",
+        "prompt": "Full body photo of a beautiful woman standing in a vibrant flower garden, colorful background, 8k, highly detailed",
+        "response_format": "b64_json"
+    }
+    gen_response = await client.post("/v1/openai/images/generations", json=gen_payload, headers=headers_gpu)
+    assert gen_response.status_code == 200, f"Generation failed: {gen_response.text}"
+    img_b64 = gen_response.json()["data"][0]["b64_json"]
+    print("Image generated successfully.")
+
+    # 2. Remove Background
+    print("Step 2: Removing background (rembg)...")
+    img_bytes = base64.b64decode(img_b64)
+    files = {"file": ("image.png", img_bytes, "image/png")}
+    data = {"model": "rembg"}
+    
+    # rembg can run on gpu or cpu, depending on config, here we use gpu headers to test orchestrator
+    bg_response = await client.post("/july/v1/vision/images/remove-background", files=files, data=data, headers=headers_gpu)
+    assert bg_response.status_code == 200, f"Background removal failed: {bg_response.text}"
+    img_no_bg_b64 = bg_response.json()["image"]
+    print("Background removed successfully.")
+
+    # 3. Verify with Qwen3.5-0.8B (Multimodal)
+    print("Step 3: Verifying transparency with Qwen3.5-0.8B (GPU)...")
+    vision_payload = {
+        "model": "Qwen3.5-0.8B",
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Observe esta imagem. O fundo está transparente ou foi removido, restando apenas a pessoa? Responda 'sim' se o fundo foi removido ou 'não' caso contrário."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_no_bg_b64}"}}
+                ]
+            }
+        ],
+        "max_tokens": 10
+    }
+    
+    vision_response = await client.post("/v1/openai/chat/completions", json=vision_payload, headers=headers_gpu)
+    assert vision_response.status_code == 200, f"Vision verification failed: {vision_response.text}"
+    
+    answer = vision_response.json()["choices"][0]["message"]["content"].strip().lower()
+    print(f"Qwen3.5-0.8B Answer: {answer}")
+    
+    # We expect 'sim' or something positive
+    assert "sim" in answer or "yes" in answer or "transparente" in answer
+    print("Multimodal Complex Orchestration: OK")

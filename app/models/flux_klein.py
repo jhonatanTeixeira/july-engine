@@ -6,12 +6,13 @@ from io import BytesIO
 from typing import Optional, Dict, Any
 from PIL import Image
 
+from .base_model import BaseModel
+
 logger = logging.getLogger("JulyEngine.Models.FluxKleinSDNQ")
 
-class FluxKleinNode:
+class FluxKleinPipeline(BaseModel):
     def __init__(self, backend="gpu", model_meta=None):
-        self.backend = backend
-        self.meta = model_meta or {}
+        super().__init__(backend, model_meta)
         self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
         self.model_t2i = None
         self.model_i2i = None
@@ -26,7 +27,7 @@ class FluxKleinNode:
         if self.backend == "cpu":
             return 0
             
-        offload = os.environ.get("FLUX_OFFLOAD", None).lower()
+        offload = os.environ.get("FLUX_OFFLOAD", "sequential").lower()
         if offload == "sequential":
             return 1000
         elif offload == "cpu":
