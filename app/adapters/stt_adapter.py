@@ -28,10 +28,33 @@ class STTAdapter(AdapterBase):
         model.load(n_ctx=n_ctx, num_layers=num_layers)
 
     async def run(self, payload: Dict[str, Any], **kwargs):
+        if self.backend == "api":
+            from ..services.llm_api import llm_api
+            # Inject config from settings if available
+            config = self._load_stt_config()
+            headers = payload.get("headers", {})
+            if config:
+                headers.setdefault("x-base-url", config.get("base_url"))
+                headers.setdefault("x-api-key", config.get("api_key"))
+            
+            p = {
+                **payload,
+                "model": payload.get("model") or config.get("model") or self.model_id,
+                "headers": headers
+            }
+            return await llm_api.dispatch("stt", p)
+
         if not self.is_loaded():
             self.load()
             
         return self.model.run(payload)
+
+    def _load_stt_config(self) -> dict:
+        try:
+            from ..services.models_service import model_service
+            return model_service.backend.get_setting("STT") or {}
+        except Exception:
+            return {}
 
     def unload(self, model_name: Optional[str] = None):
         if self.model:

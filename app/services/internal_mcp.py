@@ -120,14 +120,25 @@ class InternalMCP:
                 "type": "function",
                 "function": {
                     "name": "search_memory",
-                    # A MÁGICA ESTÁ AQUI: Ordem absoluta.
                     "description": "CRITICAL: Searches your long-term memory. You MUST call this tool BEFORE answering ANY question about the user (e.g., 'what is my name?', 'what do I like?'), past conversations, or if the user says 'you know this'. NEVER claim you don't have memory without calling this tool first.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "The explicit concept, name, or fact to search in your memory database."
+                                "description": "The explicit concept, name, event or fact to search in your memory database."
+                            },
+                            "collection": {
+                                "type": "string",
+                                "description": "The collection to search in. Defaults to 'jully_memory'."
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "description": "The number of results to return. Defaults to 3."
+                            },
+                            "filter": {
+                                "type": "object",
+                                "description": "The filter to apply to the search. Example: {'person': 'Jhon'}"
                             }
                         },
                         "required": ["query"]
@@ -146,6 +157,14 @@ class InternalMCP:
                             "fact": {
                                 "type": "string",
                                 "description": "The specific fact or context to remember (e.g., 'User's name is Jhonatan')."
+                            },
+                            "collection": {
+                                "type": "string",
+                                "description": "The collection to save the fact to. Defaults to 'jully_memory'."
+                            },
+                            "metadata": {
+                                "type": "object",
+                                "description": "Optional metadata to associate with the fact. Example: {'person': 'Jhon'}"
                             }
                         },
                         "required": ["fact"]
@@ -329,7 +348,12 @@ class InternalMCP:
                 )
             
             elif name == "search_memory":
-                res = await model_loader.get_memory(backend, model).search(arguments.get("query", ""))
+                res = await bridge.process_rag_search({
+                    "query": arguments.get("query", ""),
+                    "collection": arguments.get("collection", "jully_memory"),
+                    "top_k": arguments.get("top_k", 3),
+                    "filter": arguments.get("filter", {})
+                }, {"x-backend": backend})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (
@@ -338,7 +362,11 @@ class InternalMCP:
                 )
             
             elif name == "save_memory":
-                success = await model_loader.get_memory(backend, model).add_to_rag(arguments.get("fact", ""))
+                success = await bridge.process_rag_add({
+                    "text": arguments.get("fact", ""),
+                    "collection": arguments.get("collection", "jully_memory"),
+                    "metadata": arguments.get("metadata", {})
+                }, {"x-backend": backend})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 return (

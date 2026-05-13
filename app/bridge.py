@@ -60,12 +60,7 @@ class Bridge:
 
         self._inject_headers(payload, headers)
         
-        backend = payload.get("headers", {}).get("x-backend", None)
-
         return await orchestrator.submit_task(task_type, payload)
-
-        from .services.llm_api import llm_api
-        return await llm_api.dispatch(task_type, payload)
 
     # ------------------------------------------------------------------
     # Chat

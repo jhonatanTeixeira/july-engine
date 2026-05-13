@@ -43,6 +43,7 @@ class SmartSearchResponse(BaseModel):
 
 
 class RagAddRequest(BaseModel):
+    model: Optional[str] = None
     text: str
     collection: str = "july_memory"
     metadata: Optional[Dict[str, Any]] = None
@@ -59,6 +60,7 @@ class RagAddBatchRequest(BaseModel):
 
 
 class RagSearchRequest(BaseModel):
+    model: Optional[str] = None
     query: str
     collection: str = "july_memory"
     top_k: int = 3
