@@ -17,8 +17,8 @@ _TASK_HANDLERS = {
 }
 
 # Resizer model tags handled via Pillow/OpenCV/AI resizer sub-models
-_RESIZER_TAGS = frozenset(["pillow", "opencv", "gfpgan", "face_restoration", "codeformer", "realesrgan", "upscale"])
-_HEAVY_RESIZER_TAGS = frozenset(["gfpgan", "codeformer", "realesrgan"])
+_RESIZER_TAGS = frozenset(["pillow", "opencv", "gfpgan", "face_restoration", "codeformer", "realesrgan", "upscale", "lanczos", "high_quality", "onnx"])
+_HEAVY_RESIZER_TAGS = frozenset(["gfpgan", "codeformer", "realesrgan", "onnx"])
 
 
 class ImageAdapter(AdapterBase):
@@ -140,6 +140,7 @@ class ImageAdapter(AdapterBase):
             from ..models.image_resizer import (
                 PillowResizerModel, OpencvResizerModel,
                 GFPGANResizerModel, CodeFormerResizerModel, RealESRGANResizerModel,
+                LanczosResizerModel, HighQualityUpscalerModel, OnnxUpscalerModel
             )
             resizer_map = {
                 "pillow":          PillowResizerModel,
@@ -149,6 +150,9 @@ class ImageAdapter(AdapterBase):
                 "codeformer":      CodeFormerResizerModel,
                 "realesrgan":      RealESRGANResizerModel,
                 "upscale":         RealESRGANResizerModel,
+                "lanczos":         LanczosResizerModel,
+                "high_quality":    HighQualityUpscalerModel,
+                "onnx":            OnnxUpscalerModel,
             }
             cls = resizer_map.get(tag)
             if cls:

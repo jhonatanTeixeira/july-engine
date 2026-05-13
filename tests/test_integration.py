@@ -577,3 +577,50 @@ async def test_multimodal_complex_orchestration(client):
     assert "sim" in answer or "yes" in answer or "transparente" in answer
 
     print("Multimodal Complex Orchestration: OK")
+
+@pytest.mark.anyio
+async def test_image_upscale(client):
+    print("\n[Test] Running Image Upscale...")
+    import os
+    from PIL import Image
+    import io
+
+    # 1. Load the sample image
+    img_path = os.path.join(os.path.dirname(__file__), "sad_person.jpg")
+    if not os.path.exists(img_path):
+        pytest.skip(f"Sample image not found: {img_path}")
+
+    with Image.open(img_path) as img:
+        orig_width, orig_height = img.size
+        # Convert to base64
+        buffered = io.BytesIO()
+        img.save(buffered, format="JPEG")
+        img_b64 = base64.b64encode(buffered.getvalue()).decode()
+
+    print(f"Original size: {orig_width}x{orig_height}")
+
+    # 2. Call the resize endpoint
+    payload = {
+        "image": img_b64,
+        "scale": 2.0,
+        "model": "high_quality" # Use improved upscaler
+    }
+    
+    headers_cpu = {"x-backend": "cpu"}
+    response = await client.post("/v1/openai/images/resize", json=payload, headers=headers_cpu)
+    assert response.status_code == 200, f"Upscale failed: {response.text}"
+    
+    res_json = response.json()
+    assert "image" in res_json
+    
+    # 3. Verify the new size
+    result_b64 = res_json["image"]
+    result_bytes = base64.b64decode(result_b64)
+    with Image.open(io.BytesIO(result_bytes)) as result_img:
+        new_width, new_height = result_img.size
+        print(f"New size: {new_width}x{new_height}")
+        
+        assert new_width == orig_width * 2
+        assert new_height == orig_height * 2
+
+    print("Image Upscale: OK")
