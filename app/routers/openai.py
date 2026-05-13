@@ -199,7 +199,13 @@ async def create_image_edit(
         "size": size,
         "n": n
     }
-    return await bridge.process_image_edit(payload, headers)
+    result = await bridge.process_image_edit(payload, headers)
+
+    return {
+        "created": int(time.time()),
+        "data": [{"b64_json": result}]
+    }
+
 
 @router.post("/images/generations", response_model=ImageResponse)
 async def create_image_generation(request: ImageGenerationRequest, http_request: Request):

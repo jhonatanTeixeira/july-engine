@@ -67,7 +67,7 @@ async def client():
             "api_key": "",
             "backend": "gpu",
             "base_url": "",
-            "is_vision": False,
+            "is_vision": True,
             "is_default": False,
             "mcp_option": "internal"
         },
@@ -538,15 +538,18 @@ async def test_multimodal_complex_orchestration(client):
     # We expect 'sim' or something positive
     assert "sim" in answer or "yes" in answer or "transparente" in answer
 
-    # 2. Remove Background
+    # 4. Edit Image
     print("Step 4: Editing image")
     img_bytes = base64.b64decode(img_no_bg_b64)
     files = {"image": ("image.png", img_bytes, "image/png")}
-    data = {"model": "flux-klein"}
+    data = {
+        "model": "flux-klein",
+        "prompt": "A beautiful woman in a flower garden, smiling, 8k, highly detailed"
+    }
     
     edit_response = await client.post("/v1/openai/images/edits", files=files, data=data, headers=headers_gpu)
-    assert edit_response.status_code == 200, f"Background removal failed: {bg_response.text}"
-    edit_b64 = edit_response.content
+    assert edit_response.status_code == 200, f"Image editing failed: {edit_response.text}"
+    edit_b64 = edit_response.json()["data"][0]["b64_json"]
     print("Image edited successfully.")
 
     print("Step 5: Verifying image edited with Qwen3.5-4B (GPU)...")
@@ -557,7 +560,7 @@ async def test_multimodal_complex_orchestration(client):
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "A pessoa na imagem está triste? Responda apenas 'sim' ou 'não'."},
+                    {"type": "text", "text": "Há uma pessoa ou mulher nesta imagem? Responda apenas 'sim' ou 'não'."},
                     {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{edit_b64}"}}
                 ]
             }

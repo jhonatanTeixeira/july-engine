@@ -180,3 +180,52 @@ class MultiModalHelper:
             
             # Remove os áudios originais
             self.messages[-1]["content"] = [part for part in self.messages[-1]["content"] if part.get("type") not in ["audio_url", "input_audio"]]
+
+    def sanitize_images(self, max_size: int = 1024):
+        """Redimensiona e converte todas as imagens no payload para JPEG base64 limpo."""
+        import io
+        try:
+            from PIL import Image
+        except ImportError:
+            return
+
+        for message in self.messages:
+            content = message.get("content", "")
+            if not isinstance(content, list):
+                continue
+            
+            for part in content:
+                if part.get("type") == "image_url":
+                    img_url_obj = part.get("image_url", {})
+                    url = img_url_obj.get("url", "")
+                    
+                    if url.startswith("data:image"):
+                        try:
+                            # Extrai o base64
+                            header, b64_data = url.split(",", 1)
+                            img_bytes = base64.b64decode(b64_data)
+                            
+                            # Processa com Pillow
+                            img = Image.open(io.BytesIO(img_bytes))
+                            
+                            # Se tiver transparência, compõe em fundo branco
+                            if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+                                if img.mode != "RGBA":
+                                    img = img.convert("RGBA")
+                                background = Image.new("RGBA", img.size, (255, 255, 255))
+                                img = Image.alpha_composite(background, img).convert("RGB")
+                            elif img.mode != "RGB":
+                                img = img.convert("RGB")
+                                
+                            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                            
+                            # Salva como JPEG
+                            buf = io.BytesIO()
+                            img.save(buf, format="JPEG", quality=85)
+                            new_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                            
+                            # Atualiza a URL
+                            img_url_obj["url"] = f"data:image/jpeg;base64,{new_b64}"
+                        except Exception as e:
+                            import logging
+                            logging.getLogger("JulyEngine.Helpers").warning(f"Failed to sanitize image: {e}")

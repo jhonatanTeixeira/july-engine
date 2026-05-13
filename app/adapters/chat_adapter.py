@@ -77,6 +77,8 @@ class ChatAdapter(AdapterBase):
 
         if not self.meta.get("is_vision"):
             await helper.process_vision()
+        else:
+            helper.sanitize_images()
 
         await helper.process_transcription()
 
