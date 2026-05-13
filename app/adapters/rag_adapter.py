@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from ..models.base_model import BaseModel
+from .adapter_base import AdapterBase
 
 logger = logging.getLogger("JulyEngine.Adapter.RagAdapter")
 
@@ -19,7 +19,7 @@ _TASK_HANDLERS = {
 }
 
 
-class RagAdapter(BaseModel):
+class RagAdapter(AdapterBase):
     """
     Handles embedding generation and all vector-store (RAG) operations.
 
@@ -32,12 +32,11 @@ class RagAdapter(BaseModel):
     """
 
     def __init__(self, task_type: str, backend: str = "cpu", model_meta: Optional[dict] = None):
-        super().__init__(backend, model_meta)
+        super().__init__(task_type, backend, model_meta)
         self._emb_model = None
-        self.task_type = task_type
 
     @classmethod
-    def get_engine_type(cls):
+    def get_engine_type(cls, task_type):
         return "EMBEDDINGS"
 
     # ------------------------------------------------------------------

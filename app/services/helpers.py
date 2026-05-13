@@ -2,12 +2,7 @@ import asyncio
 import base64
 from copy import deepcopy
 from dataclasses import dataclass, field
-import os
 from typing import Dict, List, Optional
-
-from fastapi import HTTPException
-from .models_service import ModelsService
-from ..orchestrator import gpu_orchestrator as api_orchestrator
 
 
 @dataclass

@@ -5,7 +5,7 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-from ..models.base_model import BaseModel
+from .adapter_base import AdapterBase
 
 logger = logging.getLogger("JulyEngine.Adapter.ImageAdapter")
 
@@ -21,7 +21,7 @@ _RESIZER_TAGS = frozenset(["pillow", "opencv", "gfpgan", "face_restoration", "co
 _HEAVY_RESIZER_TAGS = frozenset(["gfpgan", "codeformer", "realesrgan"])
 
 
-class ImageAdapter(BaseModel):
+class ImageAdapter(AdapterBase):
     """
     Handles all image task types: image_generation, image_edit,
     image_resize, image_remove_background.
@@ -39,13 +39,19 @@ class ImageAdapter(BaseModel):
     """
 
     def __init__(self, task_type: str, backend: str = "gpu", model_meta: Optional[dict] = None):
-        super().__init__(backend, model_meta)
+        super().__init__(task_type, backend, model_meta)
         self._strategy = None
-        self.task_type = task_type
 
     @classmethod
-    def get_engine_type(cls):
-        return "IMAGE_CREATE"
+    def get_engine_type(cls, task_type: str):
+        map = {
+            "image_generation":        "IMAGE_CREATE",
+            "image_edit":              "IMAGE_EDIT",
+            "image_resize":            "IMAGE_RESIZE",
+            "image_remove_background": "IMAGE_REMOVE_BACKGROUND",
+        }
+
+        return map.get(task_type)
 
     # ------------------------------------------------------------------
     # Strategy resolution

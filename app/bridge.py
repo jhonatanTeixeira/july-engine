@@ -24,15 +24,13 @@ class Bridge:
 
     async def start(self):
         """Inicializa os orquestradores de GPU e CPU."""
-        from .orchestrator import gpu_orchestrator, cpu_orchestrator
-        await gpu_orchestrator.start()
-        await cpu_orchestrator.start()
+        from .orchestrator import orchestrator
+        await orchestrator.start()
 
     async def stop(self):
         """Finaliza os orquestradores e libera recursos."""
-        from .orchestrator import gpu_orchestrator, cpu_orchestrator
-        await gpu_orchestrator.stop()
-        await cpu_orchestrator.stop()
+        from .orchestrator import orchestrator
+        await orchestrator.stop()
 
     # ------------------------------------------------------------------
     # Routing Helpers
@@ -57,31 +55,14 @@ class Bridge:
         payload["headers"] = headers
         return payload
 
-    def _get_backend(self, payload: dict) -> str:
-        """Determina o backend baseado no payload e configurações."""
-
-        backend = payload.get("headers", {}).get("x-backend", None)
-
-        if not backend:
-            from .services.models_service import model_service
-            model = model_service.resolve_by_settings(payload.get("model"))
-
-            backend = model.get("backend", "api")
-
-        return backend
-            
-
     async def _dispatch(self, task_type: str, payload: dict, headers: dict):
+        from .orchestrator import orchestrator
+
         self._inject_headers(payload, headers)
         
-        backend = self._get_backend(payload)
+        backend = payload.get("headers", {}).get("x-backend", None)
 
-        if backend == "gpu":
-            from .orchestrator import gpu_orchestrator
-            return await gpu_orchestrator.submit_task(task_type, payload)
-        if backend == "cpu":
-            from .orchestrator import cpu_orchestrator
-            return await cpu_orchestrator.submit_task(task_type, payload)
+        return await orchestrator.submit_task(task_type, payload)
 
         from .services.llm_api import llm_api
         return await llm_api.dispatch(task_type, payload)

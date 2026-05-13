@@ -1,7 +1,11 @@
 from __future__ import annotations
 import logging
 import threading
-from typing import Callable, Dict, Any, Optional, Type
+from typing import Callable, Dict, Any, Optional, Type, Tuple
+from .models.base_model import BaseModel
+from .adapters.adapter_base import AdapterBase
+
+
 
 logger = logging.getLogger("JulyEngine.ModelLoader")
 
@@ -38,7 +42,7 @@ def _get_search_adapter():
     return SearchAdapter
 
 
-_ADAPTER_REGISTRY: Dict[str, Callable[[], Type]] = {
+_ADAPTER_REGISTRY: Dict[str, Callable[[], Type[AdapterBase]]] = {
     "text_chat": _get_chat_adapter,
     "vision_chat": _get_vision_adapter,
     "tts": _get_tts_adapter,
@@ -67,32 +71,59 @@ class ModelLoader:
         self.instances: Dict[str, Any] = {}
         self.lock = threading.Lock()
 
-    def get(self, task_type: str, backend: str, model_meta: dict):
+    def _resolve_adapter_cls(self, task_type: str) -> Tuple[str, Type[AdapterBase]]:
+        adapter_getter = _ADAPTER_REGISTRY.get(task_type)
+
+        if not adapter_getter:
+            raise ValueError(f"ModelLoader: unknown task_type '{task_type}'")
+
+        adapter_cls = adapter_getter()
+
+        return adapter_cls.get_engine_type(task_type), adapter_cls
+    
+
+    def get(self, task_type: str, backend: str | None = None, model_tag: str | None = None) -> AdapterBase:
         """
         Returns a cached model instance for (task_type, backend, model_tag).
         The instance is created using the resolved adapter class.
         """
-        model_tag = model_meta.get("alias") or model_meta.get("model")
-        key = f"{task_type}_{backend}_{model_tag}"
 
         with self.lock:
+            from .services.models_service import model_service
+
+            engine, adapter_cls = self._resolve_adapter_cls(task_type)
+            model_meta: Optional[dict] = None
+            engine_settings = model_service.get_setting(engine)
+
+            if not model_tag:
+                setting = engine_settings
+
+                if setting:
+                    model_meta = setting if isinstance(setting, dict) else next((p for p in setting if p.get("is_default", False)), setting[0])
+                    
+                    model_tag = model_meta.get("alias") or model_meta.get("model")
+            else:
+                if isinstance(engine_settings, list):
+                    default_setting = next((p for p in engine_settings if p.get("is_default", False)), engine_settings[0])
+                    model_meta = next((p for p in engine_settings if p.get("alias") == model_tag or p.get("model") == model_tag), default_setting)
+                elif engine_settings and engine_settings.get("model") == model_tag:
+                    model_meta = engine_settings
+                else:
+                    model_meta = {"model": model_tag, "backend": backend}
+
+            if not model_meta:
+                raise ValueError(f'no model or setting could be found for {task_type}')
+            
+            if backend:
+                model_meta["backend"] = backend
+            
+            key = f"{task_type}_{backend}_{model_tag}"
+
             if key in self.instances:
                 return self.instances[key]
             
-            # Resolve a classe do adapter
-            registry_func = _ADAPTER_REGISTRY.get(task_type)
-            if not registry_func:
-                raise ValueError(f"ModelLoader: unknown task_type '{task_type}'")
-            
-            adapter_cls = registry_func()
-            
-            # Instanciação cirúrgica baseada na assinatura do adapter
-            # (Alguns pedem task_type no construtor, outros não)
-            if adapter_cls.__name__ in ("RagAdapter", "VisionAdapter", "ImageAdapter", "SearchAdapter"):
-                instance = adapter_cls(task_type=task_type, backend=backend, model_meta=model_meta)
-            else:
-                instance = adapter_cls(backend=backend, model_meta=model_meta)
-                
+            instance = adapter_cls(task_type, backend=backend or model_meta["backend"], model_meta=model_meta)
+
             self.instances[key] = instance
             logger.info(f"[ModelLoader] model={model_tag} backend={backend} task={task_type}")
 

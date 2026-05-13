@@ -3,7 +3,7 @@ import re
 import logging
 from typing import Any, Dict, Optional, Union, AsyncGenerator
 
-from ..models.base_model import BaseModel
+from .adapter_base import AdapterBase
 
 logger = logging.getLogger("JulyEngine.Adapter.TTSAdapter")
 
@@ -21,7 +21,7 @@ _MARKDOWN_RE = re.compile(r'[*_`#~\[\]()\\<>+=\-|{}]')
 _SENTENCE_RE = re.compile(r'[.\n]+')
 
 
-class TTSAdapter(BaseModel):
+class TTSAdapter(AdapterBase):
     """
     Aggregates all TTS engines with text preprocessing, streaming routing,
     and config injection from the persistence backend.
@@ -34,12 +34,12 @@ class TTSAdapter(BaseModel):
       3. Falls back to "api"
     """
 
-    def __init__(self, backend: str = "cpu", model_meta: Optional[dict] = None):
-        super().__init__(backend, model_meta)
+    def __init__(self, task_type: str, backend: str = "cpu", model_meta: Optional[dict] = None):
+        super().__init__(task_type, backend, model_meta)
         self._tts_model = None
 
     @classmethod
-    def get_engine_type(cls):
+    def get_engine_type(cls, task_type):
         return "TTS"
 
     # ------------------------------------------------------------------

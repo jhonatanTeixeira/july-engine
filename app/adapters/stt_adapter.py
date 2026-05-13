@@ -1,14 +1,15 @@
 from typing import Dict, Any, Optional
 
-from ..models.base_model import BaseModel
+from .adapter_base import AdapterBase
 
-class STTAdapter(BaseModel):
-    def __init__(self, backend="gpu", model_meta=None):
-        super().__init__(backend, model_meta)
+
+class STTAdapter(AdapterBase):
+    def __init__(self, task_type: str, backend="gpu", model_meta=None):
+        super().__init__(task_type, backend, model_meta)
         self.model = None
 
     @classmethod
-    def get_engine_type(cls):
+    def get_engine_type(cls, task_type):
         return "STT"
 
     def _ensure_model_instance(self):

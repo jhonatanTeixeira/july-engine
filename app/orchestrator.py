@@ -123,7 +123,7 @@ class BaseContext:
     def garbage_collection(self):
         self.resource_manager.clear_memory()
 
-    async def get_free_ram(self):
+    def get_free_ram(self):
         raise NotImplementedError()
 
 
@@ -138,6 +138,7 @@ class GpuContext(BaseContext):
     def get_free_ram(self):
         return self.resource_manager.get_available_vram_mb()
 
+
 class CpuContext(BaseContext):
     def __new__(cls, *args, **kwargs):
         return super(CpuContext, cls).__new__(cls)
@@ -150,29 +151,48 @@ class CpuContext(BaseContext):
         return self.resource_manager.get_available_ram_mb()
 
 
+class ApiContext(BaseContext):
+    @property
+    def context_type(self) -> str:
+        return "api"
+
+    def get_free_ram(self):
+        # API context doesn't track local RAM/VRAM
+        return float('inf')
+
+
 class Runner:
-    def __init__(self, task_type: str, model: dict, context: BaseContext):
+    def __init__(self, task_type: str, model_tag: str | None, context: BaseContext | None = None):
         from .model_loader import model_loader
 
+        backend = None if context is None else context.context_type
+
         self.task_type = task_type
-        self.model = model
-        self.model_tag = model.get("alias") or model.get("model")
+        self.model = model_loader.get(task_type, backend, model_tag)
+        self.model_tag = model_tag or self.model.model_id
         self.slot_name = f'{task_type}_{self.model_tag}'
-        self.context = context
+
+        
+        self.context: BaseContext = context
+
+        if not self.context:
+            backend = self.model.backend
+
+            if backend == "gpu":
+                self.context = GpuContext()
+            elif backend == "cpu":
+                self.context = CpuContext()
+            elif backend == "api":
+                self.context = ApiContext()
+        
         self.model_loader = model_loader
         self.is_running = False
         self.state_lock = threading.Lock()
 
-    def get_model(self) -> BaseModel:
-        return self.model_loader.get(
-            self.task_type,
-            'cpu' if isinstance(self.context, CpuContext) else 'gpu',
-            self.model
-        )
-
     async def wait_for_resources(self, required: float, timeout: float = 30):
         start_time = time.time()
-        while await self.context.get_free_ram() < required:
+
+        while self.context.get_free_ram() < required:
             if time.time() - start_time > timeout:
                 return False
             async with self.context.condition:
@@ -180,6 +200,7 @@ class Runner:
                     await asyncio.wait_for(self.context.condition.wait(), timeout=5)
                 except asyncio.TimeoutError:
                     pass
+        
         return True
 
     async def unload_next(self, required: float):
@@ -206,7 +227,7 @@ class Runner:
         return True
 
     def unload(self):
-        model = self.get_model()
+        model = self.model
         model.unload()
 
     async def run(self, payload: dict):
@@ -218,7 +239,7 @@ class Runner:
             async with self.context.orchestrator_lock:
                 self.context.garbage_collection()
 
-                domain = self.get_model()
+                domain = self.model
                 required = 0
 
                 if not self.context.is_loaded(self.slot_name):
@@ -279,8 +300,8 @@ class Runner:
 
 
 class Orchestrator:
-    def __init__(self, context: BaseContext):
-        self.context = context
+    def __init__(self):
+        self.contexts: Dict[str, BaseContext] = {}
 
     async def start(self):
         pass
@@ -289,56 +310,42 @@ class Orchestrator:
         pass
 
     async def submit_task(self, task_type: str, payload: dict):
-        model_alias = payload.get("model")
-        model_meta = self._resolve_model(task_type, model_alias)
-        
-        if not model_meta:
-            raise ValueError(f"Orchestrator: Model '{model_alias}' for task '{task_type}' not found.")
+        model_alias: str | None = payload.get("model")
 
-        runner = Runner(task_type, model_meta, self.context)
+        context = None
+
+        if (backend := payload.get("headers", {}).get("x-backend")):
+            if backend == "gpu":
+                context = GpuContext()
+            elif backend == "cpu":
+                context = CpuContext()
+            elif backend == "api":
+                context = ApiContext()
+
+        runner = Runner(task_type, model_alias, context)
+
+        self.contexts[runner.model_tag] = runner.context
+
         return await runner.run(payload)
-
-    def _resolve_model(self, task_type: str, model_alias: str) -> dict:
-        """Resolve metadados do modelo de forma genérica baseada no tipo de engine do adapter."""
-        from .model_loader import _ADAPTER_REGISTRY
-        from .services.models_service import model_service
-        
-        registry_func = _ADAPTER_REGISTRY.get(task_type)
-        if not registry_func:
-            return {}
-            
-        adapter_cls = registry_func()
-        engine_type = adapter_cls.get_engine_type()
-        
-        # Se não houver alias e for uma engine especializada (STT, TTS, EMBEDDINGS...)
-        # tentamos carregar a configuração padrão dessa engine diretamente.
-        if not model_alias and engine_type and engine_type != "TEXT_PRESETS":
-            config = model_service.backend.get_setting(engine_type)
-            if isinstance(config, dict):
-                # Mescla com os dados base do modelo (ex: path, engine...)
-                return (model_service.get(config.get("model")) or {}) | config
-        
-        # Fallback para a resolução padrão (TEXT_PRESETS ou busca global por alias)
-        return model_service.resolve_by_settings(model_alias)
 
     async def unload_model(self, model_alias: str):
         slots_to_remove = []
-        with self.context.state_lock:
-            for slot_name, data in self.context.state.items():
+
+        with self.contexts[model_alias].state_lock:
+            for slot_name, data in self.contexts[model_alias].state.items():
                 runner_meta = data["runner"].model
                 if runner_meta.get("model_alias") == model_alias or runner_meta.get("alias") == model_alias:
                     slots_to_remove.append(slot_name)
         
         for slot_name in slots_to_remove:
-            with self.context.state_lock:
-                data = self.context.state.get(slot_name)
+            with self.contexts[model_alias].state_lock:
+                data = self.contexts[model_alias].state.get(slot_name)
                 if data:
                     data["runner"].unload()
-                    del self.context.state[slot_name]
+                    del self.contexts[model_alias].state[slot_name]
                 
                 from .model_loader import model_loader
-                model_loader.delete_instance(self.context.context_type, model_alias)
+                model_loader.delete_instance(self.contexts[model_alias].context_type, model_alias)
 
 
-gpu_orchestrator = Orchestrator(GpuContext())
-cpu_orchestrator = Orchestrator(CpuContext())
+orchestrator = Orchestrator()

@@ -61,8 +61,16 @@ async def client():
             "is_default": False,
             "mcp_option": "internal"
         },
-        # {"alias": "flux-klein", "model": "flux-klein", "backend": "gpu"},
-        # {"alias": "rembg", "model": "rembg", "backend": "gpu"},
+          {
+            "alias": "Qwen3.5-4B",
+            "model": "Qwen3.5-4B",
+            "api_key": "",
+            "backend": "gpu",
+            "base_url": "",
+            "is_vision": False,
+            "is_default": False,
+            "mcp_option": "internal"
+        },
     ]
 
     backend.set_setting("TEXT_PRESETS", text_presets)
@@ -108,16 +116,28 @@ async def client():
         "kv_cache_quantization": "Q8_0"
     })
 
-    # backend.set_model("flux-klein", {
-    #     "model_alias": "flux-klein",
-    #     "model_type": "image",
-    #     "engine": "flux"
-    # })
-
-    # backend.set_model("rembg", {
-    #     "model_alias": "rembg",
-    #     "model_type": "vision"
-    # })
+    backend.set_model("Qwen3.5-4B",	{
+        "filename": "Qwen3.5-4B-Q4_K_M.gguf", 
+        "model_id": "unsloth/Qwen3.5-4B-GGUF", 
+        "template": "qwen", 
+        "file_path": "/home/jhonatanteixeira/.cache/huggingface/hub/models--unsloth--Qwen3.5-4B-GGUF/snapshots/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf", 
+        "is_vision": True, 
+        "mmproj_id": "unsloth/Qwen3.5-4B-GGUF", 
+        "n_seq_max": 1, 
+        "flash_attn": True, 
+        "kv_unified": False, 
+        "logits_all": False, 
+        "model_type": "vision", 
+        "num_layers": -1, 
+        "mmproj_path": "/home/jhonatanteixeira/.cache/huggingface/hub/models--unsloth--Qwen3.5-4B-GGUF/snapshots/e87f176479d0855a907a41277aca2f8ee7a09523/mmproj-F16.gguf",
+        "model_alias": "Qwen3.5-4B", 
+        "offload_kqv": False, 
+        "vision_on_cpu": True,
+        "context_window": 12288,
+        "force_reasoning": True, 
+        "mmproj_filename": "mmproj-F16.gguf", 
+        "kv_cache_quantization": "Q8_0"
+    })
 
     await bridge.start()
     transport = ASGITransport(app=app)
@@ -342,19 +362,15 @@ async def test_internal_mcp_image_generation(client):
     
     # The InternalMCP returns the image as a b64 string in the content if successful
     content = res_json["choices"][0]["message"]["content"]
+
+    import re
     
-    # Verify if it contains a base64 image (or is a list containing image object)
-    image_found = False
     if isinstance(content, list):
-        for part in content:
-            if isinstance(part, dict) and (part.get("type") == "image_url" or "image_url" in part):
-                image_found = True
-                break
+        assert any([part.get("type") == "image_url" and re.match(r'data:image/\w+;base64,.*', part.get("image_url").get("url")) for part in content]), f"Image was not generated in non-stream MCP mode. Content received: {content}"
+
     elif isinstance(content, str):
-        if "data:image/png;base64," in content or "data:image/jpeg;base64," in content:
-            image_found = True
+        assert re.match(r'data:image/\w+;base64,.*', content), f"Image was not generated in non-stream MCP mode. Content received: {content}"
         
-    assert image_found, f"Image was not generated in non-stream MCP mode. Content received: {content}"
     print("Non-Stream MCP Image Generation: OK")
 
     # 2. Stream Mode
@@ -377,9 +393,10 @@ async def test_internal_mcp_image_generation(client):
                 if data_str == "[DONE]": break
                 
                 chunk = json.loads(data_str)
-                delta = chunk["choices"][0].get("delta", {})
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
                 
-                if delta.get("type") == "image_url" or "image_url" in delta:
+                if delta.get('type', None) == "image_url":
+                    assert re.match(r'data:image/\w+;base64,.*', delta.get("image_url")), f"Image was not generated in stream MCP mode. Content received: {content}"
                     stream_image_found = True
                     print("[Image Chunk Found]", flush=True)
     
@@ -497,9 +514,9 @@ async def test_multimodal_complex_orchestration(client):
     print("Background removed successfully.")
 
     # 3. Verify with Qwen3.5-0.8B (Multimodal)
-    print("Step 3: Verifying transparency with Qwen3.5-0.8B (GPU)...")
+    print("Step 3: Verifying transparency with Qwen3.5-4B (GPU)...")
     vision_payload = {
-        "model": "Qwen3.5-0.8B",
+        "model": "Qwen3.5-4B",
         "messages": [
             {"role": "system", "content": "Você é um assistente visual preciso. Responda de forma curta e direta."},
             {
@@ -516,8 +533,44 @@ async def test_multimodal_complex_orchestration(client):
     assert vision_response.status_code == 200, f"Vision verification failed: {vision_response.text}"
     
     answer = vision_response.json()["choices"][0]["message"]["content"].strip().lower()
-    print(f"Qwen3.5-0.8B Answer: {answer}")
+    print(f"Qwen3.5-4B Answer: {answer}")
     
     # We expect 'sim' or something positive
     assert "sim" in answer or "yes" in answer or "transparente" in answer
+
+    # 2. Remove Background
+    print("Step 4: Editing image")
+    img_bytes = base64.b64decode(img_no_bg_b64)
+    files = {"image": ("image.png", img_bytes, "image/png")}
+    data = {"model": "flux-klein"}
+    
+    edit_response = await client.post("/v1/openai/images/edits", files=files, data=data, headers=headers_gpu)
+    assert edit_response.status_code == 200, f"Background removal failed: {bg_response.text}"
+    edit_b64 = edit_response.content
+    print("Image edited successfully.")
+
+    print("Step 5: Verifying image edited with Qwen3.5-4B (GPU)...")
+    vision_payload = {
+        "model": "Qwen3.5-4B",
+        "messages": [
+            {"role": "system", "content": "Você é um assistente visual preciso. Responda de forma curta e direta."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "A pessoa na imagem está triste? Responda apenas 'sim' ou 'não'."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{edit_b64}"}}
+                ]
+            }
+        ]
+    }
+    
+    vision_response = await client.post("/v1/openai/chat/completions", json=vision_payload, headers=headers_gpu)
+    assert vision_response.status_code == 200, f"Vision verification failed: {vision_response.text}"
+    
+    answer = vision_response.json()["choices"][0]["message"]["content"].strip().lower()
+    print(f"Qwen3.5-4B Answer: {answer}")
+    
+    # We expect 'sim' or something positive
+    assert "sim" in answer or "yes" in answer or "transparente" in answer
+
     print("Multimodal Complex Orchestration: OK")

@@ -3,6 +3,7 @@ import logging
 import asyncio
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
+from .adapter_base import AdapterBase
 from ..models.base_model import BaseModel
 
 if TYPE_CHECKING:
@@ -11,19 +12,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger("JulyEngine.Adapters.ChatAdapter")
 
 
-class ChatAdapter(BaseModel):
+class ChatAdapter(AdapterBase):
     """
     Adapter that unifies the internal XML tool calling logic (McpEmulator)
     with the local GGUF model execution.
     """
 
-    def __init__(self, backend="gpu", model_meta=None):
-        super().__init__(backend, model_meta)
+    def __init__(self, task_type: str, backend: str, model_meta: dict):
+        super().__init__(task_type, backend, model_meta)
+
+        from ..services.models_service import model_service
+
+        if not (model := model_meta.get("model")):
+            raise ValueError("no model defined for chat")
+        
+        self.meta = model_service.backend.get_model(model) or {} | model_meta
+
         self._strategy = None
         self._mcp = None
 
     @classmethod
-    def get_engine_type(cls):
+    def get_engine_type(cls, task_type: str | None = None):
         return "TEXT_PRESETS"
 
     def _get_strategy(self) -> BaseModel:

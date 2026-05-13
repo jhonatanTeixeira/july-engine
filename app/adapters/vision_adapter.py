@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 if TYPE_CHECKING:
     from PIL import Image
 
+from .adapter_base import AdapterBase
 from ..models.base_model import BaseModel
 
 logger = logging.getLogger("JulyEngine.Adapter.VisionAdapter")
@@ -23,7 +24,8 @@ _TASK_HANDLERS = {
 # Cache global de instâncias de modelos de visão para evitar carregamento duplo entre diferentes adapters
 _VISION_MODEL_CACHE: Dict[str, BaseModel] = {}
 
-class VisionAdapter(BaseModel):
+
+class VisionAdapter(AdapterBase):
     """
     Handles all vision task types: vision_chat, video_description,
     face_extraction, face_sync.
@@ -37,13 +39,12 @@ class VisionAdapter(BaseModel):
     """
 
     def __init__(self, task_type: str, backend: str = "gpu", model_meta: Optional[dict] = None):
-        super().__init__(backend, model_meta)
-        self.task_type = task_type
+        super().__init__(task_type, backend, model_meta)
         self._vision_model = None
         self._face_service = None
 
     @classmethod
-    def get_engine_type(cls):
+    def get_engine_type(cls, task_type):
         return "VISION"
 
     # ------------------------------------------------------------------

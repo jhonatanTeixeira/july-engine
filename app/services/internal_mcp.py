@@ -267,11 +267,20 @@ class InternalMCP:
             if name == "generate_image":
                 prompt = arguments.get("prompt", "")
                 logger.info(f"InternalMCP: Generating image with prompt: '{prompt[:100]}...'")
-                # process_image_generation returns an OpenAI-format dict: {"data": [{"b64_json": "..."}]}
-                bridge_res = await bridge.process_image_generation({"prompt": prompt}, {})
                 
-                # Extract the raw base64 string
-                response = bridge_res["data"][0]["b64_json"] if "data" in bridge_res and len(bridge_res["data"]) > 0 else ""
+                # FIX: Pass model and backend from config
+                bridge_res = await bridge.process_image_generation(
+                    {"prompt": prompt, "model": model}, 
+                    {"x-backend": backend}
+                )
+                
+                # Handle both string (direct b64) and dict (OpenAI format)
+                if isinstance(bridge_res, str):
+                    response = bridge_res
+                elif isinstance(bridge_res, dict) and "data" in bridge_res and len(bridge_res["data"]) > 0:
+                    response = bridge_res["data"][0].get("b64_json", "")
+                else:
+                    response = ""
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
@@ -285,7 +294,7 @@ class InternalMCP:
             elif name == "generate_audio":
                 text = arguments.get("text", "")
                 logger.info(f"InternalMCP: Generating audio for text: '{text[:100]}...'")
-                audio_bytes = await bridge.process_tts({"text": text}, {})
+                audio_bytes = await bridge.process_tts({"text": text, "model": model}, {"x-backend": backend})
                 audio = base64.b64encode(audio_bytes).decode("utf-8") if audio_bytes else ""
                 
                 gen_time = time.time() - start_time
@@ -303,13 +312,14 @@ class InternalMCP:
                 
                 search_payload = {
                     "query": query,
+                    "model": model, # Pass model from config
                     "search_depth": arguments.get("search_depth", "basic"),
                     "include_answer": arguments.get("include_answer", True),
                     "include_list": arguments.get("include_list", False),
                     "max_results": arguments.get("max_results", 5)
                 }
                 
-                res = await bridge.process_search_web(search_payload, {})
+                res = await bridge.process_search_web(search_payload, {"x-backend": backend})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 logger.info(f"InternalMCP: Web search completed (result length: {len(str(res))})")
@@ -337,14 +347,20 @@ class InternalMCP:
                 )
             
             elif name == "image_edit":
-                # process_image_edit returns an OpenAI-format dict: {"data": [{"b64_json": "..."}]}
+                # FIX: Pass model and backend from config
                 bridge_res = await bridge.process_image_edit({
                     "prompt": arguments.get("instruction", ""),
-                    "image": arguments.get("image", "")
-                }, {})
+                    "image": arguments.get("image", ""),
+                    "model": model
+                }, {"x-backend": backend})
                 
-                # Extract the raw base64 string
-                response = bridge_res["data"][0]["b64_json"] if "data" in bridge_res and len(bridge_res["data"]) > 0 else ""
+                # Handle both string (direct b64) and dict (OpenAI format)
+                if isinstance(bridge_res, str):
+                    response = bridge_res
+                elif isinstance(bridge_res, dict) and "data" in bridge_res and len(bridge_res["data"]) > 0:
+                    response = bridge_res["data"][0].get("b64_json", "")
+                else:
+                    response = ""
                 
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)

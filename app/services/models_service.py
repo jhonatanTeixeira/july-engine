@@ -28,6 +28,12 @@ class ModelsService:
                 return preset
         
         return presets[0] if len(presets) > 0 else {}
+    
+    def get_setting(self, name):
+        if name == 'IMAGE_REMOVE_BACKGROUND':
+            return {"model": "rembg", "backend": "cpu"}
+        
+        return self.backend.get_setting(name)
 
     def is_vision_model(self, model_alias: str) -> bool:
         """Detecta se um modelo possui capacidades visuais nativas."""
