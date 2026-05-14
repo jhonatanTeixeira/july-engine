@@ -99,30 +99,69 @@ class ImageResponse(BaseModel):
 
 @router.post("/chat/completions")
 async def chat_completions(request: ChatCompletionRequest, http_request: Request):
+    from ..telemetry.metrics import (
+        llm_time_to_first_token_seconds,
+        llm_tokens_per_second,
+        llm_tokens_total,
+    )
+    req_start = time.monotonic()
     payload = request.model_dump()
     headers = dict(http_request.headers)
     stream = payload.get('stream', False)
+    model = payload.get('model', 'unknown')
     response = await bridge.process_openai_chat(payload, headers)
 
     if stream:
-        # 2. O FORMATADOR FINAL (O Tradutor Dict -> Texto)
         async def sse_formatter(generator):
+            first_chunk = True
+            first_token_time = None
+            completion_tokens = 0
+            usage_counted = False
             try:
                 async for chunk_dict in generator:
-                    # Pega o dicionário e transforma em string JSON com o prefixo 'data: '
+                    now = time.monotonic()
+                    if first_chunk:
+                        llm_time_to_first_token_seconds.labels(model=model).observe(now - req_start)
+                        first_token_time = now
+                        first_chunk = False
+
+                    for choice in chunk_dict.get('choices', []):
+                        content = choice.get('delta', {}).get('content')
+                        if content:
+                            completion_tokens += 1
+
+                    usage = chunk_dict.get('usage')
+                    if usage and not usage_counted:
+                        llm_tokens_total.labels(model=model, token_type='prompt').inc(
+                            usage.get('prompt_tokens', 0)
+                        )
+                        llm_tokens_total.labels(model=model, token_type='completion').inc(
+                            usage.get('completion_tokens', completion_tokens)
+                        )
+                        completion_tokens = 0
+                        usage_counted = True
+
                     chunk_str = json.dumps(chunk_dict)
                     yield f"data: {chunk_str}\n\n"
             finally:
-                # O padrão OpenAI exige que o stream termine com a string [DONE]
+                if first_token_time and completion_tokens > 0:
+                    elapsed = time.monotonic() - first_token_time
+                    if elapsed > 0:
+                        llm_tokens_per_second.labels(model=model).observe(completion_tokens / elapsed)
+                    llm_tokens_total.labels(model=model, token_type='completion').inc(completion_tokens)
                 yield "data: [DONE]\n\n"
-                
-        # Retorna o StreamingResponse empacotando o nosso formatador
-        return StreamingResponse(
-            sse_formatter(response), 
-            media_type="text/event-stream"
-        )
+
+        return StreamingResponse(sse_formatter(response), media_type="text/event-stream")
     else:
-        # Se não for stream, o FastAPI converte o Dict pra JSON automaticamente!
+        if isinstance(response, dict):
+            usage = response.get('usage', {})
+            if usage:
+                llm_tokens_total.labels(model=model, token_type='prompt').inc(
+                    usage.get('prompt_tokens', 0)
+                )
+                llm_tokens_total.labels(model=model, token_type='completion').inc(
+                    usage.get('completion_tokens', 0)
+                )
         return response
 
 @router.post("/embeddings", response_model=EmbeddingResponse)
@@ -140,22 +179,31 @@ async def create_embeddings(request: EmbeddingRequest, http_request: Request):
 
 @router.post("/audio/speech")
 async def create_speech(request: SpeechRequest, http_request: Request):
+    from ..telemetry.metrics import tts_time_to_first_chunk_seconds
+    req_start = time.monotonic()
     headers = dict(http_request.headers)
     payload = request.model_dump()
     stream = payload.get('stream', False)
-    
+    model = payload.get('model', 'unknown')
+
     result = await bridge.process_tts(payload, headers)
-    
+
     if stream and hasattr(result, '__aiter__'):
         async def sse_formatter(generator):
+            first_chunk = True
             try:
                 async for chunk_bytes in generator:
+                    if first_chunk:
+                        tts_time_to_first_chunk_seconds.labels(model=model).observe(
+                            time.monotonic() - req_start
+                        )
+                        first_chunk = False
                     chunk_base64 = base64.b64encode(chunk_bytes).decode('utf-8')
                     json_data = json.dumps({"audio": chunk_base64})
                     yield f"data: {json_data}\n\n"
             finally:
                 yield "data: [DONE]\n\n"
-                
+
         return StreamingResponse(sse_formatter(result), media_type="text/event-stream")
     
     if result:

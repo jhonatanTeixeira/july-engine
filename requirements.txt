@@ -1,8 +1,9 @@
 --extra-index-url https://download.pytorch.org/whl/cu126
 
-# --find-links ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
+--find-links ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
+# -e ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python
 
--e ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python
+llama-cpp-python==0.3.36
 -e ../july_engine_libs/python/llama_gguf
 faster-whisper
 coqui-tts==0.27.5
@@ -50,6 +51,7 @@ gfpgan
 facexlib
 gguf
 sdnq==0.1.7
+prometheus_client
 onnxruntime-gpu
 sentence-transformers==5.4.1
 tavily-python

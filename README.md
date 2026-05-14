@@ -1,170 +1,152 @@
-# July Engine
+# july_engine — Motor de Inferência Multimodal
 
-**July Engine** is a high-performance multimodal inference engine
-, designed to operate hybridly between local hardware (CPU/GPU) and external APIs (Ollama, OpenAI, Anthropic). It was built with a focus on resource efficiency, making it ideal for environments with limited VRAM.
+O `july_engine` é o núcleo de inteligência do ecossistema Jully. Um motor de inferência multimodal construído com Python e FastAPI, capaz de processar texto, visão, áudio e imagem usando modelos GGUF locais ou APIs cloud — com gerenciamento automático e inteligente de VRAM.
 
-## 🏗️ Architecture
+## O que torna o july_engine excepcional
 
-```mermaid
-graph TD
-    %% Styling
-    classDef entrypoint fill:#2d3436,stroke:#74b9ff,stroke-width:2px,color:#fff;
-    classDef router fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff;
-    classDef orchestrator fill:#6c5ce7,stroke:#a29bfe,stroke-width:2px,color:#fff;
-    classDef factory fill:#00b894,stroke:#55efc4,stroke-width:2px,color:#fff;
-    classDef domain fill:#e17055,stroke:#fab1a0,stroke-width:2px,color:#fff;
-    classDef model_gpu fill:#d63031,stroke:#ff7675,stroke-width:2px,color:#fff;
-    classDef model_cpu fill:#e84393,stroke:#fd79a8,stroke-width:2px,color:#fff;
-    classDef model_api fill:#fdcb6e,stroke:#ffeaa7,stroke-width:2px,color:#333;
+### Gerenciamento Automático de VRAM
 
-    %% Layer 1: Endpoints (FastAPI)
-    subgraph API_Endpoints [API Layer]
-        O[openai.py]:::entrypoint
-        A[anthropic.py]:::entrypoint
-    end
+Nenhuma configuração manual de "quantos modelos cabem na GPU". O engine:
+1. Calcula VRAM necessária antes de carregar cada modelo
+2. Descarga o modelo menos recentemente usado (LRU) quando necessário
+3. Reduz layers de GPU gradualmente se ainda não cabe
+4. Mantém modelos "quentes" entre requests para zero cold-start
 
-    %% Layer 2: Routing
-    B{"Bridge (Routes by x-backend)"}:::router
-    O --> B
-    A --> B
+### Múltiplas Requests Simultâneas por Modelo
 
-    %% Layer 3: Orchestrators and Factory
-    subgraph Core_Management [Management & Orchestration]
-        GPU["GpuOrchestrator (Queue / VRAM)"]:::orchestrator
-        CPU["CpuOrchestrator (RAM / Throttle)"]:::orchestrator
-        API["ApiOrchestrator (Network I/O)"]:::orchestrator
-        ML[["ModelLoader (Factory)"]]:::factory
-    end
+Via **Sequence Pooling**: uma instância GGUF atende N requests paralelas sem duplicar VRAM:
 
-    B -- "x-backend: gpu" --> GPU
-    B -- "x-backend: cpu" --> CPU
-    B -- "x-backend: api" --> API
-
-    GPU -. "instantiates via" .-> ML
-    CPU -. "instantiates via" .-> ML
-    API -. "instantiates via" .-> ML
-
-    %% Layer 4: Domain Classes (Strategies)
-    subgraph Domain_Classes [Domain Classes]
-        BR((Brain Text)):::domain
-        EY((Eyes Vision/Emotion)):::domain
-        MO((Mouth TTS)):::domain
-        EA((Ears STT)):::domain
-        PR((Presence Image)):::domain
-        ME((Memory Embeddings)):::domain
-    end
-
-    ML --> BR & EY & MO & EA & PR & ME
-
-    %% Layer 5: Real Model Implementations
-    subgraph Model_Implementations [Model Strategies]
-        M_GGUF[GGUF llama-cpp]:::model_gpu
-        M_XTTS[XTTS2 TTS]:::model_gpu
-        M_P2P[Pix2Pix diffusers]:::model_gpu
-        
-        M_VLM[FastVLM onnx]:::model_cpu
-        M_EMO[Emotion onnx/cv2]:::model_cpu
-        M_PIP[Piper onnx]:::model_cpu
-        M_WHI[FasterWhisper]:::model_cpu
-        M_EMB[Embeddings Model]:::model_cpu
-        
-        M_LLM[LLMApi litellm]:::model_api
-    end
-
-    %% Strategic Mapping (Who uses what)
-    BR -. uses .-> M_GGUF & M_LLM
-    EY -. uses .-> M_VLM & M_EMO & M_GGUF & M_LLM
-    MO -. uses .-> M_XTTS & M_PIP & M_LLM
-    EA -. uses .-> M_WHI & M_LLM
-    PR -. uses .-> M_P2P & M_LLM
-    ME -. uses .-> M_EMB & M_LLM
+```yaml
+n_seq_max: 2  # 2 requests simultâneas, apenas +KV_Cache de overhead
 ```
 
-The system follows a clear hierarchy of responsibilities:
+### Compatibilidade Total com OpenAI API
 
-1.  **FastAPI (Main/Routers)**: REST interface compatible with OpenAI/Anthropic standards.
-2.  **Bridge**: The central brain. Decides which orchestrator to use based on headers (`x-backend`) or system load.
-3.  **Orchestrators**:
-    *   `GpuOrchestrator`: Manages models loaded in VRAM. Uses a `ResourceManager` to prevent memory overflow.
-    *   `CpuOrchestrator`: Runs models via GGUF (llama-cpp) or specialized libraries (Piper, FasterWhisper).
-    *   `ApiOrchestrator`: Forwards requests to external providers via `litellm`.
-4.  **Domain Classes (Brain, Eyes, Mouth, Ears, Presence, Memory)**: High-level abstractions for capabilities (Text, Vision, TTS, STT, Image Editing, Embeddings).
-5.  **Engine Models**: Real implementations of models (GGUF, XTTS2, Pix2Pix, etc.).
-
-## 💾 Memory Management (VRAM/RAM)
-
-For environments with low VRAM:
--   **Auto-Unload**: The `GpuOrchestrator` monitors VRAM via `ResourceManager`. If a heavy model (like Pix2Pix) is requested and there is no space, it unloads idle models.
--   **GGUF Offloading**: GGUF models can be configured to run entirely on the CPU or have layers offloaded to the GPU (`n_gpu_layers`).
--   **Singleton Loader**: The `ModelLoader` ensures that only one instance of each model exists in memory per backend.
-
-## 🤖 GGUF Models
-
-### How to download and use:
-1.  Download models in `.gguf` format (e.g., from Hugging Face `TheBloke` or `Bartowski`).
-2.  Place them in the `july_engine/models/` folder.
-3.  For vision, make sure you have the corresponding `-mmproj.gguf` file in the same folder.
-4.  In the payload, use the exact file name: `"model": "qwen3-0.6b.gguf"`.
-
-## 🛠️ Development Guide
-
-### How to add a new model:
-1.  **Engine Model**: Create a new class in `july_engine/engine_models/`. It must have `load` and `run` methods.
-2.  **Domain Mapping**: Update the corresponding domain class (e.g., `july_engine/domain/brain.py`) to recognize the new model tag or strategy.
-3.  **Orchestrator**: If the model requires special initialization, update the orchestrators.
-
-## 🗣️ Voice Resolution (TTS)
-
-The engine uses two configuration files in `storage/voices/` to map voice IDs to real files:
-1.  `voices.json`: Default system voices.
-2.  `uploaded_voices.json`: Voices dynamically uploaded by users.
-
-### Abstractions per Model:
--   **XTTS2**: Uses the `"path"` field. Must point to a reference `.wav` file (e.g., `yuni.wav`) within the voices folder. The model uses this audio for voice cloning (Zero-Shot).
--   **Piper**: Uses the `"piper_path"` field. Must follow the `rhasspy/piper-voices` repository structure (e.g., `pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx`). If the file does not exist locally, the engine will attempt to download it automatically from Hugging Face.
-
-Example JSON entry:
-```json
-{
-    "id": "yuni",
-    "language": "pt",
-    "path": "yuni.wav",
-    "piper_path": "pt/pt_BR/yuni/medium/pt_BR-yuni-medium.onnx"
-}
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:3000/v1/openai", api_key="any")
+# Funciona com qualquer modelo GGUF configurado
 ```
 
-### How to use in the Request:
-In the `POST /v1/openai/audio/speech` endpoint, the `voice` field must contain the `id` of the desired voice.
+## Stack
 
-**Example Payload:**
-```json
-{
-    "model": "xtts",
-    "input": "Hello, I am Yuni!",
-    "voice": "yuni"
-}
+- **FastAPI + uvicorn**: API assíncrona de alta performance
+- **llama-cpp-python**: Inferência GGUF (CUDA, Vulkan, CPU)
+- **PyTorch + Transformers**: VLMs, Whisper, embeddings
+- **Diffusers**: Stable Diffusion, Flux, AnimateDiff
+- **DeepFace + OpenCV**: Reconhecimento facial
+- **ChromaDB + pgvector**: Busca vetorial
+- **LiteLLM**: Dispatch para APIs cloud
+- **MCP**: Model Context Protocol para tool calling
+
+## Padrões de Projeto
+
+- **Bridge Pattern**: `bridge.py` roteia sem conhecimento de domínio
+- **Adapter Pattern**: `app/adapters/` — interface unificada por tipo de tarefa
+- **Orchestrator Pattern**: `orchestrator.py` — gestão de recursos e concorrência
+- **Service Locator**: `model_loader.py` — lazy loading com cache thread-safe
+
+## API Endpoints
+
+### Chat
+```
+POST /v1/openai/chat/completions   # OpenAI-compatible
+POST /v1/anthropic/messages        # Anthropic-compatible
 ```
 
-The engine will search for the ID `"yuni"` in the JSON files and resolve the corresponding paths for the requested model (`xtts` or `piper`).
+### Áudio
+```
+POST /v1/openai/audio/speech           # TTS streaming
+POST /v1/anthropic/audio/transcriptions # STT
+```
 
-## 📡 Custom Endpoints and Headers
+### Visão
+```
+POST /july/v1/vision/images/describe   # Image captioning
+POST /july/v1/vision/video/describe    # Video analysis
+POST /july/v1/vision/faces/extract     # Face detection + embedding
+POST /july/v1/vision/face/sync         # Batch face matching
+```
 
-### Critical Headers:
--   `x-backend`: `cpu`, `gpu`, or `api`. Defines where the processing will occur.
--   `x-base-url`: Base URL for API providers (used in the `api` backend).
+### RAG / Memória
+```
+POST /july/v1/rag/add          # Adiciona memória
+POST /july/v1/rag/search       # Busca semântica
+POST /july/v1/rag/smart-search # Busca + sumarização LLM
+POST /july/v1/rag/batch-add    # Inserção em lote
+```
 
-### Main Endpoints:
--   `POST /v1/openai/chat/completions`: Chat and Vision.
--   `POST /v1/openai/embeddings`: Vector generation.
--   `POST /v1/openai/audio/speech`: TTS (XTTS2, Piper).
--   `POST /v1/openai/audio/transcriptions`: STT (FasterWhisper).
--   `POST /v1/openai/images/generations`: Image generation.
--   `POST /v1/openai/images/edits`: Editing via Pix2Pix.
--   `GET /health`: Engine status and hardware usage.
+### Imagens
+```
+POST /v1/images/generations            # Flux/Stable Diffusion
+POST /july/v1/image-edit               # Pix2Pix instrucional
+POST /july/v1/image-remove-background  # rembg
+```
 
-## 🧪 Integration Tests
-Run the full suite to ensure nothing is broken:
+### Admin
+```
+GET  /health                 # Status + VRAM disponível
+GET  /api/models             # Modelos configurados
+GET  /api/settings           # Configuração completa
+POST /api/settings/update    # Hot-swap de modelos
+```
+
+## Headers de Controle
+
+```http
+x-backend: gpu          # GPU local (padrão)
+x-backend: cpu          # CPU puro
+x-backend: api          # API cloud
+x-context-window: 8192  # Janela de contexto específica
+x-session-id: abc123    # ID de sessão para KV cache
+```
+
+## Configuração (settings.yaml)
+
+```yaml
+TEXT_PRESETS:
+  - alias: "qwen-7b"
+    model_id: "bartowski/Qwen2.5-7B-Instruct-GGUF"
+    filename: "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
+    backend: "gpu"
+    context_window: 8192
+    flash_attn: true
+    kv_cache_quantization: "Q8_0"
+    n_seq_max: 2
+    is_default: true
+
+TTS:
+  alias: "kokoro"
+  model: "kokoro"
+  backend: "cpu"
+
+VISION:
+  alias: "moondream"
+  model_id: "vikhyatk/moondream2"
+  model_type: "vision"
+  backend: "gpu"
+```
+
+## Instalação
+
 ```bash
-pytest july_engine/tests/test_integration.py -v -s
+# Com CUDA (NVIDIA)
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
+pip install -r requirements.txt
+
+# Com Vulkan (AMD/Intel)
+CMAKE_ARGS="-DGGML_VULKAN=on" pip install llama-cpp-python
+pip install -r requirements.txt
+
+# Iniciar
+uvicorn main:app --host 0.0.0.0 --port 3000
 ```
-Useful flags: `--cpu-only`, `--gpu-only`, `--api-only`.
+
+## Documentação Completa
+
+- [Arquitetura do Engine](../docs/docs/arquitetura/july_engine.md)
+- [O Orchestrator](../docs/docs/arquitetura/orquestrador.md)
+- [O Bridge](../docs/docs/arquitetura/bridge.md)
+- [O Model Loader](../docs/docs/arquitetura/model_loader.md)
+- [Biblioteca llama_gguf](../docs/docs/python/llama_gguf_lib.md)
+- [Formato GGUF](../docs/docs/engine/gguf.md)

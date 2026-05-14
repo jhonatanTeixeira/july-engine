@@ -131,8 +131,9 @@ class UpdateMetadataRequest(BaseModel):
     mmproj_path: Optional[str] = None
 
 class WarmupItem(BaseModel):
-    task_type: str # brain, eyes, mouth, ears, presence, memory, world
-    model: str # model alias/tag
+    task_type: str  # text_chat, vision_chat, tts, stt, embeddings, image_generation, web_search, etc.
+    model: str  # model alias/tag
+    backend: Optional[str] = None  # gpu, cpu, api — se omitido, resolve via config
 
 class WarmupRequest(BaseModel):
     models: List[WarmupItem]
@@ -331,7 +332,7 @@ async def list_gguf_models():
 
 @router.put("/{model_alias}")
 async def update_model_metadata(model_alias: str, request: UpdateMetadataRequest):
-    from ..orchestrators.gpu_orchestrator import gpu_orchestrator
+    from ..orchestrator import orchestrator
     
     db = load_models_db()
     if model_alias not in db:
@@ -347,17 +348,17 @@ async def update_model_metadata(model_alias: str, request: UpdateMetadataRequest
     save_models_db(db)
     
     # Descarrega o modelo da GPU se ele estiver carregado, para que a próxima chamada use as novas configs
-    await gpu_orchestrator.unload_model(model_alias)
+    await orchestrator.unload_model(model_alias)
     
     return {"status": "success", "model": model_data}
 
 @router.delete("/gguf/{model_alias}")
 async def delete_model(model_alias: str):
-    from ..orchestrators.gpu_orchestrator import gpu_orchestrator
+    from ..orchestrator import orchestrator
     db = load_models_db()
     if model_alias in db:
         # Descarrega o modelo da GPU antes de remover do banco
-        await gpu_orchestrator.unload_model(model_alias)
+        await orchestrator.unload_model(model_alias)
         
         del db[model_alias]
         save_models_db(db)
@@ -368,56 +369,43 @@ async def delete_model(model_alias: str):
 async def model_warmup(request: WarmupRequest):
     """Pré-carrega modelos na VRAM/RAM baseado nos tipos de tarefa."""
     from ..model_loader import model_loader
-    
+    from ..services.models_service import model_service
+
     loaded_models = []
     errors = []
-    
-    loader_mapping = {
-        "brain": model_loader.get_brain,
-        "eyes": model_loader.get_eyes,
-        "mouth": model_loader.get_mouth,
-        "ears": model_loader.get_ears,
-        "presence": model_loader.get_presence,
-        "memory": model_loader.get_memory,
-        "world": model_loader.get_world
-    }
-    
+
     for item in request.models:
+        task = item.task_type.lower()
+        model_alias = item.model
         try:
-            task = item.task_type.lower()
-            model_alias = item.model
-            
-            if task not in loader_mapping:
-                errors.append(f"Tipo de tarefa desconhecido: {task}")
-                continue
-            
-            # 1. Resolve configurações do modelo
-            config = models_service.get(model_alias) or models_service.resolve_by_settings(model_alias)
-            
-            # 2. Heurística de Backend
-            backend = "gpu" # Default para modelos locais (warmup faz sentido aqui)
-            
-            if config:
-                if config.get("model_type") == "api" or config.get("backend") == "api":
+            backend = item.backend
+
+            if not backend:
+                engine_settings = model_service.get_setting(task) or {}
+                if isinstance(engine_settings, list):
+                    cfg = next((p for p in engine_settings if p.get("alias") == model_alias or p.get("model") == model_alias), engine_settings[0] if engine_settings else {})
+                else:
+                    cfg = engine_settings
+
+                if cfg.get("backend") == "api" or cfg.get("model_type") == "api":
                     backend = "api"
-                elif config.get("num_layers") == 0:
+                elif cfg.get("num_layers") == 0:
                     backend = "cpu"
-                elif config.get("backend"):
-                    backend = config.get("backend")
-            
-            # 3. Chama o loader e o load()
-            loader_func = loader_mapping[task]
-            domain_instance = loader_func(backend, model_alias)
-            
-            if hasattr(domain_instance, "load"):
-                domain_instance.load()
-                loaded_models.append({"task": task, "model": model_alias, "backend": backend})
-                logger.info(f"Warmup: model '{model_alias}' loaded for task '{task}' on backend '{backend}'")
-            
+                else:
+                    backend = cfg.get("backend", "gpu")
+
+            adapter = model_loader.get(task, backend=backend, model_tag=model_alias)
+
+            if hasattr(adapter, "load"):
+                adapter.load()
+
+            loaded_models.append({"task": task, "model": model_alias, "backend": backend})
+            logger.info(f"Warmup: model '{model_alias}' loaded for task '{task}' on backend '{backend}'")
+
         except Exception as e:
-            logger.error(f"Warmup: Error loading {item.model} for {item.task_type}: {e}")
-            errors.append(f"Erro ao carregar {model_alias}: {str(e)}")
-            
+            logger.error(f"Warmup: Error loading '{model_alias}' for task '{task}': {e}")
+            errors.append(f"{task}/{model_alias}: {str(e)}")
+
     return {
         "status": "success" if not errors else "partial_success",
         "loaded": loaded_models,

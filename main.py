@@ -46,9 +46,11 @@ logging.getLogger("llama_cpp").setLevel(logging.DEBUG if os.environ.get("DEBUG")
 # --- FIM CONFIGURAÇÃO DE LOGS ---
 
 
+import time
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from contextlib import asynccontextmanager
 from app.bridge import bridge
 from app.routers.openai import router as openai_router
@@ -119,6 +121,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def http_metrics_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration = time.monotonic() - start
+
+    route = request.scope.get("route")
+    path = route.path if route else request.url.path
+
+    from app.telemetry.metrics import http_requests_total, http_request_duration_seconds
+    http_requests_total.labels(
+        method=request.method, path=path, status_code=str(response.status_code)
+    ).inc()
+    http_request_duration_seconds.labels(
+        method=request.method, path=path
+    ).observe(duration)
+
+    return response
 
 @app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
@@ -195,6 +216,13 @@ app.include_router(july_router)
 @app.get("/health", tags=["July"])
 async def health():
     return {"status": "online", "engine": "July Engine"}
+
+
+@app.get("/metrics", tags=["July"], include_in_schema=False)
+async def prometheus_metrics():
+    """Prometheus scrape endpoint — usado pelo Grafana stack."""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 if __name__ == "__main__":

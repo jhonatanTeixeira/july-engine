@@ -1,0 +1,44 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: july_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: july_grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=july
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  grafana_data:
+
+# Usage:
+#   docker compose -f docker-compose.grafana.yml up -d
+#   Grafana → http://localhost:3001  (admin / july)
+#   Prometheus → http://localhost:9090
+#
+# PromQL examples:
+#   Requests/min:        rate(july_http_requests_total[1m]) * 60
+#   TTFT p95:            histogram_quantile(0.95, rate(july_llm_time_to_first_token_seconds_bucket[5m]))
+#   Tokens/min:          rate(july_llm_tokens_total[1m]) * 60
+#   Tokens/hour:         increase(july_llm_tokens_total[1h])
+#   Tokens/day:          increase(july_llm_tokens_total[24h])
+#   Median TPS:          histogram_quantile(0.5, rate(july_llm_tokens_per_second_bucket[5m]))
+#   TTFAC p95:           histogram_quantile(0.95, rate(july_tts_time_to_first_chunk_seconds_bucket[5m]))

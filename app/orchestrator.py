@@ -90,6 +90,7 @@ class BaseContext:
                 self.state[slot_name]['runner'] = None
 
     def mark_busy(self, slot_name: str, runner: 'Runner'):
+        print('marking busy')
         with self.state_lock:
             if slot_name not in self.state:
                 self.state[slot_name] = {'status': 'idle', 'usage_count': 0, 'runner': runner, 'last_used': time.time()}
@@ -98,6 +99,8 @@ class BaseContext:
             self.state[slot_name]['usage_count'] += 1
             self.state[slot_name]['runner'] = runner
             self.state[slot_name]['last_used'] = time.time()
+
+        print('isit busy', self.state)
 
     async def mark_idle(self, slot_name: str):
         async with self.condition:
@@ -242,6 +245,8 @@ class Runner:
                 domain = self.model
                 required = 0
 
+                print(self.context.__dict__)
+
                 if not self.context.is_loaded(self.slot_name):
                     required = await domain.get_required_vram(payload)
                 
@@ -257,7 +262,7 @@ class Runner:
                                 # Se chegou em 0 camadas e ainda não cabe, esperamos
                                 await self.wait_for_resources(required, timeout=10)
                                 if self.context.get_free_ram() < required:
-                                    raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
+                                    raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_ram()}MB")
                             
                             # Atualiza o valor 'required' após o decremento
                             required = await domain.get_required_vram(payload)
@@ -265,7 +270,7 @@ class Runner:
                             # Se o modelo não suporta decremento (ex: Flux), apenas espera por liberação externa
                             await self.wait_for_resources(required, timeout=10)
                             if self.context.get_free_ram() < required:
-                                raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_vram()}MB")
+                                raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_ram()}MB")
 
                 if not domain.is_loaded():
                     domain.load()
@@ -330,6 +335,9 @@ class Orchestrator:
 
     async def unload_model(self, model_alias: str):
         slots_to_remove = []
+
+        if not model_alias in self.contexts:
+            return
 
         with self.contexts[model_alias].state_lock:
             for slot_name, data in self.contexts[model_alias].state.items():
