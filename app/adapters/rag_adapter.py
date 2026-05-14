@@ -48,7 +48,7 @@ class RagAdapter(AdapterBase):
             # self.model_id já vem resolvido do BaseModel (meta["model"])
             engine = self.model_id
             
-            if engine == "multilingual_e5":
+            if engine == "multilingual-e5":
                 from ..models.multilingual_e5 import MultilingualE5Model
                 self._emb_model = MultilingualE5Model(backend=self.backend, model_meta=self.meta)
             else:  # default: bge_micro

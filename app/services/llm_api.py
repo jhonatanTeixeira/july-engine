@@ -29,9 +29,13 @@ class DownloadImage:
                     response = await client.post(url, headers=headers, data=data, files=files)
                     response.raise_for_status()
                     return response.json()
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
                 last_error = e
-                logger.warning(f"DownloadImage [POST]: Tentativa {attempt}/{retries} falhou na API {url}. Erro: {str(e)}")
+                logger.warning(f"DownloadImage [POST]: Tentativa {attempt}/{retries} falhou na API {url}. Erro: {str(e.response.text)}")
+                
+                if e.response.status_code in [400, 422]:
+                    raise
+                
                 if attempt < retries:
                     await asyncio.sleep(2)  # Backoff simples antes da próxima tentativa
         
@@ -272,50 +276,60 @@ class LLMApi:
             raise e
 
     async def run_image_edit(self, model: str, prompt: str, image: Any, mask: Optional[Any] = None, headers: Optional[Dict[str, str]] = None, **kwargs) -> str:
-        """Runs image editing directly via httpx since litellm lacks image_editing, now wrapped in DownloadImage."""
+        """Correção para suportar o padrão de array de imagens (image[])"""
         api_base = self._extract_base_url(headers) or "https://api.openai.com/v1"
         api_key = self._extract_api_key(headers)
         
         req_headers = {}
-        
         if api_key:
             req_headers["Authorization"] = f"Bearer {api_key}"
             
         url = f"{api_base.rstrip('/')}/images/edits"
         
-        # 1. Arquivos Binários (Obrigatório para o endpoint)
-        files = {
-            "image": ("image.png", image, "image/png")
-        }
+        # 1. Construindo a lista de arquivos no formato array (image[])
+        # No httpx, para repetir a mesma chave, usamos uma lista de tuplas
+        file_list = []
         
-        # Acopla a máscara como arquivo se ela existir
+        # Adiciona a imagem principal (ou a primeira da lista)
+        file_list.append(("image[]", ("image_1.png", image, "image/png")))
+        file_list.append(("image", ("image_1.png", image, "image/png")))
+        
+        # Se 'image' for na verdade uma lista de imagens (baseado no seu curl)
+        # Você poderia iterar aqui. Mas se o parâmetro 'image' for um só:
         if mask:
-            files["mask"] = ("mask.png", mask, "image/png")
-        
-        # 2. Dados de Texto (httpx exige que todos os valores sejam strings)
+            file_list.append(("image[]", ("mask.png", mask, "image/png")))
+
+        # 2. Dados de Texto
         data = {
             "prompt": prompt,
             "model": model
         }
         
-        # Sanitiza os kwargs (ex: n=1 vira n="1")
+        # Sanitiza kwargs
         for k, v in kwargs.items():
             if v is not None:
                 data[k] = str(v)
         
         try:
-            res_json = await DownloadImage.post_api_with_retry(url, headers=req_headers, data=data, files=files, retries=10)
+            # Note que passamos file_list (lista de tuplas) para files
+            res_json = await DownloadImage.post_api_with_retry(
+                url, 
+                headers=req_headers, 
+                data=data, 
+                files=file_list, 
+                retries=10
+            )
+            
+            # O retorno costuma seguir o padrão OpenAI
             raw_data = res_json["data"][0].get("b64_json") or res_json["data"][0].get("url")
-            logger.info(f"Engine LLMApi (ImageEdit) executed successfully on {self.backend} with {model}")
+            logger.info(f"Engine LLMApi (ImageEdit) executado com sucesso: {model}")
             return self._ensure_base64(raw_data)
                 
         except HTTPStatusError as e:
-            logger.error(f"LLMApi: Image edit failed: {e.response.status_code} - {e.response.content.decode('utf-8')}")
+            logger.error(f"Erro na API DeepInfra: {e.response.status_code} - {e.response.text}")
             raise e
         except Exception as e:
-            import traceback
-            error_trace = traceback.format_exc()
-            logger.error(f"LLMApi: FATAL error in image edit:\n{error_trace}")
+            logger.error(f"Erro fatal no image edit: {str(e)}")
             raise e
 
     # ------------------------------------------------------------------

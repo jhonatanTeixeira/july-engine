@@ -14,12 +14,13 @@ class MultilingualE5Model(BaseModel):
         self.device = "cpu"
         self._model = None
 
-    def get_required_vram(self, payload: Dict[str, Any]) -> int:
+    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         return 0 if self.backend == "cpu" else 500
 
     def load(self, n_ctx=None, num_layers=None):
         if self._model is not None:
             return
+
         import torch
         from sentence_transformers import SentenceTransformer
 
@@ -36,18 +37,18 @@ class MultilingualE5Model(BaseModel):
 
     def run(self, payload: Dict[str, Any], **kwargs) -> List[float]:
         input_text = payload.get("input") or payload.get("text") or payload.get("query", "")
-        emb_type = payload.get("emb_type", "default")
+        emb_type = "passage" if payload.get("input") or payload.get("text") else "query"
 
         if self._model is None:
             self.load()
 
         if emb_type == "query":
-            input_text = f"query: {input_text}" if not input_text.startswith("query: ") else input_text
+            input_text = f"query: {input_text}"
         elif emb_type == "passage":
-            input_text = f"passage: {input_text}" if not input_text.startswith("passage: ") else input_text
+            input_text = f"passage: {input_text}"
         else:
-            if not input_text.startswith("query: ") and not input_text.startswith("passage: "):
-                raise ValueError("MultilingualE5 requires emb_type='query' or 'passage'")
+            raise ValueError("MultilingualE5 requires emb_type='query' or 'passage'")
 
         embedding = self._model.encode(input_text, normalize_embeddings=True)
+
         return embedding.tolist()
