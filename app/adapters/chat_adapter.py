@@ -108,6 +108,10 @@ class ChatAdapter(AdapterBase):
 
         original_payload = copy.deepcopy(payload)
 
+        if not self.meta.get("is_vision"):
+            payload["messages"] = helper.filter_images(payload.get("messages", []))
+            payload["messages"] = helper.filter_audios(payload.get("messages", []))
+
         # Execute local model
         response = await self._get_strategy().run(payload)
 

@@ -52,13 +52,21 @@ class MultiModalHelper:
     def _filter_content_by_type(self, types_to_remove: List[str], messages: Optional[List[Dict]] = None) -> List[Dict]:
         msgs = deepcopy(messages if messages is not None else self.messages)
         if not msgs: return []
-        
+
         for msg in msgs:
             content = msg.get("content", "")
-            
+
             if isinstance(content, list):
-                msg["content"] = [part for part in content if part.get("type") not in types_to_remove]
-        
+                filtered = [part for part in content if part.get("type") not in types_to_remove]
+                # Normalize: plain string when only one text part remains, empty string
+                # when nothing is left — avoids sending bare lists to the LLM API.
+                if not filtered:
+                    msg["content"] = ""
+                elif len(filtered) == 1 and filtered[0].get("type") == "text":
+                    msg["content"] = filtered[0].get("text", "")
+                else:
+                    msg["content"] = filtered
+
         return msgs
 
     def filter_images(self, messages: Optional[List[Dict]] = None) -> List[Dict]:

@@ -33,7 +33,7 @@ class LLMAdapter(BaseModel):
             async def response_iterator():
                 async for chunk in reponse:
                     yield chunk.model_dump()
-                    asyncio.sleep(0)
+                    await asyncio.sleep(0)
 
             return response_iterator()
         else:
