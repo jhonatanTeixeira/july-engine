@@ -338,7 +338,7 @@ class InternalMCP:
                     "max_results": arguments.get("max_results", 5)
                 }
                 
-                res = await bridge.process_search_web(search_payload, {"x-backend": backend})
+                res = await bridge.process_search_web(search_payload, {"x-backend": backend} if backend else {})
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 logger.info(f"InternalMCP: Web search completed (result length: {len(str(res))})")

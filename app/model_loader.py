@@ -122,7 +122,7 @@ class ModelLoader:
             if key in self.instances:
                 return self.instances[key]
             
-            instance = adapter_cls(task_type, backend=backend or model_meta["backend"], model_meta=model_meta)
+            instance = adapter_cls(task_type, backend=backend or model_meta.get("backend", "api"), model_meta=model_meta)
 
             self.instances[key] = instance
             logger.info(f"[ModelLoader] model={model_tag} backend={backend} task={task_type}")
