@@ -307,6 +307,15 @@ class Runner:
 class Orchestrator:
     def __init__(self):
         self.contexts: Dict[str, BaseContext] = {}
+        # Singleton contexts per backend — shared across all models on the same hardware.
+        # This is the critical fix: without singletons, every request creates a fresh
+        # context with empty state, so is_loaded() always returns False and the model
+        # tries to reload itself while still occupying VRAM.
+        self._backend_contexts: Dict[str, BaseContext] = {
+            'gpu': GpuContext(),
+            'cpu': CpuContext(),
+            'api': ApiContext(),
+        }
 
     async def start(self):
         pass
@@ -317,18 +326,17 @@ class Orchestrator:
     async def submit_task(self, task_type: str, payload: dict):
         model_alias: str | None = payload.get("model")
 
-        context = None
-
-        if (backend := payload.get("headers", {}).get("x-backend")):
-            if backend == "gpu":
-                context = GpuContext()
-            elif backend == "cpu":
-                context = CpuContext()
-            elif backend == "api":
-                context = ApiContext()
+        # Pre-select context only when x-backend is explicit; Runner.__init__ will
+        # determine the backend from model metadata otherwise.
+        backend = payload.get("headers", {}).get("x-backend")
+        context = self._backend_contexts.get(backend) if backend else None
 
         runner = Runner(task_type, model_alias, context)
 
+        # Always replace runner.context with the shared singleton for that backend type.
+        # This guarantees slot state (is_loaded, mark_busy, unload_next) is consistent
+        # across all requests for all models on the same backend.
+        runner.context = self._backend_contexts[runner.context.context_type]
         self.contexts[runner.model_tag] = runner.context
 
         return await runner.run(payload)
