@@ -100,29 +100,39 @@ class ModelLoader:
 
                 if setting:
                     model_meta = setting if isinstance(setting, dict) else next((p for p in setting if p.get("is_default", False)), setting[0])
-                    
                     model_tag = model_meta.get("alias") or model_meta.get("model")
             else:
                 if isinstance(engine_settings, list):
                     default_setting = next((p for p in engine_settings if p.get("is_default", False)), engine_settings[0])
-                    model_meta = next((p for p in engine_settings if p.get("alias") == model_tag or p.get("model") == model_tag), default_setting)
+                    model_meta = next(
+                        (p for p in engine_settings if p.get("alias") == model_tag or p.get("model") == model_tag),
+                        default_setting,
+                    )
+                    # Normalize model_tag to the actual resolved model to prevent cache key mismatches
+                    # where e.g. "multilingual_e5" maps to the default chat model (Qwen) under a wrong key.
+                    model_tag = model_meta.get("alias") or model_meta.get("model") or model_tag
                 elif engine_settings and engine_settings.get("model") == model_tag:
+                    model_meta = engine_settings
+                elif engine_settings and engine_settings.get("alias") == model_tag:
                     model_meta = engine_settings
                 else:
                     model_meta = {"model": model_tag, "backend": backend}
 
             if not model_meta:
                 raise ValueError(f'no model or setting could be found for {task_type}')
-            
+
             if backend:
                 model_meta["backend"] = backend
-            
-            key = f"{task_type}_{backend}_{model_tag}"
+
+            # Use the resolved backend for the cache key so that requests with/without
+            # explicit x-backend headers always hit the same cached instance.
+            resolved_backend = backend or model_meta.get("backend") or "api"
+            key = f"{task_type}_{resolved_backend}_{model_tag}"
 
             if key in self.instances:
                 return self.instances[key]
-            
-            instance = adapter_cls(task_type, backend=backend or model_meta.get("backend", "api"), model_meta=model_meta)
+
+            instance = adapter_cls(task_type, backend=resolved_backend, model_meta=model_meta)
 
             self.instances[key] = instance
             logger.info(f"[ModelLoader] model={model_tag} backend={backend} task={task_type}")

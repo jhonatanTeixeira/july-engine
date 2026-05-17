@@ -45,13 +45,14 @@ class RagAdapter(AdapterBase):
 
     def _get_emb_model(self):
         if self._emb_model is None:
-            # self.model_id já vem resolvido do BaseModel (meta["model"])
-            engine = self.model_id
-            
+            # Normalize model_id: treat hyphens and underscores as equivalent so that
+            # "multilingual_e5" (underscore from alias) still resolves to MultilingualE5Model.
+            engine = self.model_id.lower().replace("_", "-")
+
             if engine == "multilingual-e5":
                 from ..models.multilingual_e5 import MultilingualE5Model
                 self._emb_model = MultilingualE5Model(backend=self.backend, model_meta=self.meta)
-            else:  # default: bge_micro
+            else:
                 from ..models.bge_micro import BgeMicroModel
                 self._emb_model = BgeMicroModel(backend=self.backend, model_meta=self.meta)
         return self._emb_model

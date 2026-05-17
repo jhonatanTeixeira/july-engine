@@ -55,23 +55,15 @@ class BaseContext:
         from .resource_manager import resource_manager
         self.state = {}
         self.state_lock = threading.Lock()
-        self.orchestrator_lock = asyncio.Lock() 
-        self.condition = asyncio.Condition() 
+        self.orchestrator_lock = asyncio.Lock()
+        self.condition = asyncio.Condition()
         self.resource_manager = resource_manager
+        self.model_locks = {}
+        self.model_locks_lock = threading.Lock()
 
     @property
     def context_type(self) -> str:
         return "base"
-
-    def __init__(self):
-        from .resource_manager import resource_manager
-        self.state = {}
-        self.state_lock = threading.Lock()
-        self.orchestrator_lock = asyncio.Lock() 
-        self.condition = asyncio.Condition() 
-        self.resource_manager = resource_manager
-        self.model_locks = {}
-        self.model_locks_lock = threading.Lock()
 
     def get_model_lock(self, model_alias: str):
         with self.model_locks_lock:
@@ -90,17 +82,14 @@ class BaseContext:
                 self.state[slot_name]['runner'] = None
 
     def mark_busy(self, slot_name: str, runner: 'Runner'):
-        print('marking busy')
         with self.state_lock:
             if slot_name not in self.state:
                 self.state[slot_name] = {'status': 'idle', 'usage_count': 0, 'runner': runner, 'last_used': time.time()}
-            
+
             self.state[slot_name]['status'] = 'busy'
             self.state[slot_name]['usage_count'] += 1
             self.state[slot_name]['runner'] = runner
             self.state[slot_name]['last_used'] = time.time()
-
-        print('isit busy', self.state)
 
     async def mark_idle(self, slot_name: str):
         async with self.condition:
@@ -180,13 +169,9 @@ class Runner:
 
         if not self.context:
             backend = self.model.backend
-
-            if backend == "gpu":
-                self.context = GpuContext()
-            elif backend == "cpu":
-                self.context = CpuContext()
-            elif backend == "api":
-                self.context = ApiContext()
+            _ctx_map = {"gpu": GpuContext, "cpu": CpuContext, "api": ApiContext}
+            ctx_cls = _ctx_map.get(backend, ApiContext)
+            self.context = ctx_cls()
         
         self.model_loader = model_loader
         self.is_running = False
@@ -244,8 +229,6 @@ class Runner:
 
                 domain = self.model
                 required = 0
-
-                print(self.context.__dict__)
 
                 if not self.context.is_loaded(self.slot_name):
                     required = await domain.get_required_vram(payload)
