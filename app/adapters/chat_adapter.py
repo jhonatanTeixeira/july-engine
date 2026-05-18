@@ -75,6 +75,8 @@ class ChatAdapter(AdapterBase):
 
         helper = MultiModalHelper(payload)
 
+        print(payload)
+
         if not self.meta.get("is_vision"):
             await helper.process_vision()
         else:
