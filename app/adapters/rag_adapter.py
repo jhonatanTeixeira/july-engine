@@ -52,6 +52,13 @@ class RagAdapter(AdapterBase):
             if engine == "multilingual-e5":
                 from ..models.multilingual_e5 import MultilingualE5Model
                 self._emb_model = MultilingualE5Model(backend=self.backend, model_meta=self.meta)
+            elif "bert" in engine:
+                from ..models.bert import CodeBERT, CodeGraphBERT
+                
+                if engine == "codebert":
+                    self._emb_model = CodeBERT(backend=self.backend)
+                else:
+                    self._emb_model = CodeGraphBERT(backend=self.backend)
             else:
                 from ..models.bge_micro import BgeMicroModel
                 self._emb_model = BgeMicroModel(backend=self.backend, model_meta=self.meta)

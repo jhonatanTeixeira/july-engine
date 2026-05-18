@@ -332,7 +332,7 @@ class Orchestrator:
 
         with self.contexts[model_alias].state_lock:
             for slot_name, data in self.contexts[model_alias].state.items():
-                runner_meta = data["runner"].model
+                runner_meta = data["runner"].model.meta
                 if runner_meta.get("model_alias") == model_alias or runner_meta.get("alias") == model_alias:
                     slots_to_remove.append(slot_name)
         

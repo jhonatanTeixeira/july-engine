@@ -91,10 +91,7 @@ class ChatAdapter(AdapterBase):
         if enable_internal_mcp:
             if mcp_option == "internal":
                 mcp_handler = self._get_mcp().internal_mcp
-            elif mcp_option == "external_only":
-                from ..services.external_mcp import external_mcp_manager
-                mcp_handler = external_mcp_manager
-            else: # emulated
+            else: # emulated (default) — external MCPs are agent-side only
                 mcp_handler = self._get_mcp()
         elif mcp_option == "emulated":
             # Special case: Enable McpEmulator only for XML/OpenAI conversion (no internal execution)

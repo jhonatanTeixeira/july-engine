@@ -8,8 +8,6 @@ from typing import Dict, Any, List, AsyncGenerator, Tuple, Union, Optional
 from numpy import append
 
 from ..persistence import get_backend
-from .external_mcp import external_mcp_manager
-
 logger = logging.getLogger("JulyEngine.InternalMCP")
 
 
@@ -191,27 +189,10 @@ class InternalMCP:
             }
         ]
         
-        external_tools = external_mcp_manager.get_all_tools(whitelist)
-        
-        all_tools = internal_tools + external_tools
-        
-        # Injetamos metadados dos servidores para as ferramentas externas
-        # para que o frontend possa exibir os detalhes de conexão
-        mcps = self.backend_db.get_all_mcps()
-        mcp_map = {mcp['id']: mcp for mcp in mcps}
-
-        for tool in all_tools:
-            name = tool.get("function", {}).get("name", "")
-            if "__" in name:
-                mcp_id = name.split("__")[0]
-                if mcp_id in mcp_map:
-                    # Inclui variáveis de ambiente e config no retorno da tool
-                    tool["mcp_server"] = mcp_map[mcp_id]
-
         if whitelist is not None and len(whitelist) > 0:
-            all_tools = [t for t in all_tools if t["function"]["name"] in whitelist]
-            
-        return all_tools
+            internal_tools = [t for t in internal_tools if t["function"]["name"] in whitelist]
+
+        return internal_tools
 
     def _get_config_for(self, setting_key: str) -> Dict[str, Any]:
         config = self.backend_db.get_setting(setting_key)
@@ -233,39 +214,9 @@ class InternalMCP:
             start_time = time.time()
             
             if "__" in name:
-                result = await external_mcp_manager.execute_tool(name, arguments)
-                gen_time = time.time() - start_time
-                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
-                
-                # Check for multimodal content in result (MCP CallToolResult)
-                texts = []
-                images = []
-                audios = []
-                
-                content_list = []
-                if hasattr(result, "content"):
-                    content_list = result.content
-                elif isinstance(result, dict) and "content" in result:
-                    content_list = result["content"]
-                
-                for item in content_list:
-                    itype = getattr(item, "type", None) or (item.get("type") if isinstance(item, dict) else None)
-                    if itype == "text":
-                        texts.append(getattr(item, "text", None) or item.get("text", ""))
-                    elif itype == "image":
-                        images.append(getattr(item, "data", None) or item.get("data", ""))
-                    elif itype == "audio":
-                        audios.append(getattr(item, "data", None) or item.get("data", ""))
-                
-                text_res = "\n".join(texts) if texts else "Tool executed."
-                
-                if images:
-                    return ("Image generated", UserToolReponse(images[0], 'image'))
-                if audios:
-                    return ("Audio generated", UserToolReponse(audios[0], 'audio'))
-                    
-                return (text_res, None)
-                
+                # External MCP tools are executed on the agent side, not here.
+                return (f"Tool '{name}' is an agent-side MCP tool and cannot be executed by the engine directly.", None)
+
             config_map = {
                 "generate_image": "IMAGE_CREATE",
                 "generate_audio": "TTS",

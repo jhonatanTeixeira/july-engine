@@ -28,6 +28,9 @@ class ColorFormatter(logging.Formatter):
 env = os.environ['ENV'] if 'ENV' in os.environ else None
 load_dotenv(f'.env.{env}' if env else '.env', verbose=True)
 
+from app.telemetry.otel import setup_otel
+setup_otel("july-engine")
+
 # Configura o logger raiz para o ecossistema JulyEngine
 root_logger = logging.getLogger("JulyEngine")
 root_logger.setLevel(logging.DEBUG if os.environ.get("DEBUG") == "true" else logging.INFO)
@@ -64,9 +67,7 @@ from app.routers.july import router as july_router
 
 from app.routers.settings_router import router as settings_router
 from app.routers.services_router import router as services_router
-from app.routers.mcps_router import router as mcps_router
 from app.routers.webhooks_router import router as webhooks_router
-from app.services.external_mcp import external_mcp_manager
 from app.events import event_manager
 from fastapi.staticfiles import StaticFiles
 import uuid
@@ -77,10 +78,7 @@ async def lifespan(app: FastAPI):
     # Startup: Start the bridge which starts all orchestrators
     event_manager.start()
     await bridge.start()
-    await external_mcp_manager.start()
     yield
-    # Shutdown: Stop the bridge which stops all orchestrators
-    await external_mcp_manager.stop()
     await bridge.stop()
     event_manager.stop()
 
@@ -142,17 +140,53 @@ async def http_metrics_middleware(request: Request, call_next):
     return response
 
 @app.middleware("http")
+async def otel_tracing_middleware(request: Request, call_next):
+    from opentelemetry import trace
+    from opentelemetry.propagate import extract
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    carrier = {k.lower(): v for k, v in request.headers.items()}
+    ctx = extract(carrier)
+
+    correlation_id = request.headers.get("x-correlation-id") or str(uuid.uuid4())
+    tracer = trace.get_tracer("july-engine")
+
+    with tracer.start_as_current_span(
+        f"{request.method} {request.url.path}",
+        context=ctx,
+        kind=SpanKind.SERVER,
+        attributes={
+            "http.method": request.method,
+            "http.url": str(request.url),
+            "http.target": request.url.path,
+            "correlation.id": correlation_id,
+        },
+    ) as span:
+        try:
+            response = await call_next(request)
+            span.set_attribute("http.status_code", response.status_code)
+            if response.status_code >= 500:
+                span.set_status(Status(StatusCode.ERROR))
+            response.headers["x-correlation-id"] = correlation_id
+            return response
+        except Exception as exc:
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            span.record_exception(exc)
+            raise
+
+
+@app.middleware("http")
 async def request_id_middleware(request: Request, call_next):
-    # Gera um ID único para a requisição HTTP
-    rid = str(uuid.uuid4())
+    # Reuse correlation ID from gateway as the request ID when available
+    rid = request.headers.get("x-correlation-id") or str(uuid.uuid4())
     token_rid = request_id_var.set(rid)
     # Inicializa o registro de instâncias para esta requisição
     token_instances = acquired_instances_var.set({})
-    
+    _is_streaming = False
+
     try:
         from fastapi.responses import StreamingResponse
-        
-        # Função de limpeza que aceita um dicionário explícito
+
         def cleanup_explicit(to_cleanup):
             if to_cleanup:
                 for pool, inst in to_cleanup.items():
@@ -160,40 +194,49 @@ async def request_id_middleware(request: Request, call_next):
                         pool._force_release(inst)
                     except:
                         pass
-        
+
         try:
             response = await call_next(request)
-            
+
             # Captura as instâncias adquiridas ATÉ AGORA nesta request
             current_acquired = acquired_instances_var.get().copy()
-            
+
             if isinstance(response, StreamingResponse):
+                _is_streaming = True
                 original_iterator = response.body_iterator
-                
+                # Capture tokens so wrapped_iterator can reset them after the stream
+                _token_rid = token_rid
+                _token_instances = token_instances
+
                 async def wrapped_iterator():
                     try:
                         async for chunk in original_iterator:
                             yield chunk
                     finally:
+                        # Force-release any sequence slots acquired during this request
                         cleanup_explicit(current_acquired)
-                
+                        # Reset context vars only now — keeping request_id_var alive
+                        # throughout the stream ensures SequencePool.release() sees
+                        # the request ID and does NOT free the slot between agentic
+                        # loop turns (tool call → second LLM turn).
+                        request_id_var.reset(_token_rid)
+                        acquired_instances_var.reset(_token_instances)
+
                 response.body_iterator = wrapped_iterator()
                 return response
-                
-            # Para respostas síncronas
+
+            # Resposta síncrona: limpa aqui mesmo
             cleanup_explicit(current_acquired)
             return response
         finally:
-            # Se deu erro antes de 'current_acquired' ser definido ou antes da resposta
             if 'current_acquired' not in locals():
                 cleanup_explicit(acquired_instances_var.get())
-            elif not isinstance(response, StreamingResponse):
-                # Já limpamos acima para sync, mas por segurança...
-                pass
     finally:
-        # Limpa o contexto
-        request_id_var.reset(token_rid)
-        acquired_instances_var.reset(token_instances)
+        # For streaming responses the cleanup/reset happens inside wrapped_iterator.
+        # Only reset here for non-streaming (or early-error) paths.
+        if not _is_streaming:
+            request_id_var.reset(token_rid)
+            acquired_instances_var.reset(token_instances)
 
 # Servir arquivos estáticos do diretório storage/voices
 storage_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "voices")
@@ -208,7 +251,6 @@ app.include_router(voice_router)
 app.include_router(search_router)
 app.include_router(settings_router)
 app.include_router(services_router)
-app.include_router(mcps_router)
 app.include_router(webhooks_router)
 app.include_router(july_router)
 

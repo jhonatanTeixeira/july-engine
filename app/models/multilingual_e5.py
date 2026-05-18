@@ -38,6 +38,8 @@ class MultilingualE5Model(BaseModel):
     def run(self, payload: Dict[str, Any], **kwargs) -> List[float]:
         input_text = payload.get("input") or payload.get("text") or payload.get("query", "")
         emb_type = "passage" if payload.get("input") or payload.get("text") else "query"
+        logger.info('MultilingualE5 is running')
+        logger.debug('MultilingualE5 input: ' + input_text)
 
         if self._model is None:
             self.load()

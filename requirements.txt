@@ -52,6 +52,8 @@ facexlib
 gguf
 sdnq==0.1.7
 prometheus_client
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
 onnxruntime-gpu
 sentence-transformers==5.4.1
 tavily-python
