@@ -26,7 +26,7 @@ class ChatAdapter(AdapterBase):
         if not (model := model_meta.get("model")):
             raise ValueError("no model defined for chat")
         
-        self.meta = model_service.backend.get_model(model) or {} | model_meta
+        self.meta = (model_service.backend.get_model(model) or {}) | model_meta
 
         self._strategy = None
         self._mcp = None
@@ -74,8 +74,6 @@ class ChatAdapter(AdapterBase):
         from ..services.helpers import MultiModalHelper
 
         helper = MultiModalHelper(payload)
-
-        print(payload)
 
         if not self.meta.get("is_vision"):
             await helper.process_vision()
