@@ -11,6 +11,21 @@ from ..persistence import get_backend
 logger = logging.getLogger("JulyEngine.InternalMCP")
 
 
+async def _to_async_iter(obj):
+    """Normaliza dict, generator síncrono ou async generator em um async generator."""
+    if obj is None:
+        return
+    if hasattr(obj, '__aiter__'):
+        async for item in obj:
+            yield item
+    elif hasattr(obj, '__iter__') and not isinstance(obj, (str, bytes, dict)):
+        for item in obj:
+            yield item
+            await asyncio.sleep(0)
+    elif isinstance(obj, dict):
+        yield obj
+
+
 class UserToolReponse:
     def __init__(self, response, content_type: str = 'text'):
         self._response = response
@@ -361,7 +376,7 @@ class InternalMCP:
         tool_messages = []
         assistant_tool_calls = []
         
-        async for chunk in response:
+        async for chunk in _to_async_iter(response):
             assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '') or ''
 
             if chunk.get('choices')[0].get('delta', {}).get('reasoning_content', None):
@@ -465,10 +480,11 @@ class InternalMCP:
                     original_payload['messages'].append(assistant_msg)
                     original_payload['messages'].extend(tool_messages)
                     
-                    logger.debug(f"InternalMCP: Envio para segundo turno: {json.dumps(original_payload['messages'], indent=2)}")
+                    logger.debug(f"InternalMCP: Envio para segundo turno: {json.dumps(original_payload['messages'])}")
 
                     if requires_second_call:
-                        async for chunk_2p in await brain_instance.chat(original_payload):
+                        second_response = await brain_instance.chat(original_payload)
+                        async for chunk_2p in _to_async_iter(second_response):
                             yield chunk_2p
                             await asyncio.sleep(0)
                         continue

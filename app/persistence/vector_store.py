@@ -234,7 +234,7 @@ class VectorStore:
                     query_embeddings=[query_embedding],
                     n_results=top_k,
                     where=filter,
-                    include=["embeddings", "metadatas", "distances", "documents"]
+                    include=["metadatas", "distances", "documents"]
                 )
                 
                 matches = []
@@ -245,7 +245,6 @@ class VectorStore:
                             "distance": float(results["distances"][0][i]) if "distances" in results and results["distances"] else 0.0,
                             "metadata": results["metadatas"][0][i] if "metadatas" in results and results["metadatas"] else {},
                             "content": results["documents"][0][i] if "documents" in results and results["documents"] else "",
-                            "embedding": results["embeddings"][0][i].tolist() if hasattr(results["embeddings"][0][i], "tolist") else results["embeddings"][0][i]
                         })
                 return matches
             except Exception:
@@ -258,7 +257,7 @@ class VectorStore:
                 with self.engine.connect() as conn:
                     emb_str = f"[{','.join(map(str, query_embedding))}]"
                     
-                    sql = f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content, embedding FROM {table_name}"
+                    sql = f"SELECT id, embedding <=> '{emb_str}' AS distance, metadata, content FROM {table_name}"
                     params = {"limit": top_k}
                     
                     if filter:
@@ -278,7 +277,6 @@ class VectorStore:
                             "distance": float(row[1]),
                             "metadata": row[2] if row[2] else {},
                             "content": row[3],
-                            "embedding": list(row[4]) if row[4] else []
                         })
                     return matches
             except Exception as e:
@@ -319,7 +317,6 @@ class VectorStore:
                     "distance": 1.0 - score,
                     "metadata": item.get("metadata", {}),
                     "content": item.get("content", ""),
-                    "embedding": item["embedding"]
                 })
             
             matches.sort(key=lambda x: x["distance"])
