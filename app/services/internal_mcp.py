@@ -373,13 +373,15 @@ class InternalMCP:
         is_calling = False
         tools = {} # Mapeado por index (int)
         assistant_content = ''
+        assistant_reasoning = ''
         tool_messages = []
         assistant_tool_calls = []
-        
+
         async for chunk in _to_async_iter(response):
             assistant_content += chunk.get('choices')[0].get('delta', {}).get('content', '') or ''
 
-            if chunk.get('choices')[0].get('delta', {}).get('reasoning_content', None):
+            if rc := chunk.get('choices')[0].get('delta', {}).get('reasoning_content', None):
+                assistant_reasoning += rc
                 yield chunk
                 await asyncio.sleep(0)
                 continue
@@ -475,6 +477,7 @@ class InternalMCP:
                     assistant_msg = {
                         "role": "assistant",
                         "content": assistant_content if assistant_content else None,
+                        "reasoning_content": assistant_reasoning if assistant_reasoning else None,
                         "tool_calls": assistant_tool_calls
                     }
                     original_payload['messages'].append(assistant_msg)

@@ -3,14 +3,17 @@
 --find-links ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
 # -e ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python
 
-llama-cpp-python==0.3.36
+llama-cpp-python==0.3.37
 -e ../july_engine_libs/python/llama_gguf
+-e ../july_engine_libs/python/telemetry
+-e ../july_engine_libs/python/routers
 faster-whisper
 coqui-tts==0.27.5
-transformers==4.57.3
+transformers==5.0.0
 kokoro==0.9.4
-torch==2.8.0
-torchaudio==2.8.0
+torch==2.11.0
+torchao
+torchaudio==2.11.0
 torchvision
 fastapi[standard]
 requests
@@ -63,10 +66,9 @@ noisereduce
 soundfile
 pyppeteer
 timm
-faster-qwen3-tts==0.2.6
+# faster-qwen3-tts==0.2.6
 py-cpuinfo
 tf-keras==2.21.0
 PyMuPDF
 pytesseract
 rembg[gpu]
-onnxruntime-gpu

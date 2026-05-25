@@ -28,7 +28,7 @@ class ColorFormatter(logging.Formatter):
 env = os.environ['ENV'] if 'ENV' in os.environ else None
 load_dotenv(f'.env.{env}' if env else '.env', verbose=True)
 
-from app.telemetry.otel import setup_otel
+from july_telemetry.otel import setup_otel
 setup_otel("july-engine")
 
 # Configura o logger raiz para o ecossistema JulyEngine
@@ -56,18 +56,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from contextlib import asynccontextmanager
 from app.bridge import bridge
-from app.routers.openai import router as openai_router
-from app.routers.anthropic import router as anthropic_router
+from july_routers.openai import router as openai_router, set_bridge as openai_set_bridge
+from july_routers.anthropic import router as anthropic_router, set_bridge as anthropic_set_bridge
+from july_routers.search import router as search_router, set_bridge as search_set_bridge
+from july_routers.july import router as july_router, set_bridge as july_set_bridge
+from july_routers.calculator import router as calculator_router, set_bridge as calculator_set_bridge
+from july_routers.services_router import router as services_router
 from app.routers.models import router as models_router
-from app.routers.calculator import router as calculator_router
 from app.routers.monitoring import router as monitoring_router
 from app.routers.voice import router as voice_router
-from app.routers.search import router as search_router
-from app.routers.july import router as july_router
-
 from app.routers.settings_router import router as settings_router
-from app.routers.services_router import router as services_router
 from app.routers.webhooks_router import router as webhooks_router
+
+openai_set_bridge(bridge)
+anthropic_set_bridge(bridge)
+search_set_bridge(bridge)
+july_set_bridge(bridge)
+calculator_set_bridge(bridge)
 from app.events import event_manager
 from fastapi.staticfiles import StaticFiles
 import uuid
@@ -129,7 +134,7 @@ async def http_metrics_middleware(request: Request, call_next):
     route = request.scope.get("route")
     path = route.path if route else request.url.path
 
-    from app.telemetry.metrics import http_requests_total, http_request_duration_seconds
+    from july_telemetry.metrics import http_requests_total, http_request_duration_seconds
     http_requests_total.labels(
         method=request.method, path=path, status_code=str(response.status_code)
     ).inc()

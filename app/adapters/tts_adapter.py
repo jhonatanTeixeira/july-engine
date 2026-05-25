@@ -49,8 +49,12 @@ class TTSAdapter(AdapterBase):
     def _detect_engine(self) -> str:
         if self.backend == "api":
             return "api"
-        
-        return self.model_id.lower()
+
+        model_lower = self.model_id.lower()
+        for prefix, engine in _ALIAS_ENGINE_MAP:
+            if model_lower.startswith(prefix):
+                return engine
+        return model_lower
 
     def _get_tts_model(self):
         if self._tts_model is not None:
@@ -179,6 +183,10 @@ class TTSAdapter(AdapterBase):
 
         model = self._get_tts_model()
         if not model:
+            logger.error(
+                "No TTS model resolved for engine=%r (model_id=%r, backend=%r)",
+                engine, self.model_id, self.backend,
+            )
             return None
 
         result = model.run({**payload, "stream": False})

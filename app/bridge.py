@@ -3,10 +3,12 @@ import json
 import copy
 from typing import Any, Dict, List, Optional, Union, AsyncGenerator
 
+from july_routers.bridge_interface import BridgeInterface
+
 logger = logging.getLogger("JulyEngine.Bridge")
 
 
-class Bridge:
+class Bridge(BridgeInterface):
     """
     Dumb routing middleware.
 
@@ -211,6 +213,29 @@ class Bridge:
 
     async def process_rag_smart_search(self, payload: dict, headers: dict):
         return await self._dispatch("rag_smart_search", payload, headers)
+
+    async def process_pdf_extract(self, pdf_bytes: bytes):
+        from .services.pdf_extractor import extract_pdf
+        return extract_pdf(pdf_bytes)
+
+    async def process_resource_check(self, payload: dict):
+        from llama_gguf.resource_calculator import estimate_vram_ram
+        return await estimate_vram_ram(
+            model_path=payload.get("model_path", "model"),
+            context_window=payload.get("context_window", "4k"),
+            kv_cache_quantization=payload.get("kv_cache_quantization", "FP16"),
+            gpu_layers=payload.get("gpu_layers") if payload.get("gpu_layers") != -1 else None,
+            repo_id=payload.get("model_id"),
+            filename=payload.get("filename"),
+            mmproj_path=payload.get("mmproj_path"),
+            mmproj_repo_id=payload.get("mmproj_id"),
+            mmproj_filename=payload.get("mmproj_filename"),
+            n_seq_max=payload.get("n_seq_max", 1),
+            offload_kqv=payload.get("offload_kqv", True),
+            flash_attention=payload.get("flash_attn", True),
+            logits_all=payload.get("logits_all", False),
+            vision_on_cpu=payload.get("vision_on_cpu", False),
+        )
 
     async def process_search_and_scrape(self, results: list, query: str, headers: dict, describe_model: str = None):
         """Raspagem de URLs e sumarização via LLM."""

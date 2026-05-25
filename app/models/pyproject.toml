@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "july-engine-models"
+version = "0.1.0"
+description = "Model adapters for July Engine"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools]
+packages = ["july_engine_models"]
+
+[tool.setuptools.package-dir]
+"july_engine_models" = "."
