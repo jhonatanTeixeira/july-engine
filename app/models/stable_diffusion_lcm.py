@@ -50,17 +50,35 @@ os.environ["XFORMERS_MORE_DETAILS"] = "0"
 # ---------------------------------------------------------------------------
 
 def free_vram():
-    from ..resource_manager import resource_manager
-
-    resource_manager.clear_memory()
+    try:
+        from ..resource_manager import resource_manager
+        resource_manager.clear_memory()
+    except (ImportError, Exception):
+        import gc
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
 def print_vram(label: str = ""):
-    from ..resource_manager import resource_manager
-    
-    free, used, total = resource_manager.get_vram_usage()
-
-    print(f"[VRAM] {label} | Alocado: {used:.2f} GB | Livre: {free:.2f} GB")
+    try:
+        from ..resource_manager import resource_manager
+        free, used, total = resource_manager.get_vram_usage()
+        print(f"[VRAM] {label} | Alocado: {used:.2f} GB | Livre: {free:.2f} GB")
+    except (ImportError, Exception):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                alloc = torch.cuda.memory_allocated() / 1e9
+                total = torch.cuda.get_device_properties(0).total_memory / 1e9
+                print(f"[VRAM] {label} | Alocado: {alloc:.2f} GB | Total: {total:.2f} GB")
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +352,11 @@ class LCMFaceIDPipeline:
                 generator = None
 
                 if seed is not None:
-                    generator = torch.Generator(device=self.device).manual_seed(seed)
+                    gen_device = "cpu" if self.use_sequential_offload else self.device
+                    try:
+                        generator = torch.Generator(device=gen_device).manual_seed(seed)
+                    except Exception:
+                        generator = torch.Generator().manual_seed(seed)
 
                 result = self.pipe(
                     prompt=prompt,

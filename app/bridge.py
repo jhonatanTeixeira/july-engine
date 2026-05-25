@@ -50,7 +50,8 @@ class Bridge(BridgeInterface):
         "image_remove_background": "BG_REMOVAL",
         "web_search": "WEB_SEARCH",
         "code_search": "REPOSITORY_SEARCH",
-        "video_description": "VISION"
+        "video_description": "VISION",
+        "video_generation": "VIDEO_GENERATION",
     }
 
     def _inject_headers(self, payload: dict, headers: dict) -> dict:
@@ -236,6 +237,9 @@ class Bridge(BridgeInterface):
             logits_all=payload.get("logits_all", False),
             vision_on_cpu=payload.get("vision_on_cpu", False),
         )
+
+    async def process_video_generation(self, payload: dict, headers: dict):
+        return await self._dispatch("video_generation", payload, headers)
 
     async def process_search_and_scrape(self, results: list, query: str, headers: dict, describe_model: str = None):
         """Raspagem de URLs e sumarização via LLM."""

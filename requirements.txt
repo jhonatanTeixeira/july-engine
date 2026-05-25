@@ -1,7 +1,6 @@
 --extra-index-url https://download.pytorch.org/whl/cu126
 
 --find-links ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
-# -e ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python
 
 llama-cpp-python==0.3.37
 -e ../july_engine_libs/python/llama_gguf

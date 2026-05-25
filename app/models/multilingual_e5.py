@@ -51,6 +51,13 @@ class MultilingualE5Model(BaseModel):
         else:
             raise ValueError("MultilingualE5 requires emb_type='query' or 'passage'")
 
-        embedding = self._model.encode(input_text, normalize_embeddings=True)
+        import torch
+        with torch.inference_mode():
+            embedding = self._model.encode(
+                input_text,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+            )
 
         return embedding.tolist()
