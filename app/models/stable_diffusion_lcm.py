@@ -117,6 +117,8 @@ class LCMFaceIDPipeline:
         use_face_id = True,
         use_vae_slicing = False,
         use_vae_tiling = False,
+        use_sdnq: bool = False,
+        sdnq_dtype: str = "int8",
     ):
         import torch
         if dtype is None:
@@ -124,6 +126,8 @@ class LCMFaceIDPipeline:
         self.use_face_id = use_face_id
         self.use_vae_slicing = use_vae_slicing
         self.use_vae_tiling = use_vae_tiling
+        self.use_sdnq = use_sdnq
+        self.sdnq_dtype = sdnq_dtype
 
         self.base_model_path    = base_model_path  or self.DEFAULT_BASE_MODEL
         self.ip_adapter_path    = ip_adapter_path  or self.DEFAULT_IP_ADAPTER
@@ -204,6 +208,21 @@ class LCMFaceIDPipeline:
         if p.is_file() and p.suffix in (".safetensors", ".ckpt"):
             self.pipe = StableDiffusionPipeline.from_single_file(self.base_model_path, **kwargs)
         else:
+            if self.use_sdnq:
+                try:
+                    from diffusers import PipelineQuantizationConfig
+                    from sdnq.quantizer import SDNQConfig
+                    kwargs["quantization_config"] = PipelineQuantizationConfig(
+                        quant_mapping={
+                            "unet": SDNQConfig(
+                                weights_dtype=self.sdnq_dtype,
+                                use_quantized_matmul=True,
+                            )
+                        }
+                    )
+                    print(f"  [ok] SDNQ UNet quantization configurado: {self.sdnq_dtype}")
+                except ImportError as e:
+                    print(f"  [aviso] SDNQ indisponível ({e}) — carregando sem quantização")
             self.pipe = StableDiffusionPipeline.from_pretrained(self.base_model_path, **kwargs)
 
     def _configure_scheduler(self):

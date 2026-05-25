@@ -6,7 +6,10 @@ from io import BytesIO
 from typing import Optional, Dict, Any
 from PIL import Image
 
-from .base_model import BaseModel
+try:
+    from .base_model import BaseModel
+except ImportError:
+    from base_model import BaseModel
 
 logger = logging.getLogger("JulyEngine.Models.FluxKleinSDNQ")
 
@@ -204,7 +207,7 @@ if __name__ == "__main__":
     from dotenv import load_dotenv
     load_dotenv()
     
-    node = FluxKleinNode()
+    node = FluxKleinPipeline()
     
     logger.info("\n--- TESTE 1: Text2Image ---")
     payload_t2i = {
