@@ -1,27 +1,6 @@
 """
-Stable Diffusion LCM Pipeline com IP-Adapter FaceID Plus
-Equivalente ao pipeline do A1111 com:
-  - Sampler      : LCM
-  - CFG scale    : 1.5
-  - Steps        : 10
-  - Size         : 512x512
-  - Model        : models/coldfleshRealisticLCM_v10.safetensors  (LCM nativo)
-  - ControlNet   : ip-adapter_face_id_plus (weight=1.0, pixel_perfect=True)
-  - Otimizações  : medvram + xformers equivalentes
-
-DEPENDÊNCIAS:
-    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-    pip install xformers --index-url https://download.pytorch.org/whl/cu121
-    pip install diffusers transformers accelerate safetensors pillow numpy
-    pip install insightface onnxruntime-gpu
-    pip install git+https://github.com/tencent-ailab/IP-Adapter.git
-
-ARQUIVOS em models/:
-    models/coldfleshRealisticLCM_v10.safetensors
-    models/ip-adapter-faceid-plus_sd15.bin
-    models/image_encoder/   <- CLIP ViT-H (baixar do h94/IP-Adapter-FaceID no HF)
-        config.json
-        model.safetensors
+Stable Diffusion LCM Pipeline com IP-Adapter FaceID Plus e SDNQ Dinâmico
+Equivalente ao pipeline do A1111 com suporte a arquivo único (.safetensors) e quantização int8.
 """
 from __future__ import annotations
 from diffusers.utils import logging as diffusers_logging
@@ -34,6 +13,7 @@ import os
 import warnings
 from pathlib import Path
 from PIL import Image
+from pathlib import Path
 from typing import Optional, Union, Any, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -88,19 +68,12 @@ def print_vram(label: str = ""):
 class LCMFaceIDPipeline:
     """
     Pipeline SD1.5-LCM + IP-Adapter FaceID Plus via wrapper oficial Tencent.
-
-    Usa IPAdapterFaceIDPlus que gerencia internamente:
-      - CLIP image encoder  -> clip_embeds
-      - InsightFace buffalo_l -> id_embeds (normed_embedding)
-      - Injeção correta dos dois embeddings no UNet
-
-    Para geração SEM face, desconecta temporariamente o encoder_hid_proj
-    do UNet e chama o pipe base diretamente.
+    Suporta SDNQ em tempo de execução para carregamentos locais via single_file.
     """
 
-    DEFAULT_BASE_MODEL    = "models/coldfleshRealisticLCM_v10.safetensors"
-    DEFAULT_IP_ADAPTER    = "models/ip-adapter-faceid-plus_sd15.bin"
-    DEFAULT_IMAGE_ENCODER = "models/image_encoder"
+    DEFAULT_BASE_MODEL    = str(Path(__file__).parent.parent.parent.resolve() / "models" / "coldfleshRealisticLCM_v10.safetensors")
+    DEFAULT_IP_ADAPTER    = str(Path(__file__).parent.parent.parent.resolve() / "models" / "ip-adapter-faceid-plus_sd15.bin")
+    DEFAULT_IMAGE_ENCODER = str(Path(__file__).parent.parent.parent.resolve() / "models" / "image_encoder")
     HF_IMAGE_ENCODER      = "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"
 
     def __init__(
@@ -109,7 +82,7 @@ class LCMFaceIDPipeline:
         ip_adapter_path: Optional[str] = None,
         image_encoder_path: Optional[str] = None,
         device: str = "cuda",
-        dtype: "torch.dtype" = None, # Will handle inside
+        dtype: "torch.dtype" = None,
         use_xformers: bool = True,
         use_cpu_offload: bool = False,
         use_sequential_offload: bool = False,
@@ -160,11 +133,9 @@ class LCMFaceIDPipeline:
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         """Calcula a VRAM para o SD LCM (~3GB)."""
-
         if self.device == "cpu":
             return 0
         
-        # Se for usar offload sequencial ou de modelo, o consumo cai drasticamente
         if self.use_sequential_offload or payload.get("use_sequential_offload"):
             return 2100 # ~2.1GB
         if self.use_cpu_offload or payload.get("use_cpu_offload"):
@@ -189,7 +160,7 @@ class LCMFaceIDPipeline:
             print(">> Inicializando InsightFace...")
             self._load_face_analysis()
 
-        # Otimizações devem vir POR ÚLTIMO, especialmente offloading
+        # Otimizações e Offloading devem rodar por último
         print(">> Aplicando otimizações de VRAM...")
         self._apply_memory_optimizations()
 
@@ -199,31 +170,40 @@ class LCMFaceIDPipeline:
 
     def _load_base_pipeline(self):
         from diffusers import StableDiffusionPipeline
+        import torch
+        from pathlib import Path
+        
         kwargs = dict(
             torch_dtype=self.dtype,
             safety_checker=None,
             requires_safety_checker=False,
         )
+
         p = Path(self.base_model_path)
+        
+        # 1. Carrega o peso bruto primeiro (Isso evita disparar o bug de User-Agent da Diffusers)
         if p.is_file() and p.suffix in (".safetensors", ".ckpt"):
+            print(f"  [ok] Carregando arquivo único local: {p.name}")
             self.pipe = StableDiffusionPipeline.from_single_file(self.base_model_path, **kwargs)
         else:
-            if self.use_sdnq:
-                try:
-                    from diffusers import PipelineQuantizationConfig
-                    from sdnq.quantizer import SDNQConfig
-                    kwargs["quantization_config"] = PipelineQuantizationConfig(
-                        quant_mapping={
-                            "unet": SDNQConfig(
-                                weights_dtype=self.sdnq_dtype,
-                                use_quantized_matmul=True,
-                            )
-                        }
-                    )
-                    print(f"  [ok] SDNQ UNet quantization configurado: {self.sdnq_dtype}")
-                except ImportError as e:
-                    print(f"  [aviso] SDNQ indisponível ({e}) — carregando sem quantização")
+            print(f"  [ok] Carregando via pretrained: {self.base_model_path}")
             self.pipe = StableDiffusionPipeline.from_pretrained(self.base_model_path, **kwargs)
+
+        # 2. Cirurgia pós-carga: Aplica a quantização do SDNQ direto no UNet instanciado
+        if self.use_sdnq:
+            try:
+                # Importa o aplicador dinâmico do SDNQ
+                from sdnq.loader import apply_sdnq_options_to_model
+                
+                print(f">> Aplicando SDNQ dinâmico direto no UNet carregado...")
+                # O SDNQ entra no objeto da memória e substitui as Linear Layers por MatMul int8
+                self.pipe.unet = apply_sdnq_options_to_model(
+                    self.pipe.unet, 
+                    use_quantized_matmul=True
+                )
+                print(f"  [ok] UNet quantizado com sucesso para int8 via SDNQ pós-carga!")
+            except Exception as e:
+                print(f"  [aviso] Falha ao aplicar SDNQ dinâmico pós-carga ({e}). Mantendo FP16.")
 
     def _configure_scheduler(self):
         from diffusers import LCMScheduler
@@ -313,7 +293,7 @@ class LCMFaceIDPipeline:
     def _preprocess_face_image(
         self, image: Union[Image.Image, "np.ndarray"], crop: bool = True
     ) -> Image.Image:
-        """Crop na face + resize 512x512 (equivale ao Crop and Resize do ControlNet)."""
+        """Crop na face + resize 512x512."""
         import numpy as np
         if isinstance(image, np.ndarray):
             image = Image.fromarray(image[:, :, ::-1])
@@ -351,12 +331,6 @@ class LCMFaceIDPipeline:
         shortcut: bool = False,
         crop_face: bool = True,
     ) -> list[Image.Image]:
-        """
-        Gera imagens com LCM + IP-Adapter FaceID Plus.
-
-        face_image=None -> gera só com prompt (desconecta IP-Adapter temporariamente)
-        face_image=PIL  -> usa FaceID Plus normalmente
-        """
         if not self._loaded:
             self.load()
 
@@ -397,8 +371,8 @@ class LCMFaceIDPipeline:
                 images = self.ip_model.generate(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    face_image=face_pil,         # usado pelo CLIP encoder interno
-                    faceid_embeds=faceid_embeds, # usado pelo InsightFace proj
+                    face_image=face_pil,         
+                    faceid_embeds=faceid_embeds, 
                     shortcut=shortcut,
                     s_scale=scale,
                     num_samples=num_images_per_prompt,
@@ -410,17 +384,17 @@ class LCMFaceIDPipeline:
                 )
 
             else:
-
+                # ---- SEM face via bypass de escala zero ----
                 dummy_pil    = Image.new('RGB', (512, 512))
                 dummy_embeds = torch.zeros((1, 512), dtype=self.dtype, device=self.device)
 
                 images = self.ip_model.generate(
                     prompt=prompt,
                     negative_prompt=negative_prompt,
-                    face_image=dummy_pil,        # CLIP processa o nada
-                    faceid_embeds=dummy_embeds,  # Tensor zerado (sem rosto)
+                    face_image=dummy_pil,        
+                    faceid_embeds=dummy_embeds,  
                     shortcut=shortcut,
-                    s_scale=0.0,                 # A MAGIA: Multiplica o IP-Adapter por ZERO
+                    s_scale=0.0,                 
                     num_samples=num_images_per_prompt,
                     width=width,
                     height=height,
@@ -452,57 +426,39 @@ class LCMFaceIDPipeline:
 
 
 # ---------------------------------------------------------------------------
-# Exemplo de uso
+# Exemplo de uso standalone
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    import torch
 
     pipeline = LCMFaceIDPipeline(
-        base_model_path="models/coldfleshRealisticLCM_v10.safetensors",
-        ip_adapter_path="models/ip-adapter-faceid-plus_sd15.bin",
-        # image_encoder_path="models/image_encoder",  # descomente se tiver local
+        # base_model_path="models/coldfleshRealisticLCM_v10.safetensors",
+        # ip_adapter_path="models/ip-adapter-faceid-plus_sd15.bin",
         device="cuda",
         dtype=torch.float16,
         use_xformers=True,
-        use_cpu_offload=False,
-        ip_adapter_scale=1.0,
+        use_sequential_offload=True, # Trava de segurança para teste local
+        use_sdnq=True,               # Ativa a compressão int8 no single file
+        sdnq_dtype="int8",
+        use_face_id=True
     )
 
     pipeline.load()
 
-    # -----------------------------------------------------------------------
-    # Teste COM face
-    # -----------------------------------------------------------------------
-    face_ref = Image.open(
-        Path("E:/projects/jhon/ai/july/july_dating/resources/pictures/anna_profile.png")
-    )
-
-    images = pipeline(
-        prompt="1girl, portrait, beautiful, cinematic lighting, detailed skin",
-        face_image=face_ref,
-        negative_prompt="blurry, deformed, ugly, bad anatomy, lowres",
-        num_inference_steps=6,
-        guidance_scale=1.5,
-        width=512,
-        height=512,
-        # seed=42,
-    )
-    images[0].save("output_with_face.png")
-    print("Salvo: output_with_face.png")
-
-    # -----------------------------------------------------------------------
-    # Teste SEM face
-    # -----------------------------------------------------------------------
-    images = pipeline(
-        prompt="1girl, portrait, beautiful, cinematic lighting, detailed skin",
-        negative_prompt="blurry, deformed, ugly, bad anatomy, lowres",
-        num_inference_steps=6,
-        guidance_scale=1.5,
-        width=512,
-        height=512,
-        # seed=42,
-    )
-    images[0].save("output_no_face.png")
-    print("Salvo: output_no_face.png")
+    # Teste rápido de geração
+    try:
+        images = pipeline(
+            prompt="1girl, portrait, beautiful, cinematic lighting, detailed skin",
+            negative_prompt="blurry, deformed, ugly, bad anatomy, lowres",
+            num_inference_steps=10,
+            guidance_scale=1.5,
+            width=512,
+            height=512,
+        )
+        images[0].save("output_standalone_lcm.png")
+        print("Salvo com sucesso: output_standalone_lcm.png")
+    except Exception as e:
+        print(f"Erro no teste: {e}")
 
     pipeline.unload()
