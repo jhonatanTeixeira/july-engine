@@ -71,7 +71,7 @@ class ChatAdapter(AdapterBase):
         return await self.run(payload)
 
     async def run(self, payload: Dict[str, Any]):
-        from ..services.helpers import MultiModalHelper
+        from ..models.helpers import MultiModalHelper
 
         helper = MultiModalHelper(payload)
 
