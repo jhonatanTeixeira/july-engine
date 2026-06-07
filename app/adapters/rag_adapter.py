@@ -102,11 +102,19 @@ class RagAdapter(AdapterBase):
     # Handlers
     # ------------------------------------------------------------------
 
-    async def _embed(self, payload: Dict[str, Any]) -> List[float]:
-        input_text = payload.get("input") or payload.get("text") or payload.get("query", "")
+    async def _embed(self, payload: Dict[str, Any]) -> List[List[float]]:
+        input_val = payload.get("input") or payload.get("text") or payload.get("query", "")
         emb_type = payload.get("emb_type", "passage")
-        emb_payload = {"input": input_text, "emb_type": emb_type}
-        return self._get_emb_model().run(emb_payload)
+        key = "query" if emb_type == "query" else "input"
+
+        texts = input_val if isinstance(input_val, list) else [input_val]
+        results = []
+        for text in texts:
+            emb = self._get_emb_model().run({key: text})
+            if emb and isinstance(emb[0], list):
+                emb = emb[0]
+            results.append(emb)
+        return results
 
     async def _embed_text(self, text: str, emb_type: str = "passage") -> List[float]:
         result = self._get_emb_model().run({"input": text, "emb_type": emb_type})

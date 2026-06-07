@@ -3,6 +3,15 @@
 # Exit on error
 set -e
 
+# Install Python 3.11 and llama.cpp compilation requirements
+echo "Checking and installing dependencies for july_engine..."
+sudo apt-get update
+sudo apt-get install -y software-properties-common
+sudo add-apt-repository -y ppa:deadsnakes/ppa
+sudo apt-get update
+sudo apt-get install -y build-essential cmake make gcc g++ python3.11 python3.11-venv python3.11-dev
+
+
 if [ "$SETUP_UBUNTU" = "true" ]; then
     echo "Instalando dependências de OCR do Tesseract..."
     sudo apt install -y tesseract-ocr tesseract-ocr-por

@@ -240,7 +240,8 @@ class Runner:
                     if not unloaded:
                         # Se não há mais nada para descarregar, tentamos reduzir camadas do próprio modelo (se GGUF)
                         if hasattr(domain, "decrement_layers"):
-                            success = domain.decrement_layers()
+                            import asyncio
+                            success = await asyncio.to_thread(domain.decrement_layers)
                             if not success:
                                 # Se chegou em 0 camadas e ainda não cabe, esperamos
                                 await self.wait_for_resources(required, timeout=10)
@@ -256,7 +257,8 @@ class Runner:
                                 raise MemoryError(f"VRAM insuficiente para {self.task_type}. Requerido: {required}MB, Livre: {self.context.get_free_ram()}MB")
 
                 if not domain.is_loaded():
-                    domain.load()
+                    import asyncio
+                    await asyncio.to_thread(domain.load)
 
                 self.context.mark_busy(self.slot_name, self)
         
