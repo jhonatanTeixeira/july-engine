@@ -624,3 +624,29 @@ async def test_image_upscale(client):
         assert new_height == orig_height * 2
 
     print("Image Upscale: OK")
+
+@pytest.mark.anyio
+async def test_chat_completions_json_mode(client: AsyncClient):
+    payload = {
+        "model": "qwen3-gpu",
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Output in JSON format."},
+            {"role": "user", "content": "Generate a JSON with name and age of a fictional character."}
+        ],
+        "response_format": {"type": "json_object"},
+        "max_tokens": 100
+    }
+    
+    response = await client.post("/v1/openai/chat/completions", json=payload)
+    assert response.status_code == 200, f"Chat failed: {response.text}"
+    
+    data = response.json()
+    assert "choices" in data
+    content = data["choices"][0]["message"]["content"]
+    
+    # Assert it is valid JSON
+    try:
+        parsed = json.loads(content)
+        assert isinstance(parsed, dict)
+    except json.JSONDecodeError:
+        pytest.fail(f"Response format JSON failed, returned invalid JSON: {content}")
