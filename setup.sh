@@ -21,6 +21,8 @@ fi
 echo "-------------------------------------------------------"
 if [ "$WITH_VULKAN" = "true" ]; then
     echo "Configurando ambiente para VULKAN (Placas AMD/Intel)..."
+elif [ "$CPU_ONLY" = "true" ]; then
+    echo "Configurando ambiente para CPU ONLY (Sem Aceleração)..."
 else
     echo "Configurando ambiente para RTX 3050 4GB (CUDA)..."
 fi
@@ -61,6 +63,10 @@ if [ "$RECOMPILE" = "true" ] || [ -z "$EXISTING_WHEEL" ]; then
         echo "      -> Aplicando flags de compilação para VULKAN..."
         # Removemos os comandos CUDA e inserimos o -DGGML_VULKAN=on
         LOCAL_CMAKE_ARGS="-DGGML_VULKAN=on -DGGML_SCHED_MAX_SPLIT_INPUTS=512"
+    elif [ "$CPU_ONLY" = "true" ]; then
+        echo "      -> Aplicando flags de compilação para CPU ONLY..."
+        # Deixa o CMake sem hardware acceleration para rodar apenas em CPU
+        LOCAL_CMAKE_ARGS="-DGGML_SCHED_MAX_SPLIT_INPUTS=512"
     else
         echo "      -> Aplicando flags de compilação para CUDA..."
         # Mantém a configuração original para a RTX 3050
