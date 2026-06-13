@@ -7,7 +7,7 @@ from pyppeteer import launch
 logger = logging.getLogger("JulyEngine.Services.ScraperService")
 
 class ScraperService:
-    async def scrape_urls(self, urls: List[str]) -> List[Dict[str, str]]:
+    async def scrape_urls(self, urls: List[str], mode: str = "text") -> List[Dict[str, str]]:
         results = []
         browser = None
         try:
@@ -63,15 +63,22 @@ class ScraperService:
                     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
                     
                     try:
-                        logger.info(f"Puppeteer Scraping URL: {url}")
+                        logger.info(f"Puppeteer Scraping URL: {url} (mode: {mode})")
                         # Navigate with timeout
                         await page.goto(url, {'waitUntil': 'domcontentloaded', 'timeout': 30000})
                         
-                        # Extract text content using Puppeteer evaluate
-                        content = await page.evaluate("() => document.body.innerText")
-                        
-                        # Basic cleaning
-                        content = " ".join(content.split())
+                        if mode == "links":
+                            # Extract unique links
+                            content = await page.evaluate('''() => {
+                                return Array.from(new Set(Array.from(document.querySelectorAll('a'))
+                                    .map(a => a.href)
+                                    .filter(h => h && h.startsWith('http')))).join('\\n');
+                            }''')
+                        else:
+                            # Extract text content using Puppeteer evaluate
+                            content = await page.evaluate("() => document.body.innerText")
+                            # Basic cleaning
+                            content = " ".join(content.split())
                         
                         results.append({
                             "url": url,

@@ -132,6 +132,28 @@ class InternalMCP:
             {
                 "type": "function",
                 "function": {
+                    "name": "scrape_web",
+                    "description": "Scrapes and reads the full text content of a specific URL. Use this to fetch the data from a webpage when the user gives you a link or when you need to read an article from search results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {
+                                "type": "string",
+                                "description": "The exact URL of the webpage to scrape."
+                            },
+                            "mode": {
+                                "type": "string",
+                                "enum": ["text", "links"],
+                                "description": "What to extract from the page. Use 'text' to read the article/content, or 'links' to just get a list of all URLs found on the page. Defaults to 'text'."
+                            }
+                        },
+                        "required": ["url"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
                     "name": "search_memory",
                     "description": "CRITICAL: Searches your long-term memory. You MUST call this tool BEFORE answering ANY question about the user (e.g., 'what is my name?', 'what do I like?'), past conversations, or if the user says 'you know this'. NEVER claim you don't have memory without calling this tool first.",
                     "parameters": {
@@ -236,6 +258,7 @@ class InternalMCP:
                 "generate_image": "IMAGE_CREATE",
                 "generate_audio": "TTS",
                 "search_web": "WEB_SEARCH",
+                "scrape_web": "WEB_SEARCH",
                 "search_memory": "EMBEDDINGS",
                 "save_memory": "EMBEDDINGS",
                 "image_edit": "IMAGE_EDIT"
@@ -308,6 +331,27 @@ class InternalMCP:
                 gen_time = time.time() - start_time
                 event_manager.emit(f"mcp_{name}", generation_time=gen_time)
                 logger.info(f"InternalMCP: Web search completed (result length: {len(str(res))})")
+                return (
+                    res,
+                    None
+                )
+            
+            elif name == "scrape_web":
+                url = arguments.get("url", "")
+                mode = arguments.get("mode", "text")
+                logger.info(f"InternalMCP: Scraping web for URL: '{url}' (mode: {mode})")
+                
+                from .scraper_service import scraper_service
+                scraped = await scraper_service.scrape_urls([url], mode=mode)
+                
+                if scraped and len(scraped) > 0:
+                    res = scraped[0].get("content", "Failed to get content.")
+                else:
+                    res = "Failed to scrape the URL."
+                    
+                gen_time = time.time() - start_time
+                event_manager.emit(f"mcp_{name}", generation_time=gen_time)
+                logger.info(f"InternalMCP: Web scrape completed (result length: {len(str(res))})")
                 return (
                     res,
                     None
