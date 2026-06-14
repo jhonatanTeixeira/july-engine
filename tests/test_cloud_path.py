@@ -8,7 +8,7 @@ from datetime import datetime
 # Add project to path
 sys.path.append(os.path.abspath("."))
 
-from july_engine.services.storage.cloud_path import CloudPath
+from app.services.storage.cloud_path import CloudPath
 
 class TestCloudPath(unittest.TestCase):
     def setUp(self):
