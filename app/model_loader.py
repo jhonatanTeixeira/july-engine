@@ -95,7 +95,7 @@ class ModelLoader:
             model_meta: Optional[dict] = None
             engine_settings = model_service.get_setting(engine)
 
-            if not model_tag:
+            if not model_tag or model_tag == "default":
                 setting = engine_settings
 
                 if setting:

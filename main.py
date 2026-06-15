@@ -83,6 +83,7 @@ async def lifespan(app: FastAPI):
     # Startup: Start the bridge which starts all orchestrators
     event_manager.start()
     await bridge.start()
+
     yield
     await bridge.stop()
     event_manager.stop()
