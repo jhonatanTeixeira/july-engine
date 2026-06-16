@@ -265,8 +265,12 @@ class Bridge(BridgeInterface):
                 {"role": "user", "content": prompt}
             ]
         }
-        
-        return await self.process_openai_chat(summarize_payload, headers)
+
+        # Strip x-backend so model_loader uses the backend from the model's own settings
+        # (TEXT_PRESETS backend field). The search step forced "api" for Tavily, but the
+        # LLM summarization step must run on whichever backend the configured model needs.
+        chat_headers = {k: v for k, v in headers.items() if k.lower() != "x-backend"}
+        return await self.process_openai_chat(summarize_payload, chat_headers)
 
 
 bridge = Bridge()
