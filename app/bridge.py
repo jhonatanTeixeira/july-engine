@@ -241,36 +241,146 @@ class Bridge(BridgeInterface):
     async def process_video_generation(self, payload: dict, headers: dict):
         return await self._dispatch("video_generation", payload, headers)
 
+    def _extract_llm_text(self, response) -> str:
+        """Extrai o texto de content de uma resposta OpenAI Chat Completion."""
+        if isinstance(response, dict) and "choices" in response:
+            return response["choices"][0].get("message", {}).get("content", "") or ""
+        return str(response)
+
     async def process_search_and_scrape(self, results: list, query: str, headers: dict, describe_model: str = None):
-        """Raspagem de URLs e sumarização via LLM."""
-        from .services.scraper_service import scraper_service
-        
-        # Extrai URLs (limitado a 3 para performance)
+        """Raspagem de URLs (via Tavily results) e sumarização via LLM."""
         urls = [r["url"] for r in results if isinstance(r, dict) and "url" in r][:3]
         if not urls:
             return "Nenhuma URL encontrada para raspagem."
-            
-        scraped = await scraper_service.scrape_urls(urls)
-        
-        # Combina o conteúdo
-        context = "\n\n".join([f"Fonte: {s['url']}\nConteúdo: {s['content']}" for s in scraped])
-        
-        # Prompt de sumarização
-        prompt = f"Com base no contexto abaixo, responda à pergunta do usuário: {query}\n\nContexto:\n{context}"
-        
-        summarize_payload = {
-            "model": describe_model or "default",
-            "messages": [
-                {"role": "system", "content": "Você é um assistente de pesquisa. Resuma os resultados de forma concisa em português."},
-                {"role": "user", "content": prompt}
-            ]
-        }
+        return await self.process_scrape_and_summarize(urls, query, headers, model=describe_model)
 
-        # Strip x-backend so model_loader uses the backend from the model's own settings
-        # (TEXT_PRESETS backend field). The search step forced "api" for Tavily, but the
-        # LLM summarization step must run on whichever backend the configured model needs.
+    async def process_scrape_and_summarize(
+        self,
+        urls: list,
+        query: str,
+        headers: dict,
+        context_window: int = None,
+        model: str = None,
+    ) -> str:
+        """
+        Raspa todas as URLs fornecidas e sumariza via LLM com suporte a chunking.
+
+        Se o conteúdo total ultrapassar a janela de contexto configurada do modelo,
+        divide em chunks, sumariza cada um e combina os resumos parciais.
+        """
+        from .services.scraper_service import scraper_service
+
+        if not urls:
+            return "Nenhuma URL fornecida para raspagem."
+
+        # Descobre a janela de contexto do modelo se não fornecida
+        if not context_window:
+            try:
+                from .services.models_service import model_service
+                presets = model_service.get_setting("TEXT_PRESETS") or []
+                if isinstance(presets, list) and presets:
+                    preset = presets[0]
+                    model_alias = preset.get("alias") or preset.get("model")
+                    model_meta = model_service.get(model_alias) if model_alias else None
+                    if model_meta and model_meta.get("context_window"):
+                        context_window = int(model_meta["context_window"])
+            except Exception:
+                pass
+            context_window = context_window or 8192
+
+        # ~4 chars/token; reserva 30% para prompt e output
+        max_chars_per_chunk = int(context_window * 4 * 0.65)
+
+        logger.info(f"Scraping {len(urls)} URLs (context_window={context_window}, max_chars/chunk={max_chars_per_chunk})")
+
+        scraped = await scraper_service.scrape_urls(urls)
+
+        pages = [
+            f"Fonte: {s['url']}\nConteúdo: {s['content']}"
+            for s in scraped
+            if s.get("content") and not s["content"].startswith("Error:")
+        ]
+
+        if not pages:
+            return "Nenhum conteúdo pôde ser raspado das URLs fornecidas."
+
+        # Divide em chunks que cabem na janela de contexto
+        chunks: list[str] = []
+        current_parts: list[str] = []
+        current_len = 0
+        for page in pages:
+            if current_len + len(page) > max_chars_per_chunk and current_parts:
+                chunks.append("\n\n".join(current_parts))
+                current_parts = [page]
+                current_len = len(page)
+            else:
+                current_parts.append(page)
+                current_len += len(page)
+        if current_parts:
+            chunks.append("\n\n".join(current_parts))
+
+        logger.info(f"Conteúdo dividido em {len(chunks)} chunk(s)")
+
         chat_headers = {k: v for k, v in headers.items() if k.lower() != "x-backend"}
-        return await self.process_openai_chat(summarize_payload, chat_headers)
+        llm_model = model or "default"
+
+        async def summarize_chunk(i: int, chunk: str) -> str:
+            label = f"chunk {i+1}/{len(chunks)}" if len(chunks) > 1 else "conteúdo"
+            payload = {
+                "model": llm_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você é um assistente de pesquisa especializado em síntese técnica. "
+                            "Resuma o conteúdo abaixo em português, preservando todos os fatos, "
+                            "dados, datas, estatísticas e referências importantes. "
+                            "Seja detalhado e abrangente."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Pesquisa: {query}\n\n"
+                            f"Conteúdo ({label}):\n{chunk}"
+                        ),
+                    },
+                ],
+            }
+            response = await self.process_openai_chat(payload, chat_headers)
+            return self._extract_llm_text(response)
+
+        import asyncio
+        summaries = await asyncio.gather(*[summarize_chunk(i, c) for i, c in enumerate(chunks)])
+        summaries = [s for s in summaries if s.strip()]
+
+        if len(summaries) == 1:
+            return summaries[0]
+
+        # Combina os resumos parciais em um resumo final
+        combined = "\n\n---\n\n".join(summaries)
+        if len(combined) <= max_chars_per_chunk:
+            final_payload = {
+                "model": llm_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Você é um pesquisador sênior. Consolide os resumos parciais abaixo "
+                            "em um único documento coerente, detalhado e bem estruturado em português. "
+                            "Elimine repetições, mas preserve todos os fatos distintos."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Pesquisa: {query}\n\nResumos parciais:\n{combined}",
+                    },
+                ],
+            }
+            response = await self.process_openai_chat(final_payload, chat_headers)
+            return self._extract_llm_text(response) or combined
+
+        return combined
 
 
 bridge = Bridge()
