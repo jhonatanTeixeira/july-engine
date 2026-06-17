@@ -288,8 +288,12 @@ class Bridge(BridgeInterface):
                 pass
             context_window = context_window or 8192
 
-        # ~4 chars/token; reserva 30% para prompt e output
-        max_chars_per_chunk = int(context_window * 4 * 0.65)
+        # ~4 chars/token; reserva 35% para system prompt, prefixo do usuário e output.
+        # O overhead fixo cobre: system message (~300 chars) + prefixo da query (~200 chars) + margem de resposta.
+        PROMPT_OVERHEAD_CHARS = 2000
+        max_chars_per_chunk = int(context_window * 4 * 0.65) - PROMPT_OVERHEAD_CHARS
+        # Nunca deixar ficar negativo se a janela for minúscula
+        max_chars_per_chunk = max(max_chars_per_chunk, 1000)
 
         logger.info(f"Scraping {len(urls)} URLs (context_window={context_window}, max_chars/chunk={max_chars_per_chunk})")
 
@@ -303,6 +307,10 @@ class Bridge(BridgeInterface):
 
         if not pages:
             return "Nenhum conteúdo pôde ser raspado das URLs fornecidas."
+
+        # Trunca páginas individualmente que já excedem o limite por si só.
+        # Sem isso, uma única página longa cabe "sozinha" no chunk mesmo ultrapassando n_ctx.
+        pages = [p[:max_chars_per_chunk] if len(p) > max_chars_per_chunk else p for p in pages]
 
         # Divide em chunks que cabem na janela de contexto
         chunks: list[str] = []
@@ -319,7 +327,7 @@ class Bridge(BridgeInterface):
         if current_parts:
             chunks.append("\n\n".join(current_parts))
 
-        logger.info(f"Conteúdo dividido em {len(chunks)} chunk(s)")
+        logger.info(f"Conteúdo dividido em {len(chunks)} chunk(s) (max {max_chars_per_chunk} chars cada)")
 
         chat_headers = {k: v for k, v in headers.items() if k.lower() != "x-backend"}
         llm_model = model or "default"
