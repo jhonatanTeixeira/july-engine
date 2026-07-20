@@ -158,7 +158,12 @@ A documentação de arquitetura (Engine, Orchestrator, Bridge, Model Loader, bib
 
 ## Dependências
 
-Este projeto depende de pacotes editáveis locais (`july_engine_libs/python/llama_gguf`, `telemetry`, `routers`) declarados via caminhos relativos (`../july_engine_libs/...`) em `requirements.txt`. Esses pacotes ainda vivem no monorepo principal e não foram extraídos para este repositório — ajuste esses caminhos (ou vendorize/publique os pacotes) antes de instalar `requirements.txt` de forma isolada.
+Os pacotes editáveis locais (`llama_gguf`, `telemetry`, `routers`) vêm do submódulo `vendor/july_engine_libs` ([july-engine-libs](https://github.com/jhonatanTeixeira/july-engine-libs)). Ao clonar, inicialize os submódulos antes de instalar:
+
+```bash
+git submodule update --init --recursive
+pip install -r requirements.txt
+```
 
 ## License
 

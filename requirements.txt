@@ -1,11 +1,11 @@
 --extra-index-url https://download.pytorch.org/whl/cu126
 
---find-links ../july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
+--find-links ./vendor/july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
 
 llama-cpp-python==0.3.37
--e ../july_engine_libs/python/llama_gguf
--e ../july_engine_libs/python/telemetry
--e ../july_engine_libs/python/routers
+-e ./vendor/july_engine_libs/python/llama_gguf
+-e ./vendor/july_engine_libs/python/telemetry
+-e ./vendor/july_engine_libs/python/routers
 faster-whisper
 coqui-tts==0.27.5
 transformers==5.0.0

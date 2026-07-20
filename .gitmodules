@@ -1,3 +1,6 @@
 [submodule "vendor/IP-Adapter"]
 	path = vendor/IP-Adapter
 	url = https://github.com/tencent-ailab/IP-Adapter.git
+[submodule "vendor/july_engine_libs"]
+	path = vendor/july_engine_libs
+	url = https://github.com/jhonatanTeixeira/july-engine-libs.git
