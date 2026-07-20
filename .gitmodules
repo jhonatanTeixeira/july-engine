@@ -1,0 +1,3 @@
+[submodule "vendor/IP-Adapter"]
+	path = vendor/IP-Adapter
+	url = https://github.com/tencent-ailab/IP-Adapter.git

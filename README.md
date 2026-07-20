@@ -2,7 +2,7 @@
 
 O `july_engine` é o núcleo de inteligência do ecossistema Jully. Um motor de inferência multimodal construído com Python e FastAPI, capaz de processar texto, visão, áudio e imagem usando modelos GGUF locais — com gerenciamento automático e inteligente de VRAM/RAM.
 
-**Nota:** A partir desta versão, July Engine é dedicado exclusivamente a inferência local. Serviços de busca externa (web search, code search) foram movidos para o [July Search](../july_search/README.md).
+**Nota:** A partir desta versão, July Engine é dedicado exclusivamente a inferência local. Serviços de busca externa (web search, code search) foram movidos para o serviço **July Search**, mantido em repositório próprio.
 
 ## O que torna o July Engine excepcional
 
@@ -154,13 +154,12 @@ Para funcionalidades que requerem buscas externas (web search via Tavily, code s
 
 ## Documentação Completa
 
-- [Arquitetura do Engine](../docs/docs/arquitetura/july_engine.md)
-- [O Orchestrator](../docs/docs/arquitetura/orquestrador.md)
-- [O Bridge](../docs/docs/arquitetura/bridge.md)
-- [O Model Loader](../docs/docs/arquitetura/model_loader.md)
-- [Biblioteca llama_gguf](../docs/docs/python/llama_gguf_lib.md)
-- [Formato GGUF](../docs/docs/engine/gguf.md)
+A documentação de arquitetura (Engine, Orchestrator, Bridge, Model Loader, biblioteca `llama_gguf`, formato GGUF) vive no monorepo principal do ecossistema Jully.
+
+## Dependências
+
+Este projeto depende de pacotes editáveis locais (`july_engine_libs/python/llama_gguf`, `telemetry`, `routers`) declarados via caminhos relativos (`../july_engine_libs/...`) em `requirements.txt`. Esses pacotes ainda vivem no monorepo principal e não foram extraídos para este repositório — ajuste esses caminhos (ou vendorize/publique os pacotes) antes de instalar `requirements.txt` de forma isolada.
 
 ## License
 
-Proprietário - Uso interno apenas
+MIT — veja [LICENSE](LICENSE). Este projeto depende de bibliotecas de terceiros com licenças mais restritivas (incluindo AGPL-3.0 e GPL-3.0, além de pesos de modelos não-comerciais); veja [NOTICE.md](NOTICE.md) antes de qualquer uso comercial ou como serviço de rede.
