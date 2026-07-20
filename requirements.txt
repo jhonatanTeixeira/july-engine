@@ -16,13 +16,11 @@ torchaudio==2.11.0
 torchvision
 fastapi[standard]
 requests
-litellm
 tinydb
 sqlalchemy
 psycopg2-binary
 chromadb
 pgvector==0.4.2
-mcp
 piexif
 exif
 fsspec
@@ -58,14 +56,8 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 onnxruntime-gpu
 sentence-transformers==5.4.1
-tavily-python
 replicate
 pyinstaller
-noisereduce
-soundfile
-pyppeteer
-timm
-# faster-qwen3-tts==0.2.6
 py-cpuinfo
 tf-keras==2.21.0
 PyMuPDF

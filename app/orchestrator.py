@@ -143,16 +143,6 @@ class CpuContext(BaseContext):
         return self.resource_manager.get_available_ram_mb()
 
 
-class ApiContext(BaseContext):
-    @property
-    def context_type(self) -> str:
-        return "api"
-
-    def get_free_ram(self):
-        # API context doesn't track local RAM/VRAM
-        return float('inf')
-
-
 class Runner:
     def __init__(self, task_type: str, model_tag: str | None, context: BaseContext | None = None):
         from .model_loader import model_loader
@@ -169,10 +159,10 @@ class Runner:
 
         if not self.context:
             backend = self.model.backend
-            _ctx_map = {"gpu": GpuContext, "cpu": CpuContext, "api": ApiContext}
-            ctx_cls = _ctx_map.get(backend, ApiContext)
+            _ctx_map = {"gpu": GpuContext, "cpu": CpuContext}
+            ctx_cls = _ctx_map.get(backend, CpuContext)
             self.context = ctx_cls()
-        
+
         self.model_loader = model_loader
         self.is_running = False
         self.state_lock = threading.Lock()
@@ -299,7 +289,6 @@ class Orchestrator:
         self._backend_contexts: Dict[str, BaseContext] = {
             'gpu': GpuContext(),
             'cpu': CpuContext(),
-            'api': ApiContext(),
         }
 
     async def start(self):

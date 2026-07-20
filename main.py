@@ -58,7 +58,6 @@ from contextlib import asynccontextmanager
 from app.bridge import bridge
 from july_routers.openai import router as openai_router, set_bridge as openai_set_bridge
 from july_routers.anthropic import router as anthropic_router, set_bridge as anthropic_set_bridge
-from july_routers.search import router as search_router, set_bridge as search_set_bridge
 from july_routers.july import router as july_router, set_bridge as july_set_bridge
 from july_routers.calculator import router as calculator_router, set_bridge as calculator_set_bridge
 from july_routers.services_router import router as services_router
@@ -70,7 +69,6 @@ from app.routers.webhooks_router import router as webhooks_router
 
 openai_set_bridge(bridge)
 anthropic_set_bridge(bridge)
-search_set_bridge(bridge)
 july_set_bridge(bridge)
 calculator_set_bridge(bridge)
 from app.events import event_manager
@@ -254,7 +252,6 @@ app.include_router(models_router)
 app.include_router(calculator_router)
 app.include_router(monitoring_router)
 app.include_router(voice_router)
-app.include_router(search_router)
 app.include_router(settings_router)
 app.include_router(services_router)
 app.include_router(webhooks_router)

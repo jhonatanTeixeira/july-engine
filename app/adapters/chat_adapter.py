@@ -47,11 +47,9 @@ class ChatAdapter(AdapterBase):
         return self._strategy
 
     def _get_mcp(self):
-        if not self._mcp:
-            from ..services.mcp_emulator import McpEmulator
-            from ..services.internal_mcp import internal_mcp
-            self._mcp = McpEmulator(internal_mcp)
-        return self._mcp
+        # MCP externo removido - July Engine agora é 100% local
+        # Se precisar de funcionalidade MCP, usar internal_mcp apenas via header x-enable-internal-mcp=1
+        return None
 
     async def get_required_vram(self, payload: Dict[str, Any]) -> int:
         return await self._get_strategy().get_required_vram(payload)
@@ -82,27 +80,9 @@ class ChatAdapter(AdapterBase):
 
         await helper.process_transcription()
 
-        mcp_option = self.meta.get("mcp_option", "emulated")
-
-        enable_internal_mcp = payload.get("headers", {}).get("x-enable-internal-mcp", "0") == "1"
-        tools_whitelist = payload.pop("tools_whitelist", [])
-        mcp_handler = None
+        # MCP externo removido - July Engine agora é 100% local
+        # TODO: internal_mcp pode ser movido para lugar separado se necessário
         
-        if enable_internal_mcp:
-            if mcp_option == "internal":
-                mcp_handler = self._get_mcp().internal_mcp
-            else: # emulated (default) — external MCPs are agent-side only
-                mcp_handler = self._get_mcp()
-        elif mcp_option == "emulated":
-            # Special case: Enable McpEmulator only for XML/OpenAI conversion (no internal execution)
-            mcp_handler = self._get_mcp()
-            
-        if mcp_handler:
-            mcp_handler.inject_tools(payload, tools_whitelist)
-            
-            if mcp_option == "emulated":
-                payload.pop("tools", None)
-
         original_payload = copy.deepcopy(payload)
 
         if not self.meta.get("is_vision"):
@@ -111,9 +91,6 @@ class ChatAdapter(AdapterBase):
 
         # Execute local model
         response = await self._get_strategy().run(payload)
-
-        if mcp_handler:
-            response = await mcp_handler.orchestrate(response, self, original_payload)
 
         return self._ensure_string_content(response)
 
