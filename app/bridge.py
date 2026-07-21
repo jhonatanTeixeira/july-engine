@@ -14,8 +14,8 @@ class Bridge(BridgeInterface):
 
     Responsibilities:
       1. Inject HTTP headers into payload.
-      2. Resolve model backend (gpu / cpu / api) from model config.
-      3. Route to the right orchestrator or llm_api.dispatch().
+      2. Resolve model backend (gpu / cpu) from model config.
+      3. Route to the right orchestrator.
 
     No domain knowledge, no data conversion.
     """
@@ -50,6 +50,7 @@ class Bridge(BridgeInterface):
         "image_remove_background": "BG_REMOVAL",
         "video_description": "VISION",
         "video_generation": "VIDEO_GENERATION",
+        "entity_extraction": "ENTITY_EXTRACTION",
     }
 
     def _inject_headers(self, payload: dict, headers: dict) -> dict:
@@ -166,6 +167,13 @@ class Bridge(BridgeInterface):
 
     async def process_embeddings(self, payload: dict, headers: dict):
         return await self._dispatch("embeddings", payload, headers)
+
+    # ------------------------------------------------------------------
+    # Entity Extraction (GLiNER2)
+    # ------------------------------------------------------------------
+
+    async def process_entity_extraction(self, payload: dict, headers: dict):
+        return await self._dispatch("entity_extraction", payload, headers)
 
     # ------------------------------------------------------------------
     # RAG (Memory)

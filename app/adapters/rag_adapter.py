@@ -118,7 +118,7 @@ class RagAdapter(AdapterBase):
 
     async def _embed_text(self, text: str, emb_type: str = "passage") -> List[float]:
         result = self._get_emb_model().run({"input": text, "emb_type": emb_type})
-        # LLMApi may return [[...]] (matrix), local models return [...]
+        # Some embedding models return a matrix [[...]]; normalize to a flat vector.
         if result and isinstance(result[0], list):
             return result[0]
         return result

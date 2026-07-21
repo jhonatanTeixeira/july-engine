@@ -131,9 +131,9 @@ class UpdateMetadataRequest(BaseModel):
     mmproj_path: Optional[str] = None
 
 class WarmupItem(BaseModel):
-    task_type: str  # text_chat, vision_chat, tts, stt, embeddings, image_generation, web_search, etc.
+    task_type: str  # text_chat, vision_chat, tts, stt, embeddings, image_generation, etc.
     model: str  # model alias/tag
-    backend: Optional[str] = None  # gpu, cpu, api — se omitido, resolve via config
+    backend: Optional[str] = None  # gpu, cpu — se omitido, resolve via config
 
 class WarmupRequest(BaseModel):
     models: List[WarmupItem]
@@ -387,9 +387,7 @@ async def model_warmup(request: WarmupRequest):
                 else:
                     cfg = engine_settings
 
-                if cfg.get("backend") == "api" or cfg.get("model_type") == "api":
-                    backend = "api"
-                elif cfg.get("num_layers") == 0:
+                if cfg.get("num_layers") == 0:
                     backend = "cpu"
                 else:
                     backend = cfg.get("backend", "gpu")

@@ -32,7 +32,10 @@ class ModelsService:
     def get_setting(self, name):
         if name == 'IMAGE_REMOVE_BACKGROUND':
             return {"model": "rembg", "backend": "cpu"}
-        
+
+        if name == 'ENTITY_EXTRACTION':
+            return self.backend.get_setting(name) or {"model": "fastino/gliner2-base-v1", "backend": "cpu"}
+
         return self.backend.get_setting(name)
 
     def is_vision_model(self, model_alias: str) -> bool:

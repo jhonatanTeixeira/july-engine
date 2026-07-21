@@ -14,6 +14,7 @@ _TASK_HANDLERS = {
     "image_edit":             "_edit",
     "image_resize":           "_resize",
     "image_remove_background": "_remove_background",
+    "video_generation":       "_generate_video",
 }
 
 # Resizer model tags handled via Pillow/OpenCV/AI resizer sub-models
@@ -24,18 +25,21 @@ _HEAVY_RESIZER_TAGS = frozenset(["gfpgan", "codeformer", "realesrgan", "onnx"])
 class ImageAdapter(AdapterBase):
     """
     Handles all image task types: image_generation, image_edit,
-    image_resize, image_remove_background.
+    image_resize, image_remove_background, video_generation.
 
     Engine field: "image"
 
     Sub-engine selection:
-      backend == "api"          → LLMApi for gen/edit
-      meta["alias"] == "rembg"  → BgRemoverModel
-      alias in _RESIZER_TAGS    → Pillow/AI resizer sub-model
-      alias == "pix2pix"        → Pix2PixModel (if available)
-      alias == "lcm"            → LCMFaceIDModel (if available)
-      alias == "flux-klein"     → FluxKleinModel (if available)
-      otherwise (api)           → LLMApi fallback
+      meta["alias"] == "rembg"        → BgRemoverModel
+      alias in _RESIZER_TAGS          → Pillow/AI resizer sub-model
+      alias == "pix2pix"              → Pix2PixModel (if available)
+      alias == "lcm"                  → LCMFaceIDModel (if available)
+      alias == "flux-klein"           → FluxKleinPipeline (if available)
+      alias == "qwen-edit"            → QwenImageEditModel (if available)
+      alias == "wan-t2v"              → Wan2T2VPipeline (if available)
+      alias == "wan-i2v"              → WanI2VModel (if available)
+      alias == "ltx2"                 → LTX2Model (if available)
+      otherwise                       → no local strategy (callers raise)
     """
 
     def __init__(self, task_type: str, backend: str = "gpu", model_meta: Optional[dict] = None):
@@ -49,6 +53,7 @@ class ImageAdapter(AdapterBase):
             "image_edit":              "IMAGE_EDIT",
             "image_resize":            "IMAGE_RESIZE",
             "image_remove_background": "IMAGE_REMOVE_BACKGROUND",
+            "video_generation":        "VIDEO_GENERATION",
         }
 
         return map.get(task_type)
@@ -60,31 +65,40 @@ class ImageAdapter(AdapterBase):
     def _alias(self) -> str:
         return self.model_id.lower()
 
-    def _detect_engine(self) -> str:
-        if self.backend == "api":
-            return "api"
-        
+    def _detect_engine(self) -> Optional[str]:
         tag = self._alias()
-        
+
         if tag == "rembg":
             return "rembg"
-        
+
         if tag in _RESIZER_TAGS:
             return f"resize_{tag}"
-        
+
         if tag == "pix2pix":
             return "pix2pix"
-        
+
         if tag == "lcm":
             return "lcm"
-        
+
         if tag in ("flux-klein", "flux_klein"):
             return "flux"
-        
+
         if tag == "video":
             return "video"
-        
-        return "api"
+
+        if tag in ("qwen-edit", "qwen_edit"):
+            return "qwen_edit"
+
+        if tag in ("wan-t2v", "wan2-t2v", "wan_t2v"):
+            return "wan_t2v"
+
+        if tag in ("wan-i2v", "wan2-i2v", "wan_i2v"):
+            return "wan_i2v"
+
+        if tag in ("ltx2", "ltx-2", "ltx_2"):
+            return "ltx2"
+
+        return None
 
     def _get_strategy(self):
         if self._strategy is not None:
@@ -97,7 +111,7 @@ class ImageAdapter(AdapterBase):
             from ..models.bg_remover import BgRemoverModel
             self._strategy = BgRemoverModel(backend=self.backend, model_meta=self.meta)
 
-        elif engine.startswith("resize_"):
+        elif engine and engine.startswith("resize_"):
             tag = engine.removeprefix("resize_")
             self._strategy = self._make_resizer(tag)
 
@@ -131,6 +145,38 @@ class ImageAdapter(AdapterBase):
                 self._strategy = LCMVideoPipeline(device="cuda" if self.backend == "gpu" else "cpu", use_sequential_offload=True)
             except Exception as e:
                 logger.warning(f"ImageAdapter: video model could not be loaded: {str(e)}")
+                self._strategy = None
+
+        elif engine == "qwen_edit":
+            try:
+                from ..models.qwen_image_edit import QwenImageEditModel
+                self._strategy = QwenImageEditModel(backend=self.backend, model_meta=self.meta)
+            except Exception as e:
+                logger.warning(f"ImageAdapter: qwen-edit model could not be loaded: {str(e)}")
+                self._strategy = None
+
+        elif engine == "wan_t2v":
+            try:
+                from ..models.wan2_t2v import Wan2T2VPipeline
+                self._strategy = Wan2T2VPipeline(backend=self.backend, model_meta=self.meta)
+            except Exception as e:
+                logger.warning(f"ImageAdapter: wan-t2v model could not be loaded: {str(e)}")
+                self._strategy = None
+
+        elif engine == "wan_i2v":
+            try:
+                from ..models.wan2_i2v import WanI2VModel
+                self._strategy = WanI2VModel(backend=self.backend, model_meta=self.meta)
+            except Exception as e:
+                logger.warning(f"ImageAdapter: wan-i2v model could not be loaded: {str(e)}")
+                self._strategy = None
+
+        elif engine == "ltx2":
+            try:
+                from ..models.ltx2_video import LTX2Model
+                self._strategy = LTX2Model(backend=self.backend, model_meta=self.meta)
+            except Exception as e:
+                logger.warning(f"ImageAdapter: ltx2 model could not be loaded: {str(e)}")
                 self._strategy = None
 
         return self._strategy
@@ -204,21 +250,10 @@ class ImageAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def _generate(self, payload: Dict[str, Any]):
-        engine = self._detect_engine()
-        headers = payload.get("headers", {})
-
-        config = self._load_config("IMAGE_CREATE")
-        if config:
-            headers.setdefault("x-base-url", config.get("base_url"))
-            if config.get("api_key"):
-                headers.setdefault("x-api-key", config["api_key"])
-                headers.setdefault("authorization", f"Bearer {config['api_key']}")
-
-        if engine in ("api", None) or self._get_strategy() is None:
-            from ..services.llm_api import llm_api
-            return await llm_api.dispatch("image_generation", {**payload, "headers": headers})
-
         strategy = self._get_strategy()
+        if strategy is None:
+            raise ValueError(f"ImageAdapter: no local image-generation model available for tag '{self._alias()}'")
+
         tag = self._alias()
 
         if tag == "pix2pix":
@@ -242,27 +277,10 @@ class ImageAdapter(AdapterBase):
         return None
 
     async def _edit(self, payload: Dict[str, Any]):
-        engine = self._detect_engine()
-        headers = payload.get("headers", {})
-
-        config = self._load_config("IMAGE_EDIT")
-        if config:
-            headers.setdefault("x-base-url", config.get("base_url"))
-            if config.get("api_key"):
-                headers.setdefault("x-api-key", config["api_key"])
-
-        if engine in ("api", None) or self._get_strategy() is None:
-            from ..services.llm_api import llm_api
-            image_data = payload.get("image", "")
-            mask_data = payload.get("mask")
-            return await llm_api.dispatch("image_edit", {
-                **payload,
-                "image": self._b64_to_file(image_data, "image.png"),
-                "mask": self._b64_to_file(mask_data, "mask.png") if mask_data else None,
-                "headers": headers,
-            })
-
         strategy = self._get_strategy()
+        if strategy is None:
+            raise ValueError(f"ImageAdapter: no local image-edit model available for tag '{self._alias()}'")
+
         tag = self._alias()
 
         if tag == "pix2pix":
@@ -282,6 +300,9 @@ class ImageAdapter(AdapterBase):
                 return self._pil_to_b64(images[0])
 
         if tag in ("flux-klein", "flux_klein"):
+            return strategy.run(payload)
+
+        if tag in ("qwen-edit", "qwen_edit"):
             return strategy.run(payload)
 
         return None
@@ -323,6 +344,17 @@ class ImageAdapter(AdapterBase):
             return base64.b64encode(output_img).decode()
         return output_img
 
+    async def _generate_video(self, payload: Dict[str, Any]):
+        strategy = self._get_strategy()
+        if strategy is None:
+            raise ValueError(f"ImageAdapter: no local video-generation model available for tag '{self._alias()}'")
+
+        # strategy.run() is an async generator for every video-producing model —
+        # returning it here (without awaiting) lets the orchestrator's Runner detect
+        # __aiter__ and stream the result back in chunks instead of buffering the
+        # whole clip in memory.
+        return strategy.run(payload)
+
     # ------------------------------------------------------------------
     # Image helpers
     # ------------------------------------------------------------------
@@ -348,31 +380,9 @@ class ImageAdapter(AdapterBase):
         return base64.b64encode(buf.getvalue()).decode()
 
     @staticmethod
-    def _b64_to_file(b64_str: str, filename: str):
-        if not b64_str:
-            return None
-        if b64_str.startswith("data:image"):
-            b64_str = b64_str.split(",", 1)[1]
-        img_bytes = base64.b64decode(b64_str)
-        buf = io.BytesIO(img_bytes)
-        buf.name = filename
-        return buf
-
-    @staticmethod
     def _blank_image(width: int = 512, height: int = 512) -> str:
         from PIL import Image
         img = Image.new("RGB", (width, height), color="white")
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode()
-
-    # ------------------------------------------------------------------
-    # Config helper
-    # ------------------------------------------------------------------
-
-    def _load_config(self, key: str) -> dict:
-        try:
-            from ..services.models_service import model_service
-            return model_service.backend.get_setting(key) or {}
-        except Exception:
-            return {}

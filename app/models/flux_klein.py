@@ -7,36 +7,22 @@ from typing import Optional, Dict, Any
 from PIL import Image
 
 try:
-    from .base_model import BaseModel
+    from .sdnq_diffusion_base import SDNQDiffusionModel
 except ImportError:
-    from base_model import BaseModel
+    from sdnq_diffusion_base import SDNQDiffusionModel
 
 logger = logging.getLogger("JulyEngine.Models.FluxKleinSDNQ")
 
-class FluxKleinPipeline(BaseModel):
+class FluxKleinPipeline(SDNQDiffusionModel):
+    DEFAULT_MODEL_ID = "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic"
+    OFFLOAD_ENV_VAR = "FLUX_OFFLOAD"
+    PIPELINE_ATTRS = ("model_t2i", "model_i2i")
+    VRAM_TIERS = {"sequential": 1000, "cpu": 1500, "none": 3500}
+
     def __init__(self, backend="gpu", model_meta=None):
         super().__init__(backend, model_meta)
-        self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
-        self.model_t2i = None
-        self.model_i2i = None
-        self.device = "cuda" if backend == "gpu" else "cpu"
         self.lora_loaded = False
         self.lora_path = os.path.join(os.getcwd(), "models", "ExcellentFullNude_F2K4B_1.safetensors")
-        
-        self.model_id = self.meta.get("id", "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic")
-
-    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        """Calcula a VRAM para o FLUX.2 Klein SDNQ baseada no offload."""
-        if self.backend == "cpu":
-            return 0
-            
-        offload = os.environ.get("FLUX_OFFLOAD", "sequential").lower()
-        if offload == "sequential":
-            return 1000
-        elif offload == "cpu":
-            return 1500
-        else:
-            return 3500
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():
@@ -79,17 +65,7 @@ class FluxKleinPipeline(BaseModel):
 
         # 4. Kit Sobrevivência 4GB
         logger.info("FluxKleinNode: Ativando travas de segurança de VRAM...")
-        offload = os.environ.get("FLUX_OFFLOAD", "sequential").lower()
-        
-        if offload == "cpu":
-            logger.info("FluxKleinNode: Ativando model_cpu_offload...")
-            self.model_t2i.enable_model_cpu_offload()
-        elif offload == "sequential":
-            logger.info("FluxKleinNode: Ativando sequential_cpu_offload...")
-            self.model_t2i.enable_sequential_cpu_offload()
-        else:
-            logger.info("FluxKleinNode: Offload desativado. Usando VRAM completa.")
-            self.model_t2i.to(self.device)
+        self._apply_offload(self.model_t2i)
 
         if os.environ.get("ENABLE_VAE", "true").lower() == "true":
             logger.info("FluxKleinNode: Ativando otimizações de VAE (tiling/slicing)...")
@@ -182,22 +158,6 @@ class FluxKleinPipeline(BaseModel):
         except Exception as e:
             logger.error(f"FluxKleinNode: Erro fatal na inferência: {e}")
             raise e
-
-    def unload(self, model_name: Optional[str] = None):
-        if self.is_loaded():
-            import torch
-            logger.info("FluxKleinNode: Descarregando modelo e limpando VRAM...")
-            del self.model_t2i
-            del self.model_i2i
-            self.model_t2i = None
-            self.model_i2i = None
-            gc.collect()
-            torch.cuda.empty_cache()
-            if torch.cuda.is_available():
-                torch.cuda.ipc_collect()
-
-    def is_loaded(self):
-        return self.model_t2i is not None
 
 # ==============================================================================
 # BLOCO DE TESTE STANDALONE

@@ -34,8 +34,7 @@ class VisionAdapter(AdapterBase):
 
     Sub-engine selection:
       meta["vision_engine"] → explicit engine name
-      alias prefix matching → fastvlm | moondream | emotion | tagger
-      backend == "api"      → LLMApi route (handled inline)
+      alias prefix matching → fastvlm | moondream | molmo | emotion | tagger
     """
 
     def __init__(self, task_type: str, backend: str = "gpu", model_meta: Optional[dict] = None):
@@ -52,9 +51,6 @@ class VisionAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     def _detect_engine(self) -> str:
-        if self.backend == "api":
-            return "api"
-        
         return (self.meta.get("alias") or self.meta.get("model", "")).lower()
 
     def _get_vision_model(self):
@@ -73,6 +69,9 @@ class VisionAdapter(AdapterBase):
             elif engine == "moondream":
                 from ..models.moondream import MoondreamModel
                 self._vision_model = MoondreamModel(backend=self.backend, model_meta=self.meta)
+            elif engine == "molmo":
+                from ..models.molmo import MolmoModel
+                self._vision_model = MolmoModel(backend=self.backend, model_meta=self.meta)
             elif engine == "emotion":
                 from ..models.emotion import EmotionModel
                 from ..services.vision import FaceDetector
@@ -192,44 +191,6 @@ class VisionAdapter(AdapterBase):
 
     async def _analyze(self, payload: Dict[str, Any]) -> List[str]:
         engine = self._detect_engine()
-        headers = payload.get("headers", {})
-
-        # Inject config headers from TEXT_PRESETS when using API or GGUF
-        if engine in ("api", "gguf"):
-            config = self._load_preset_config()
-            if config:
-                headers.setdefault("x-base-url", config.get("base_url"))
-                if config.get("api_key"):
-                    headers.setdefault("x-api-key", config["api_key"])
-                    headers.setdefault("authorization", f"Bearer {config['api_key']}")
-
-        if engine in ("api", "gguf"):
-            messages = payload.pop("messages", [])
-            stream = payload.pop("stream", False)
-
-            for msg in messages:
-                content = msg.get("content", [])
-                if isinstance(content, list):
-                    for part in content:
-                        if part.get("type") == "image_url":
-                            url = part["image_url"]["url"]
-                            if url.startswith("data:image"):
-                                hdr, raw_b64 = url.split(",", 1)
-                                small = self._sanitize_image(raw_b64, max_size=1024)
-                                part["image_url"]["url"] = f"data:image/jpeg;base64,{small}"
-
-            if engine == "api":
-                from ..services.llm_api import llm_api
-                model_tag = payload.pop("model", self.meta.get("alias", ""))
-                raw = await llm_api.dispatch("vision_chat", {
-                    **payload, "messages": messages, "stream": stream,
-                    "model": model_tag, "headers": headers,
-                })
-            else:
-                model = self._get_vision_model()
-                raw = await model.run_chat(messages, stream=stream, **payload)
-
-            return [self._extract_text(raw)]
 
         # Local VLM / Emotion / Tagger — extract images from messages
         extracted_images, extracted_prompt = self._extract_images_from_payload(payload)
@@ -411,17 +372,3 @@ class VisionAdapter(AdapterBase):
         if isinstance(result, dict) and "choices" in result:
             return result["choices"][0]["message"].get("content", "")
         return str(result)
-
-    # ------------------------------------------------------------------
-    # Config helper
-    # ------------------------------------------------------------------
-
-    def _load_preset_config(self) -> dict:
-        try:
-            from ..services.models_service import model_service
-            presets = model_service.backend.get_setting("TEXT_PRESETS") or []
-            alias = self.meta.get("alias", "")
-            config = next((p for p in presets if p.get("alias") == alias), None)
-            return config or (presets[0] if presets else {})
-        except Exception:
-            return {}

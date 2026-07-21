@@ -66,6 +66,7 @@ from app.routers.monitoring import router as monitoring_router
 from app.routers.voice import router as voice_router
 from app.routers.settings_router import router as settings_router
 from app.routers.webhooks_router import router as webhooks_router
+from app.routers.entities_router import router as entities_router
 
 openai_set_bridge(bridge)
 anthropic_set_bridge(bridge)
@@ -98,9 +99,7 @@ description = """
 
 ### How to Use:
 The engine routes requests based on custom HTTP headers:
-1. **`x-backend`**: Set to `cpu`, `gpu`, or `api` to choose where the task runs.
-2. **`x-base-url`**: When using the `api` backend, this specifies the external provider URL.
-3. **`Authorization`**: Pass a Bearer token to be forwarded to external API providers.
+1. **`x-backend`**: Set to `cpu` or `gpu` to choose where the task runs (defaults to `gpu` if omitted).
 
 All endpoints follow standard industry schemas for seamless integration with existing AI tools.
 """
@@ -255,6 +254,7 @@ app.include_router(voice_router)
 app.include_router(settings_router)
 app.include_router(services_router)
 app.include_router(webhooks_router)
+app.include_router(entities_router)
 app.include_router(july_router)
 
 

@@ -1,25 +1,25 @@
 import os
 import gc
-import base64
+import asyncio
 import logging
 import tempfile
 from typing import Optional, Dict, Any
 
 try:
-    from .base_model import BaseModel
+    from .sdnq_diffusion_base import SDNQDiffusionModel
 except ImportError:
-    from base_model import BaseModel
+    from sdnq_diffusion_base import SDNQDiffusionModel
 
 logger = logging.getLogger("JulyEngine.Models.Wan2T2V")
 
+_SDNQ_VRAM_TIERS = {"sequential": 2000, "cpu": 4000, "none": 10000}
+# Wan2.1-1.3B (non-SDNQ) is much smaller
+_NATIVE_VRAM_TIERS = {"sequential": 2000, "cpu": 3000, "none": 5000}
 
-class Wan2T2VPipeline(BaseModel):
-    def __init__(self, backend="gpu", model_meta=None):
-        super().__init__(backend, model_meta)
-        self.cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
-        self.pipeline = None
-        self.device = "cuda" if backend == "gpu" else "cpu"
-        self.model_id = self.meta.get("id", "Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32")
+
+class Wan2T2VPipeline(SDNQDiffusionModel):
+    DEFAULT_MODEL_ID = "Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32"
+    OFFLOAD_ENV_VAR = "WAN_OFFLOAD"
 
     def _is_sdnq_model(self) -> bool:
         variant = self.meta.get("variant", "").lower()
@@ -27,26 +27,8 @@ class Wan2T2VPipeline(BaseModel):
             return variant == "sdnq"
         return "sdnq" in self.model_id.lower()
 
-    async def get_required_vram(self, payload: Dict[str, Any]) -> int:
-        if self.backend == "cpu":
-            return 0
-
-        offload = os.environ.get("WAN_OFFLOAD", "sequential").lower()
-        if self._is_sdnq_model():
-            if offload == "sequential":
-                return 2000
-            elif offload == "cpu":
-                return 4000
-            else:
-                return 10000
-        else:
-            # Wan2.1-1.3B is much smaller
-            if offload == "sequential":
-                return 2000
-            elif offload == "cpu":
-                return 3000
-            else:
-                return 5000
+    def _vram_table(self) -> Dict[str, int]:
+        return _SDNQ_VRAM_TIERS if self._is_sdnq_model() else _NATIVE_VRAM_TIERS
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():
@@ -101,7 +83,7 @@ class Wan2T2VPipeline(BaseModel):
         else:
             logger.info("Wan2T2V[SDNQ]: Triton ausente. Usando Eager Mode do PyTorch.")
 
-        self._apply_offload()
+        self._apply_offload(self.pipeline)
         logger.info("Wan2T2V[SDNQ]: Carga finalizada com sucesso!")
 
     def _load_diffusers_native(self):
@@ -238,25 +220,11 @@ class Wan2T2VPipeline(BaseModel):
             except Exception as e:
                 logger.warning(f"Wan2T2V[Diffusers]: torch.compile falhou ({e}), continuando sem compilação.")
 
-        self._apply_offload()
+        self._apply_offload(self.pipeline)
         logger.info("Wan2T2V[Diffusers]: Carga finalizada com sucesso!")
 
-    def _apply_offload(self):
-        offload = os.environ.get("WAN_OFFLOAD", "sequential").lower()
-        if offload == "cpu":
-            logger.info("Wan2T2V: Ativando model_cpu_offload...")
-            self.pipeline.enable_model_cpu_offload()
-        elif offload == "sequential":
-            logger.info("Wan2T2V: Ativando sequential_cpu_offload...")
-            self.pipeline.enable_sequential_cpu_offload()
-        else:
-            logger.info("Wan2T2V: Offload desativado. Usando VRAM completa.")
-            self.pipeline.to(self.device)
-
-    def run(self, payload: Dict[str, Any], **kwargs):
-        if not self.is_loaded():
-            self.load()
-
+    def _render(self, payload: Dict[str, Any]) -> str:
+        """Blocking render + export to a temp mp4 file — runs inside asyncio.to_thread."""
         import torch
         from diffusers.utils import export_to_video
 
@@ -291,40 +259,28 @@ class Wan2T2VPipeline(BaseModel):
         if self._is_sdnq_model():
             call_kwargs["guidance_scale_2"] = float(payload.get("guidance_scale_2", 3.0))
 
-        try:
-            output = self.pipeline(**call_kwargs)
+        output = self.pipeline(**call_kwargs)
+        frames = output.frames[0]
+        logger.info(f"Wan2T2V: {len(frames)} frames gerados. Exportando para MP4...")
 
-            frames = output.frames[0]
-            logger.info(f"Wan2T2V: {len(frames)} frames gerados. Exportando para MP4...")
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            tmp_path = tmp.name
+        export_to_video(frames, tmp_path, fps=fps)
+        return tmp_path
 
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-                tmp_path = tmp.name
+    async def run(self, payload: Dict[str, Any], **kwargs):
+        if not self.is_loaded():
+            await asyncio.to_thread(self.load)
 
+        async with self._inference_lock:
             try:
-                export_to_video(frames, tmp_path, fps=fps)
-                with open(tmp_path, "rb") as f:
-                    video_bytes = f.read()
-                return base64.b64encode(video_bytes).decode("utf-8")
-            finally:
-                os.unlink(tmp_path)
+                tmp_path = await asyncio.to_thread(self._render, payload)
+            except Exception as e:
+                logger.error(f"Wan2T2V: Erro fatal na inferência: {e}")
+                raise
 
-        except Exception as e:
-            logger.error(f"Wan2T2V: Erro fatal na inferência: {e}")
-            raise e
-
-    def unload(self, model_name: Optional[str] = None):
-        if self.is_loaded():
-            import torch
-            logger.info("Wan2T2V: Descarregando modelo e limpando VRAM...")
-            del self.pipeline
-            self.pipeline = None
-            gc.collect()
-            torch.cuda.empty_cache()
-            if torch.cuda.is_available():
-                torch.cuda.ipc_collect()
-
-    def is_loaded(self):
-        return self.pipeline is not None
+            async for chunk in self._stream_file(tmp_path):
+                yield chunk
 
 
 # ==============================================================================
@@ -393,10 +349,12 @@ if __name__ == "__main__":
             "seed": args.seed,
         }
 
-        b64_video = node.run(payload)
+        async def _consume():
+            with open(args.output, "wb") as fh:
+                async for chunk in node.run(payload):
+                    fh.write(chunk)
 
-        with open(args.output, "wb") as fh:
-            fh.write(base64.b64decode(b64_video))
+        asyncio.run(_consume())
 
         logger.info(f"Vídeo salvo em: {args.output}")
 

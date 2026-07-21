@@ -15,6 +15,10 @@ _ALIAS_ENGINE_MAP = [
     ("qwen3_tts",    "qwen3"),
     ("xtts",         "xtts2"),
     ("piper",        "piper"),
+    ("neutts",       "neutts_air"),
+    ("indextts",     "indextts2"),
+    ("f5-tts",       "f5tts"),
+    ("f5_tts",       "f5tts"),
 ]
 
 _MARKDOWN_RE = re.compile(r'[*_`#~\[\]()\\<>+=\-|{}]')
@@ -31,7 +35,8 @@ class TTSAdapter(AdapterBase):
     Sub-engine selection (in order):
       1. meta["tts_engine"] field
       2. alias prefix matching against _ALIAS_ENGINE_MAP
-      3. Falls back to "api"
+      3. Falls back to the raw alias string — if that doesn't match any
+         local engine either, run() logs an error and returns None.
     """
 
     def __init__(self, task_type: str, backend: str = "cpu", model_meta: Optional[dict] = None):
@@ -47,9 +52,6 @@ class TTSAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     def _detect_engine(self) -> str:
-        if self.backend == "api":
-            return "api"
-
         model_lower = self.model_id.lower()
         for prefix, engine in _ALIAS_ENGINE_MAP:
             if model_lower.startswith(prefix):
@@ -77,8 +79,17 @@ class TTSAdapter(AdapterBase):
         elif engine == "qwen3":
             from ..models.tts_qwen3 import FasterQwen3TTSModel
             self._tts_model = FasterQwen3TTSModel(backend=self.backend, model_meta=self.meta)
-        
-        # "api" — no local model instance
+        elif engine == "neutts_air":
+            from ..models.tts_neutts_air import NeuTTSAirModel
+            self._tts_model = NeuTTSAirModel(backend=self.backend, model_meta=self.meta)
+        elif engine == "indextts2":
+            from ..models.tts_indextts2 import IndexTTS2Model
+            self._tts_model = IndexTTS2Model(backend=self.backend, model_meta=self.meta)
+        elif engine == "f5tts":
+            from ..models.tts_f5 import F5TTSModel
+            self._tts_model = F5TTSModel(backend=self.backend, model_meta=self.meta)
+
+        # no local engine matched — caller handles None
         return self._tts_model
 
     # ------------------------------------------------------------------
@@ -118,12 +129,6 @@ class TTSAdapter(AdapterBase):
         language = payload.get("language") or config.get("language", "a")
         temperature = payload.get("temperature") or config.get("temperature") or 0.7
         semitones = payload.get("semitones") or config.get("semitones") or 0.0
-
-        if config:
-            headers.setdefault("x-base-url", config.get("base_url"))
-            headers.setdefault("x-api-key", config.get("api_key"))
-            if config.get("api_key"):
-                headers.setdefault("authorization", f"Bearer {config['api_key']}")
 
         engine = self._detect_engine()
         tts_payload = {
@@ -177,10 +182,6 @@ class TTSAdapter(AdapterBase):
     # ------------------------------------------------------------------
 
     async def _dispatch_sync(self, engine: str, payload: dict):
-        if engine == "api":
-            from ..services.llm_api import llm_api
-            return await llm_api.dispatch("tts", {**payload, "stream": False})
-
         model = self._get_tts_model()
         if not model:
             logger.error(
@@ -196,9 +197,6 @@ class TTSAdapter(AdapterBase):
 
     async def _synth_sentence(self, engine: str, sentence: str, payload: dict) -> Optional[bytes]:
         p = {**payload, "input": sentence, "stream": False}
-        if engine == "api":
-            from ..services.llm_api import llm_api
-            return await llm_api.dispatch("tts", p)
         model = self._get_tts_model()
         if not model:
             return None

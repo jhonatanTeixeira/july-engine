@@ -37,12 +37,8 @@ class ChatAdapter(AdapterBase):
 
     def _get_strategy(self) -> BaseModel:
         if not self._strategy:
-            if self.backend in ['cpu', 'gpu']:
-                from ..models.gguf_adapter import GGUFAdapter
-                self._strategy = GGUFAdapter(self.backend, self.meta)
-            else:
-                from ..models.llm_adapter import LLMAdapter
-                self._strategy = LLMAdapter(self.meta)
+            from ..models.gguf_adapter import GGUFAdapter
+            self._strategy = GGUFAdapter(self.backend, self.meta)
 
         return self._strategy
 

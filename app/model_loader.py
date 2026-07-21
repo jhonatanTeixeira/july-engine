@@ -37,9 +37,9 @@ def _get_image_adapter():
     from .adapters.image_adapter import ImageAdapter
     return ImageAdapter
 
-def _get_search_adapter():
-    from .adapters.search_adapter import SearchAdapter
-    return SearchAdapter
+def _get_entity_adapter():
+    from .adapters.entity_adapter import EntityAdapter
+    return EntityAdapter
 
 
 _ADAPTER_REGISTRY: Dict[str, Callable[[], Type[AdapterBase]]] = {
@@ -60,9 +60,9 @@ _ADAPTER_REGISTRY: Dict[str, Callable[[], Type[AdapterBase]]] = {
     "image_edit": _get_image_adapter,
     "image_resize": _get_image_adapter,
     "image_remove_background": _get_image_adapter,
-    "web_search": _get_search_adapter,
-    "code_search": _get_search_adapter,
-    "video_description": _get_vision_adapter
+    "video_generation": _get_image_adapter,
+    "video_description": _get_vision_adapter,
+    "entity_extraction": _get_entity_adapter,
 }
 
 
@@ -126,7 +126,7 @@ class ModelLoader:
 
             # Use the resolved backend for the cache key so that requests with/without
             # explicit x-backend headers always hit the same cached instance.
-            resolved_backend = backend or model_meta.get("backend") or "api"
+            resolved_backend = backend or model_meta.get("backend") or "gpu"
             key = f"{task_type}_{resolved_backend}_{model_tag}"
 
             if key in self.instances:

@@ -2,7 +2,7 @@
 
 --find-links ./vendor/july_engine_libs/python/llama_gguf/vendor/llama-cpp-python/dist
 
-llama-cpp-python==0.3.37
+llama-cpp-python==0.3.43
 -e ./vendor/july_engine_libs/python/llama_gguf
 -e ./vendor/july_engine_libs/python/telemetry
 -e ./vendor/july_engine_libs/python/routers
@@ -56,6 +56,13 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 onnxruntime-gpu
 sentence-transformers==5.4.1
+gliner2[local]
+neutts
+f5-tts
+# indextts intentionally NOT installed here: index-tts 2.0.0 requires torch==2.8.*,
+# which conflicts with this project's torch==2.11.0 pin, and the model likely
+# doesn't fit in the 4GB VRAM this repo targets anyway (see app/models/tts_indextts2.py).
+# Install separately (isolated venv) if you want to use it: pip install "indextts @ git+https://github.com/index-tts/index-tts.git"
 replicate
 pyinstaller
 py-cpuinfo
