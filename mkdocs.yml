@@ -1,0 +1,170 @@
+site_name: July Engine
+site_description: Local-only multimodal inference engine (chat, vision, TTS/STT, image & video generation, RAG) — official documentation.
+site_url: https://jhonatanteixeira.github.io/july-engine/
+site_author: Jhonatan Teixeira
+repo_url: https://github.com/jhonatanTeixeira/july-engine
+repo_name: jhonatanTeixeira/july-engine
+edit_uri: edit/master/docs/
+copyright: MIT License — see LICENSE and NOTICE.md for third-party terms.
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    # Navigation
+    - navigation.instant
+    - navigation.instant.prefetch
+    - navigation.instant.preview
+    - navigation.instant.progress
+    - navigation.tracking
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.prune
+    - navigation.indexes
+    - navigation.path
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - toc.integrate
+    # Search
+    - search.suggest
+    - search.highlight
+    - search.share
+    # Header
+    - header.autohide
+    - announce.dismiss
+    # Content
+    - content.code.copy
+    - content.code.annotate
+    - content.code.select
+    - content.tabs.link
+    - content.tooltips
+    - content.footnote.tooltips
+    - content.action.edit
+    - content.action.view
+
+plugins:
+  - search:
+      separator: '[\s​\-_,:!=\[\]()"`/]+'
+  - tags
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      title: On this page
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.mark
+  - pymdownx.tilde
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.smartsymbols
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+extra:
+  generator: false
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Request Flow: architecture/request-flow.md
+      - Orchestrator & VRAM Management: architecture/orchestrator.md
+      - Persistence & Vector Store: architecture/persistence.md
+  - Configuration:
+      - Resource Calculator (VRAM/RAM + MoE): configuration/resource-calculator.md
+      - llama-cpp-python Options: configuration/llama-cpp-options.md
+      - Admin Panel: configuration/admin-panel.md
+  - Models:
+      - Overview: models/index.md
+      - Chat / LLM:
+          - GGUF (llama.cpp) Adapter: models/gguf_adapter.md
+      - Vision (VLM & Image Understanding):
+          - FastVLM: models/fastvlm.md
+          - Moondream: models/moondream.md
+          - Molmo: models/molmo.md
+          - Emotion Detection: models/emotion.md
+          - Tagger (WD14): models/tagger.md
+      - Embeddings:
+          - BERT: models/bert.md
+          - BGE Micro: models/bge_micro.md
+          - Multilingual E5: models/multilingual_e5.md
+      - Entity Extraction:
+          - GLiNER2: models/gliner2_extractor.md
+      - Text-to-Speech:
+          - Kokoro: models/tts_kokoro.md
+          - Chatterbox: models/tts_chatterbox.md
+          - XTTS2: models/tts_xtts2.md
+          - Piper: models/tts_piper.md
+          - Qwen3-TTS: models/tts_qwen3.md
+          - NeuTTS Air: models/tts_neutts_air.md
+          - F5-TTS: models/tts_f5.md
+          - IndexTTS-2: models/tts_indextts2.md
+      - Speech-to-Text:
+          - Faster-Whisper: models/faster_whisper.md
+      - Image Editing & Generation:
+          - InstructPix2Pix: models/pix2pix.md
+          - Stable Diffusion LCM / FaceID: models/stable_diffusion_lcm.md
+          - FLUX.2 Klein (SDNQ): models/flux_klein.md
+          - Qwen-Image-Edit (SDNQ): models/qwen_image_edit.md
+      - Image Utilities:
+          - Background Removal (rembg): models/bg_remover.md
+          - Resizers & Upscalers: models/image_resizer.md
+      - Video Generation:
+          - Wan2.2 Text-to-Video: models/wan2_t2v.md
+          - Wan2.2 Image-to-Video: models/wan2_i2v.md
+          - LTX-2: models/ltx2_video.md
+          - Stable Diffusion Video (legacy): models/stable_diffusion_video.md
+      - 3D Generation:
+          - Trellis2 (stub): models/trellis2.md
+      - Shared Infrastructure:
+          - SDNQ Diffusion Base: models/sdnq_diffusion_base.md
+  - API Reference: api-reference.md
+  - Known Issues & Dead Paths: known-issues.md
+  - Licensing: licensing.md
+  - Tags: tags.md

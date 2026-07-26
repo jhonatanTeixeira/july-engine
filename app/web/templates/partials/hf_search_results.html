@@ -1,0 +1,12 @@
+{% if results %}
+  {% for r in results %}
+  <div class="hf-result-row"
+    hx-get="/admin/models/modal/new?repo_id={{ r.id | urlencode }}"
+    hx-target="#modal-container" hx-swap="innerHTML">
+    <span>{{ r.id }}</span>
+    <span class="badge">{{ r.downloads }} downloads</span>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="empty-state">Nenhum repositório encontrado.</div>
+{% endif %}

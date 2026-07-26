@@ -1,0 +1,8 @@
+<h2>Monitoramento</h2>
+<p class="subtitle">Uso de RAM, CPU e VRAM em tempo real (atualiza a cada 10s).</p>
+
+<div id="monitoring-metrics"
+  hx-get="/admin/monitoring/metrics"
+  hx-trigger="load, every 10s"
+  hx-swap="innerHTML">
+</div>

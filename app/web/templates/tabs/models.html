@@ -1,0 +1,33 @@
+<h2>Modelos GGUF</h2>
+<p class="subtitle">Baixe, edite e gerencie os modelos GGUF instalados localmente.</p>
+
+<div class="card">
+  <div class="card-header">
+    <h3>Buscar no Hugging Face</h3>
+    <button type="button" class="btn-primary btn-sm"
+      hx-get="/admin/models/modal/new" hx-target="#modal-container" hx-swap="innerHTML">
+      + Adicionar Manualmente
+    </button>
+  </div>
+  <input
+    type="search"
+    name="q"
+    placeholder="ex: qwen2.5 7b instruct"
+    hx-get="/admin/models/hf-search"
+    hx-trigger="keyup changed delay:500ms"
+    hx-target="#hf-results"
+    hx-swap="innerHTML"
+  >
+  <div id="hf-results"></div>
+</div>
+
+<div class="grid" style="margin-top: 18px;" id="models-grid">
+  {% if not models %}
+  <div class="empty-state">Nenhum modelo instalado ainda.</div>
+  {% endif %}
+  {% for model in models %}
+    {% include "partials/model_card.html" %}
+  {% endfor %}
+</div>
+
+<div id="modal-container"></div>

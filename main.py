@@ -52,8 +52,10 @@ logging.getLogger("llama_cpp").setLevel(logging.DEBUG if os.environ.get("DEBUG")
 import time
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 from contextlib import asynccontextmanager
 from app.bridge import bridge
 from july_routers.openai import router as openai_router, set_bridge as openai_set_bridge
@@ -67,6 +69,7 @@ from app.routers.voice import router as voice_router
 from app.routers.settings_router import router as settings_router
 from app.routers.webhooks_router import router as webhooks_router
 from app.routers.entities_router import router as entities_router
+from app.routers.admin_router import router as admin_router
 
 openai_set_bridge(bridge)
 anthropic_set_bridge(bridge)
@@ -122,6 +125,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ValidationError)
+async def pydantic_validation_exception_handler(request: Request, exc: ValidationError):
+    # Routers like admin_router build request models by hand from `await request.form()`
+    # (HTMX submits form-encoded, not JSON) instead of declaring them as endpoint params,
+    # so FastAPI's own body-validation pipeline never sees them and can't turn a failed
+    # model construction into its usual 422 — it just falls through to a raw 500. Handle
+    # it the same way FastAPI's own request_validation_exception_handler does.
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(exc.errors())},
+    )
+
 
 @app.middleware("http")
 async def http_metrics_middleware(request: Request, call_next):
@@ -245,6 +262,10 @@ async def request_id_middleware(request: Request, call_next):
 storage_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "storage", "voices")
 app.mount("/storage", StaticFiles(directory=storage_path), name="storage")
 
+# Servir os assets estáticos do painel administrativo (/admin/*)
+admin_static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app", "web", "static")
+app.mount("/admin/static", StaticFiles(directory=admin_static_path), name="admin_static")
+
 app.include_router(openai_router, prefix="/v1/openai")
 app.include_router(anthropic_router, prefix="/v1/anthropic")
 app.include_router(models_router)
@@ -255,6 +276,7 @@ app.include_router(settings_router)
 app.include_router(services_router)
 app.include_router(webhooks_router)
 app.include_router(entities_router)
+app.include_router(admin_router)
 app.include_router(july_router)
 
 

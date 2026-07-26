@@ -1,0 +1,38 @@
+<div class="grid">
+  <div class="card">
+    <div class="card-header"><h3>RAM</h3></div>
+    <div class="metric-bar-label"><span>Uso</span><span>{{ "%.1f"|format(ram.usage_percent) }}%</span></div>
+    <div class="progress-bar"><div class="progress-bar-fill" style="width: {{ ram.usage_percent }}%;"></div></div>
+    <p style="color: var(--text-muted); font-size: 11px; margin-top: 6px;">
+      {{ "%.1f"|format(ram.used_gb) }} GB / {{ "%.1f"|format(ram.total_gb) }} GB
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>CPU</h3></div>
+    {% if cpu %}
+    <div class="metric-bar-label"><span>Uso</span><span>{{ "%.1f"|format(cpu.usage_percent) }}%</span></div>
+    <div class="progress-bar"><div class="progress-bar-fill" style="width: {{ cpu.usage_percent }}%;"></div></div>
+    <p style="color: var(--text-muted); font-size: 11px; margin-top: 6px;">
+      {{ cpu.count_physical }} núcleos físicos / {{ cpu.count_logical }} lógicos
+      {% if cpu.metadata and cpu.metadata.brand %}<br>{{ cpu.metadata.brand }}{% endif %}
+    </p>
+    {% else %}
+    <p class="empty-state">Monitoramento de CPU desativado (DISABLE_CPU).</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h3>GPU</h3></div>
+    {% if gpu %}
+      {% for d in gpu %}
+      <div class="metric-bar-label"><span>{{ d.name }}</span><span>{{ "%.0f"|format(d.vram_used_mb) }} / {{ "%.0f"|format(d.vram_total_mb) }} MB</span></div>
+      <div class="progress-bar"><div class="progress-bar-fill" style="width: {{ (d.vram_used_mb / d.vram_total_mb * 100) if d.vram_total_mb else 0 }}%;"></div></div>
+      {% endfor %}
+    {% elif gpu is none %}
+    <p class="empty-state">Monitoramento de GPU desativado (DISABLE_GPU).</p>
+    {% else %}
+    <p class="empty-state">Nenhuma GPU detectada.</p>
+    {% endif %}
+  </div>
+</div>

@@ -1,0 +1,8 @@
+<div class="grid" id="voices-grid">
+  {% if not voices %}
+  <div class="empty-state">Nenhuma voz cadastrada ainda.</div>
+  {% endif %}
+  {% for voice in voices %}
+    {% include "partials/voice_card.html" %}
+  {% endfor %}
+</div>

@@ -29,6 +29,8 @@ gcsfs
 imageio-ffmpeg
 deepfilternet==0.5.6
 numpy
+pyarrow==21
+datasets==4.8.5
 ultralytics
 deepface
 pytest
@@ -45,7 +47,7 @@ safetensors
 insightface
 xformers
 -e ./vendor/IP-Adapter
-basicsr
+basicsr==1.4.2
 realesrgan
 gfpgan
 facexlib
@@ -57,16 +59,17 @@ opentelemetry-exporter-otlp-proto-http
 onnxruntime-gpu
 sentence-transformers==5.4.1
 gliner2[local]
-neutts
+# neutts
 f5-tts
 # indextts intentionally NOT installed here: index-tts 2.0.0 requires torch==2.8.*,
 # which conflicts with this project's torch==2.11.0 pin, and the model likely
-# doesn't fit in the 4GB VRAM this repo targets anyway (see app/models/tts_indextts2.py).
-# Install separately (isolated venv) if you want to use it: pip install "indextts @ git+https://github.com/index-tts/index-tts.git"
-replicate
-pyinstaller
 py-cpuinfo
 tf-keras==2.21.0
 PyMuPDF
 pytesseract
 rembg[gpu]
+jinja2
+yt-dlp
+mkdocs
+mkdocs-material
+openai

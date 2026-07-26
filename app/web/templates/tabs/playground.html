@@ -1,0 +1,37 @@
+<h2>Testar Modelos</h2>
+<p class="subtitle">Converse com os modelos GGUF instalados e veja métricas reais de desempenho.</p>
+
+{% if not models %}
+<div class="empty-state">Nenhum modelo instalado ainda.</div>
+{% else %}
+<div class="playground-layout" data-controller="playground">
+  <div class="card chat-pane">
+    <div class="card-header">
+      <select name="model" data-playground-target="modelSelect" data-action="change->playground#switchModel">
+        {% for m in models %}
+        <option value="{{ m.model_alias }}">{{ m.model_alias }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <p class="subtitle" style="margin:0 0 12px;">Ask me anything</p>
+
+    <div class="messages-list" data-playground-target="messagesList"></div>
+
+    <form class="composer" data-playground-target="composerForm" data-action="submit->playground#send">
+      <div class="attachment-tray" data-playground-target="attachmentTray"></div>
+      <div class="composer-row">
+        <input type="file" multiple accept="image/*,audio/*,video/*,application/pdf"
+          data-playground-target="fileInput" data-action="change->playground#addFiles" hidden>
+        <button type="button" class="btn-sm" data-action="click->playground#openFilePicker" title="Anexar arquivo">📎</button>
+        <textarea data-playground-target="textInput" placeholder="What's on your mind?" rows="1"
+          data-action="keydown->playground#onComposerKeydown"></textarea>
+        <button type="submit" class="btn-primary">Send Message</button>
+      </div>
+    </form>
+  </div>
+
+  {% include "partials/playground_settings.html" %}
+
+  <script type="application/json" data-playground-target="modelsData">{{ models | tojson }}</script>
+</div>
+{% endif %}

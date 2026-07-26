@@ -1,0 +1,38 @@
+<h2>Vozes</h2>
+<p class="subtitle">Vozes clonadas para TTS (upload de arquivo ou extração de vídeo do YouTube).</p>
+
+<div class="card">
+  <div class="card-header"><h3>Upload de arquivo</h3></div>
+  <form hx-post="/admin/voices/upload" hx-target="#voices-grid" hx-swap="outerHTML" hx-encoding="multipart/form-data">
+    <div class="field">
+      <label class="label-xs">Nome</label>
+      <input type="text" name="name" required>
+    </div>
+    <div class="field">
+      <label class="label-xs">Idioma</label>
+      <input type="text" name="language" value="pt-BR">
+    </div>
+    <div class="field">
+      <label class="label-xs">Arquivo de áudio</label>
+      <input type="file" name="file" accept="audio/*" required>
+    </div>
+    <button type="submit" class="btn-primary btn-sm">Enviar</button>
+  </form>
+</div>
+
+<div class="card" style="margin-top: 14px;">
+  <div class="card-header"><h3>Extrair do YouTube</h3></div>
+  <form hx-post="/admin/voices/youtube/metadata" hx-target="#youtube-confirm" hx-swap="innerHTML">
+    <div class="field">
+      <label class="label-xs">URL do vídeo</label>
+      <input type="url" name="url" placeholder="https://www.youtube.com/watch?v=..." required>
+    </div>
+    <button type="submit" class="btn-sm">Buscar</button>
+    <span class="htmx-indicator">carregando...</span>
+  </form>
+  <div id="youtube-confirm" style="margin-top: 10px;"></div>
+</div>
+
+<div style="margin-top: 18px;">
+  {% include "partials/voices_grid.html" %}
+</div>

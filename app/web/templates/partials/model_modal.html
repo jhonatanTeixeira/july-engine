@@ -1,0 +1,214 @@
+<div class="modal-overlay" data-controller="model-form download-progress" onclick="if(event.target===this) this.innerHTML=''">
+  <div class="modal-box" onclick="event.stopPropagation()">
+    <h3>{% if model %}Editar {{ model.model_alias }}{% else %}Adicionar Modelo{% endif %}</h3>
+
+    <form
+      {% if model %}
+      hx-put="/admin/models/{{ model.model_alias }}" hx-target="#tab-content" hx-swap="innerHTML"
+      {% endif %}
+      data-model-form-target="form"
+      data-download-progress-target="form"
+    >
+      <div class="field">
+        <label class="label-xs">Alias (nome único)</label>
+        <input type="text" name="model_alias" value="{{ model.model_alias if model else '' }}" required pattern="[^/]+"
+          title="Não pode conter &quot;/&quot; — use um nome curto, não o repo id do HF">
+      </div>
+
+      <div class="field">
+        <label class="label-xs">Hugging Face Model ID</label>
+        <input type="text" name="model_id" value="{{ model.model_id if model else prefill_repo_id }}"
+          data-model-form-target="modelId"
+          data-action="change->model-form#modelIdChanged"
+          hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+          hx-trigger="keyup changed delay:500ms, change delay:300ms">
+      </div>
+
+      <div class="field">
+        <label class="label-xs">Arquivo (.gguf)</label>
+        <select name="filename" data-model-form-target="filename"
+          data-action="change->model-form#filenameChanged"
+          hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+          hx-trigger="change">
+          {% if model %}<option value="{{ model.filename }}" selected>{{ model.filename }}</option>{% endif %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="label-xs">Template</label>
+        <select name="template" data-model-form-target="template">
+          {% set current_template = model.template if model else "chatml" %}
+          {% for t in ["chatml", "llama-3", "qwen", "mistral"] %}
+          <option value="{{ t }}" {% if current_template == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" name="is_vision" data-model-form-target="visionToggle"
+            data-action="change->model-form#toggleMmprojFields"
+            {% if model and model.is_vision %}checked{% endif %}>
+          <span class="switch"></span>
+          Capacidade Visual (VLM)
+        </label>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" name="is_audio" data-model-form-target="audioToggle"
+            data-action="change->model-form#toggleMmprojFields"
+            {% if model and model.is_audio %}checked{% endif %}>
+          <span class="switch"></span>
+          Capacidade de Áudio
+        </label>
+      </div>
+
+      <div data-model-form-target="mmprojFields" style="{% if not (model and (model.is_vision or model.is_audio)) %}display:none;{% endif %}">
+        <p class="label-xs" style="margin-bottom:8px;">Projetor Multimodal (mmproj) — usado pela visão e/ou áudio</p>
+        <div class="field">
+          <label class="label-xs">mmproj Repo ID</label>
+          <input type="text" name="mmproj_id" value="{{ model.mmproj_id if model else '' }}"
+            data-model-form-target="mmprojId"
+            data-action="change->model-form#mmprojIdChanged">
+        </div>
+        <div class="field">
+          <label class="label-xs">mmproj Filename</label>
+          <select name="mmproj_filename" data-model-form-target="mmprojFilename"
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+            hx-trigger="change">
+            {% if model and model.mmproj_filename %}<option value="{{ model.mmproj_filename }}" selected>{{ model.mmproj_filename }}</option>{% endif %}
+          </select>
+        </div>
+        <div class="field">
+          <label class="toggle">
+            <input type="checkbox" name="vision_on_cpu" {% if model and model.vision_on_cpu %}checked{% endif %}
+              hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+              hx-trigger="change">
+            <span class="switch"></span>
+            Projetor Multimodal em CPU
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="toggle">
+          <input type="checkbox" name="force_reasoning" {% if model and model.force_reasoning %}checked{% endif %}>
+          <span class="switch"></span>
+          Forçar Raciocínio (reasoning)
+        </label>
+      </div>
+
+      {# context_window/n_seq_max: 0 is never a legitimate value, so a plain `or`
+         fallback safely covers missing keys, None, and empty-string data alike
+         (all render as Jinja's falsy Undefined/None/""). num_layers is different —
+         0 is a real, valid value (0 GPU layers = full CPU) — so it needs the
+         longer explicit check to avoid clobbering a genuine 0 with -1. #}
+      {% set context_window = (model.context_window or 4096) if model else 4096 %}
+      {% set n_seq_max = (model.n_seq_max or 1) if model else 1 %}
+      {% set num_layers = (model.num_layers if (model.num_layers is defined and model.num_layers is not none and model.num_layers != "") else -1) if model else -1 %}
+
+      <details class="advanced">
+        <summary>Configurações Avançadas</summary>
+
+        <div class="field">
+          <label class="label-xs">Context Window</label>
+          <input type="number" name="context_window" value="{{ context_window }}"
+            list="context-window-options" step="512" min="512" max="1048576"
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+            hx-trigger="keyup changed delay:500ms, change delay:300ms">
+          <datalist id="context-window-options">
+            {% for v in [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576] %}
+            <option value="{{ v }}">
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="field">
+          <label class="label-xs">Sequências Paralelas (n_seq_max)</label>
+          <input type="number" name="n_seq_max" min="1" value="{{ n_seq_max }}"
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+            hx-trigger="keyup changed delay:500ms, change delay:300ms">
+        </div>
+        <div class="field">
+          <label class="label-xs">KV Cache Quantization</label>
+          {% set current_kv = model.kv_cache_quantization if model else "FP16" %}
+          <select name="kv_cache_quantization"
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+            hx-trigger="change">
+            {% for q in ["FP16", "Q8_0", "Q4_0"] %}
+            <option value="{{ q }}" {% if current_kv == q %}selected{% endif %}>{{ q }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label class="label-xs">GPU Layers (-1 = todas)</label>
+          <input type="number" name="num_layers" value="{{ num_layers }}"
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+            hx-trigger="keyup changed delay:500ms, change delay:300ms">
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" name="flash_attn" {% if model is none or model.flash_attn %}checked{% endif %}
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container" hx-trigger="change">
+            <span class="switch"></span>Flash Attention</label>
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" name="offload_kqv" {% if model is none or model.offload_kqv %}checked{% endif %}
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container" hx-trigger="change">
+            <span class="switch"></span>Offload KV Cache</label>
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" name="kv_unified" {% if model is none or model.kv_unified %}checked{% endif %}
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container" hx-trigger="change">
+            <span class="switch"></span>KV Unified Pool</label>
+        </div>
+        <div class="field">
+          <label class="toggle"><input type="checkbox" name="logits_all" {% if model and model.logits_all %}checked{% endif %}
+            hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container" hx-trigger="change">
+            <span class="switch"></span>Logits All</label>
+        </div>
+        <div data-model-form-target="moeFields" style="display:none;">
+          <div class="field">
+            <label class="toggle">
+              <input type="checkbox" name="cpu_moe" data-model-form-target="cpuMoeToggle"
+                data-action="change->model-form#cpuMoeChanged"
+                {% if model and model.cpu_moe %}checked{% endif %}
+                hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+                hx-trigger="change">
+              <span class="switch"></span>
+              Manter todos os especialistas MoE na CPU (cpu_moe)
+            </label>
+          </div>
+          <div class="field">
+            <label class="label-xs">Camadas MoE na CPU — as N primeiras (n_cpu_moe)</label>
+            <input type="number" name="n_cpu_moe" min="0" data-model-form-target="nCpuMoe"
+              value="{{ model.n_cpu_moe if model else 0 }}"
+              {% if model and model.cpu_moe %}disabled{% endif %}
+              hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+              hx-trigger="keyup changed delay:500ms, change delay:300ms">
+            <p style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">
+              Ignorado quando "cpu_moe" está ativo (já mantém todos os especialistas na CPU). Útil quando a VRAM é insuficiente para modelos MoE.
+            </p>
+          </div>
+        </div>
+      </details>
+
+      <div id="vram-estimate-container"
+        hx-post="/admin/models/estimate" hx-include="closest form" hx-trigger="load" hx-target="this" hx-swap="innerHTML"
+        data-action="htmx:afterSwap->model-form#syncMoeFields">
+      </div>
+
+      <div style="display:flex; gap:8px; align-items:center; margin-top: 16px;">
+        {% if model %}
+        <button type="submit" class="btn-primary">Salvar</button>
+        <button type="button" class="btn" data-action="click->download-progress#download"
+          data-download-progress-url-param="/admin/models/{{ model.model_alias }}/download">Baixar</button>
+        {% else %}
+        <button type="button" class="btn-primary" data-action="click->download-progress#start">Instalar</button>
+        {% endif %}
+        <button type="button" class="btn" onclick="document.getElementById('modal-container').innerHTML=''">Cancelar</button>
+      </div>
+
+      <div data-download-progress-target="status" style="margin-top:10px;"></div>
+    </form>
+  </div>
+</div>

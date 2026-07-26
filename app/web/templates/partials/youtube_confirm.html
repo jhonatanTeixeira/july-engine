@@ -1,0 +1,36 @@
+{% if error %}
+<p style="color: var(--danger); font-size: 12px;">Erro: {{ error }}</p>
+{% elif meta %}
+<div class="card">
+  <div style="display:flex; gap:10px; align-items:flex-start;">
+    {% if meta.thumbnail %}<img src="{{ meta.thumbnail }}" style="width:100px; border-radius:8px;">{% endif %}
+    <div>
+      <strong>{{ meta.title }}</strong>
+      <p style="color: var(--text-muted); font-size: 12px;">{{ meta.uploader }} · {{ meta.duration }}s</p>
+    </div>
+  </div>
+  <form hx-post="/admin/voices/youtube/extract" hx-target="#voices-grid" hx-swap="outerHTML" style="margin-top: 10px;">
+    <input type="hidden" name="url" value="{{ url }}">
+    <div class="field">
+      <label class="label-xs">Nome</label>
+      <input type="text" name="name" value="{{ meta.title }}">
+    </div>
+    <div class="field">
+      <label class="label-xs">Idioma</label>
+      <input type="text" name="language" value="pt-BR">
+    </div>
+    <div style="display:flex; gap:10px;">
+      <div class="field" style="flex:1;">
+        <label class="label-xs">Início (s, opcional)</label>
+        <input type="number" name="start" min="0">
+      </div>
+      <div class="field" style="flex:1;">
+        <label class="label-xs">Fim (s, opcional)</label>
+        <input type="number" name="end" min="0">
+      </div>
+    </div>
+    <button type="submit" class="btn-primary btn-sm">Confirmar e Extrair</button>
+    <span class="htmx-indicator">extraindo...</span>
+  </form>
+</div>
+{% endif %}

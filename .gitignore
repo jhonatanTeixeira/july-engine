@@ -16,3 +16,4 @@ temp_*
 .env.local
 .env.test
 # vendor/
+/site/

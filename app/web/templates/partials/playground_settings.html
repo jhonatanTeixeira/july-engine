@@ -1,0 +1,80 @@
+<div class="card settings-panel">
+  <div class="card-header settings-header" data-action="click->playground#toggleSettings">
+    <h3>⚙ Settings</h3>
+    <span class="chevron" data-playground-target="chevron">▲</span>
+  </div>
+
+  <form id="playground-settings-form" data-playground-target="settingsForm settingsBody" class="settings-body">
+    <div class="field">
+      <label class="label-xs">System Prompt</label>
+      <textarea name="system_prompt" rows="2">Be a helpful assistant</textarea>
+      <p class="field-help">Tweak the overall style and tone of the conversation by giving some 'master' instructions. (Default: Be a helpful assistant)</p>
+    </div>
+
+    <div class="field">
+      <label class="label-xs">Max New Tokens</label>
+      <input type="number" name="max_tokens" min="1" max="1000000" value="512">
+      <p class="field-help">Maximum length of the newly generated text. If left empty, it will be the model's max context length minus input length or 65536, whichever is smaller (1 ≤ max_new_tokens ≤ 1000000).</p>
+    </div>
+
+    <div class="field">
+      <label class="label-xs">Temperature</label>
+      <div class="range-row">
+        <input type="number" name="temperature" step="0.05" min="0" max="1.5" value="0.7"
+          data-playground-target="temperatureNumber" data-action="input->playground#syncTempFromNumber">
+        <input type="range" step="0.05" min="0" max="1.5" value="0.7"
+          data-playground-target="temperatureRange" data-action="input->playground#syncTempFromSlider">
+      </div>
+      <p class="field-help">Temperature to use for sampling. 0 means the output is deterministic. Values greater than 1 encourage more diversity (0 ≤ temperature ≤ 1.5).</p>
+    </div>
+
+    <div class="field">
+      <label class="label-xs">Top P</label>
+      <input type="number" name="top_p" step="0.01" min="0" max="1" value="0.9">
+      <p class="field-help">Sample from the set of tokens with highest probability such that the cumulative probability exceeds top_p.</p>
+    </div>
+
+    <details class="advanced">
+      <summary>Configurações Avançadas</summary>
+
+      <div class="field">
+        <label class="label-xs">Max Completion Tokens</label>
+        <input type="number" name="max_completion_tokens" min="1">
+      </div>
+      <div class="field">
+        <label class="label-xs">Top K</label>
+        <input type="number" name="top_k" min="0">
+      </div>
+      <div class="field">
+        <label class="label-xs">Min P</label>
+        <input type="number" name="min_p" step="0.01" min="0" max="1">
+      </div>
+      <div class="field">
+        <label class="label-xs">Repetition Penalty</label>
+        <input type="number" name="repetition_penalty" step="0.01" min="0">
+      </div>
+      <div class="field">
+        <label class="label-xs">Stop (uma sequência por linha)</label>
+        <textarea name="stop" rows="2"></textarea>
+      </div>
+      <div class="field">
+        <label class="label-xs">Response Format (JSON)</label>
+        <textarea name="response_format" rows="2" placeholder='{"type": "json_object"}'></textarea>
+      </div>
+      <div class="field">
+        <label class="label-xs">Tools (JSON)</label>
+        <textarea name="tools" rows="3" placeholder="[{&quot;type&quot;: &quot;function&quot;, ...}]"></textarea>
+      </div>
+    </details>
+
+    <div class="field">
+      <label class="toggle">
+        <input type="checkbox" name="stream" checked>
+        <span class="switch"></span>
+        Streaming
+      </label>
+    </div>
+
+    <button type="reset" class="btn" style="width:100%;">Reset Defaults</button>
+  </form>
+</div>

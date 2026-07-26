@@ -4,6 +4,8 @@ O `july_engine` é o núcleo de inteligência do ecossistema Jully. Um motor de 
 
 **Nota:** A partir desta versão, July Engine é dedicado exclusivamente a inferência local. Serviços de busca externa (web search, code search) foram movidos para o serviço **July Search**, mantido em repositório próprio.
 
+📖 **[Documentação completa](https://jhonatanteixeira.github.io/july-engine/)** — arquitetura, cada modelo local (um por página), calculadora de VRAM/RAM, painel administrativo e referência de API.
+
 ## O que torna o July Engine excepcional
 
 ### Gerenciamento Automático de VRAM/RAM
@@ -99,38 +101,30 @@ x-session-id: abc123    # ID de sessão para KV cache pooling
 
 **Nota:** O header `x-backend: api` foi removido. Todas as requisições são processadas localmente.
 
-## Configuração (settings.yaml)
+## Configuração
 
-Configure seus modelos locais:
+Toda a configuração é dinâmica e persistida em banco (TinyDB por padrão, ou Postgres) — **não há** um `settings.yaml` estático apesar do que documentação antiga possa sugerir. Configure via:
 
-```yaml
-TEXT_PRESETS:
-  - alias: "qwen-7b"
-    model_id: "bartowski/Qwen2.5-7B-Instruct-GGUF"
-    filename: "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-    backend: "gpu"
-    context_window: 8192
-    flash_attn: true
-    kv_cache_quantization: "Q8_0"
-    n_seq_max: 2
-    is_default: true
+- **[Admin Panel](https://jhonatanteixeira.github.io/july-engine/configuration/admin-panel/)** em `/admin` — recomendado, com estimativa de VRAM em tempo real antes de baixar um modelo.
+- **API direta** — `GET`/`POST /v1/settings`, ou as rotas `/models/gguf/*` (`app/routers/models.py`) especificamente para o catálogo de modelos GGUF de chat.
 
-TTS:
-  alias: "kokoro"
-  model: "kokoro-v0.19"
-  backend: "cpu"
+Exemplo de shape de uma entrada em `TEXT_PRESETS` (não é um arquivo — é o JSON que fica armazenado no backend de persistência):
 
-STT:
-  alias: "whisper-large-v3-turbo"
-  model: "Systran/faster-whisper-large-v3-turbo"
-  backend: "cuda"
-
-VISION:
-  alias: "moondream"
-  model_id: "vikhyatk/moondream2"
-  model_type: "vision"
-  backend: "gpu"
+```json
+{
+  "alias": "qwen-7b",
+  "model_id": "bartowski/Qwen2.5-7B-Instruct-GGUF",
+  "filename": "Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+  "backend": "gpu",
+  "context_window": 8192,
+  "flash_attn": true,
+  "kv_cache_quantization": "Q8_0",
+  "n_seq_max": 2,
+  "is_default": true
+}
 ```
+
+Modelos MoE (Mixture-of-Experts) também suportam `cpu_moe`/`n_cpu_moe` para liberar VRAM mantendo os pesos de especialistas na CPU — veja [Resource Calculator](https://jhonatanteixeira.github.io/july-engine/configuration/resource-calculator/).
 
 ## Instalação
 
@@ -154,7 +148,16 @@ Para funcionalidades que requerem buscas externas (web search via Tavily, code s
 
 ## Documentação Completa
 
-A documentação de arquitetura (Engine, Orchestrator, Bridge, Model Loader, biblioteca `llama_gguf`, formato GGUF) vive no monorepo principal do ecossistema Jully.
+A documentação oficial e completa do projeto — arquitetura (Bridge, Orchestrator, Model Loader, Adapters), cada modelo local documentado individualmente (~30 wrappers em `app/models/`, incluindo os que estão quebrados/dead code, documentados honestamente), a calculadora de VRAM/RAM (incluindo `vision_on_cpu` e as opções MoE `cpu_moe`/`n_cpu_moe`), o painel administrativo (`/admin`) e a referência completa de API — vive em **[jhonatanteixeira.github.io/july-engine](https://jhonatanteixeira.github.io/july-engine/)**, gerada a partir da pasta `docs/` deste repositório via [MkDocs](https://www.mkdocs.org/) + [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/).
+
+Para editar a documentação localmente:
+
+```bash
+pip install mkdocs mkdocs-material
+mkdocs serve   # http://localhost:8000, com live-reload
+```
+
+O deploy para GitHub Pages é automático via `.github/workflows/docs.yml` a cada push em `docs/`/`mkdocs.yml` na branch `master`.
 
 ## Dependências
 

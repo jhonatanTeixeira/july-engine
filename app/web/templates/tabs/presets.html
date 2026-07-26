@@ -1,0 +1,17 @@
+<h2>Chat Presets</h2>
+<p class="subtitle">Perfis de modelo de chat disponíveis (TEXT_PRESETS).</p>
+
+<datalist id="preset-models-list">
+  {% for m in installed_models %}
+  <option value="{{ m.model_alias or m.alias }}">
+  {% endfor %}
+</datalist>
+
+<div style="margin-bottom: 12px;">
+  <button type="button" class="btn-primary btn-sm"
+    hx-post="/admin/presets/add" hx-target="#presets-grid" hx-swap="outerHTML">
+    + Novo Preset
+  </button>
+</div>
+
+{% include "partials/presets_grid.html" %}

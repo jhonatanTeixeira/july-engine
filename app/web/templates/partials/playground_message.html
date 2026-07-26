@@ -1,0 +1,25 @@
+<div class="msg-bubble msg-assistant" data-prompt-tokens="{{ metrics.prompt_tokens if metrics.prompt_tokens is not none else '' }}">
+  <div class="msg-header">
+    <span class="msg-avatar">🤖</span>
+    <span class="msg-name">{{ model }}</span>
+  </div>
+  {% if reasoning %}
+  <details class="msg-reasoning">
+    <summary>Reasoning</summary>
+    <div class="msg-reasoning-content">{{ reasoning }}</div>
+  </details>
+  {% endif %}
+  <div class="msg-content">{{ content }}</div>
+  <div class="msg-footer">
+    <div class="msg-metrics-chip">
+      {% if metrics.ttft is not none %}<span>{{ metrics.ttft }} <b>ttft</b></span>{% endif %}
+      <span>{{ metrics.tps }} <b>tps</b></span>
+      <span>{{ metrics.toks }} <b>toks</b></span>
+      <span>{{ metrics.seconds }} <b>s</b></span>
+    </div>
+    <div class="msg-actions">
+      <button type="button" class="msg-icon-btn" data-action="click->playground#regenerate" title="Regenerar">↻</button>
+      <button type="button" class="msg-icon-btn" data-action="click->playground#deleteMessage" title="Excluir">🗑</button>
+    </div>
+  </div>
+</div>

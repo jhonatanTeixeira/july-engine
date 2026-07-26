@@ -1,0 +1,27 @@
+<div class="card" id="model-card-{{ model.model_alias }}" data-controller="download-progress">
+  <div class="card-header">
+    <h3>{{ model.model_alias }}</h3>
+    {% if model.is_vision %}<span class="badge">visão</span>{% endif %}
+  </div>
+  <p style="color: var(--text-secondary); font-size: 12px; word-break: break-all;">{{ model.model_id }}</p>
+  <p style="color: var(--text-muted); font-size: 12px;">{{ model.filename }}</p>
+  <p style="color: var(--text-muted); font-size: 11px;">
+    ctx={{ model.context_window }} · n_seq_max={{ model.n_seq_max }} · kv={{ model.kv_cache_quantization }}
+    {% if not model.file_path %}<span class="badge" style="color:#f59e0b;border-color:#f59e0b;">baixando/pendente</span>{% endif %}
+  </p>
+  <div style="display:flex; gap: 8px; margin-top: 10px;">
+    <button type="button" class="btn-sm"
+      hx-get="/admin/models/modal/{{ model.model_alias }}" hx-target="#modal-container" hx-swap="innerHTML">
+      Editar
+    </button>
+    <button type="button" class="btn-sm" data-action="click->download-progress#download"
+      data-download-progress-url-param="/admin/models/{{ model.model_alias }}/download">Baixar</button>
+    <button type="button" class="btn-danger btn-sm"
+      hx-delete="/admin/models/{{ model.model_alias }}"
+      hx-target="#model-card-{{ model.model_alias }}" hx-swap="outerHTML"
+      hx-confirm="Remover o modelo {{ model.model_alias }}?">
+      Excluir
+    </button>
+  </div>
+  <div data-download-progress-target="status" style="margin-top:8px;"></div>
+</div>

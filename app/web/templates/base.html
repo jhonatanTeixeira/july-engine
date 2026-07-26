@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-controller="application">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}July Engine — Admin{% endblock %}</title>
+  <link rel="stylesheet" href="/admin/static/css/admin.css?v={{ static_version('css/admin.css') }}">
+  <script src="/admin/static/js/vendor/htmx.min.js"></script>
+  <script src="/admin/static/js/vendor/stimulus.umd.js"></script>
+  <script src="/admin/static/js/vendor/marked.min.js"></script>
+</head>
+<body>
+  {% block body %}{% endblock %}
+
+  <script src="/admin/static/js/controllers/application.js?v={{ static_version('js/controllers/application.js') }}"></script>
+  <script src="/admin/static/js/controllers/download_progress_controller.js?v={{ static_version('js/controllers/download_progress_controller.js') }}"></script>
+  <script src="/admin/static/js/controllers/model_form_controller.js?v={{ static_version('js/controllers/model_form_controller.js') }}"></script>
+  <script src="/admin/static/js/controllers/tts_fields_controller.js?v={{ static_version('js/controllers/tts_fields_controller.js') }}"></script>
+  <script src="/admin/static/js/controllers/combobox_controller.js?v={{ static_version('js/controllers/combobox_controller.js') }}"></script>
+  <script src="/admin/static/js/controllers/playground_controller.js?v={{ static_version('js/controllers/playground_controller.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+<div class="card" id="voice-card-{{ voice.id }}">
+  <form hx-patch="/admin/voices/{{ voice.id }}" hx-target="#voice-card-{{ voice.id }}" hx-swap="outerHTML">
+    <div class="field">
+      <label class="label-xs">Nome</label>
+      <input type="text" name="name" value="{{ voice.name }}">
+    </div>
+    <div class="field">
+      <label class="label-xs">Idioma</label>
+      <input type="text" name="language" value="{{ voice.language }}">
+    </div>
+    <div style="display:flex; gap:6px; flex-wrap: wrap;">
+      <button type="submit" class="btn-sm">Salvar</button>
+      {% if voice.path %}
+      <button type="button" class="btn-sm" onclick="new Audio('/storage/{{ voice.path }}').play()">▶ Ouvir</button>
+      {% endif %}
+      <button type="button" class="btn-sm"
+        hx-post="/admin/voices/{{ voice.id }}/clean" hx-target="#voice-card-{{ voice.id }}" hx-swap="outerHTML">
+        Limpar Ruído
+      </button>
+      <button type="button" class="btn-danger btn-sm"
+        hx-delete="/admin/voices/{{ voice.id }}" hx-target="#voice-card-{{ voice.id }}" hx-swap="outerHTML"
+        hx-confirm="Remover a voz {{ voice.name }}?">
+        Excluir
+      </button>
+    </div>
+  </form>
+</div>

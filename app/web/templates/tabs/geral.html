@@ -1,0 +1,24 @@
+<h2>Geral</h2>
+<p class="subtitle">Padrões globais usados como fallback pelo engine.</p>
+
+<div class="card">
+  <form hx-post="/admin/geral" hx-target="#tab-content" hx-swap="innerHTML">
+    <div class="field">
+      <label class="label-xs">Idioma padrão</label>
+      <input type="text" name="default_language" value="{{ global_settings.default_language or '' }}" placeholder="pt-BR">
+    </div>
+    <div class="field">
+      <label class="label-xs">Prompt de sistema padrão</label>
+      <textarea name="system_prompt" placeholder="Você é um assistente...">{{ global_settings.system_prompt or '' }}</textarea>
+    </div>
+    <div class="field">
+      <label class="toggle">
+        <input type="checkbox" name="use_internal_mcp" {% if global_settings.use_internal_mcp %}checked{% endif %}>
+        <span class="switch"></span>
+        Usar MCP interno (tool calling nativo)
+      </label>
+    </div>
+    <button type="submit" class="btn-primary">Salvar</button>
+    {% if saved %}<span class="flash">Salvo!</span>{% endif %}
+  </form>
+</div>

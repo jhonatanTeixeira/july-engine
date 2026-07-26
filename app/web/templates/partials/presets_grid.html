@@ -1,0 +1,45 @@
+<form hx-post="/admin/presets" hx-target="#presets-grid" hx-swap="outerHTML" id="presets-grid">
+  <div class="grid">
+    {% for p in presets %}
+    <div class="card">
+      <div class="card-header">
+        <h3>Preset {{ loop.index }}</h3>
+        <button type="button" class="btn-danger btn-sm"
+          hx-delete="/admin/presets/{{ loop.index0 }}" hx-target="#presets-grid" hx-swap="outerHTML">
+          Excluir
+        </button>
+      </div>
+      <div class="field">
+        <label class="label-xs">Alias</label>
+        <input type="text" name="alias" value="{{ p.alias }}">
+      </div>
+      <div class="field">
+        <label class="label-xs">Modelo</label>
+        <input type="text" name="model" list="preset-models-list" value="{{ p.model }}">
+      </div>
+      <div class="field">
+        <label class="label-xs">Backend</label>
+        <select name="backend">
+          <option value="gpu" {% if p.backend == "gpu" or not p.backend %}selected{% endif %}>GPU</option>
+          <option value="cpu" {% if p.backend == "cpu" %}selected{% endif %}>CPU</option>
+        </select>
+      </div>
+      <label class="toggle">
+        <input type="radio" name="default_idx" value="{{ loop.index0 }}" {% if p.is_default %}checked{% endif %}>
+        <span class="switch"></span>
+        Padrão
+      </label>
+      <label class="toggle" style="margin-left: 10px;">
+        <input type="checkbox" name="is_vision" value="{{ loop.index0 }}" {% if p.is_vision %}checked{% endif %}>
+        <span class="switch"></span>
+        Visão (VLM)
+      </label>
+    </div>
+    {% endfor %}
+  </div>
+  {% if presets %}
+  <button type="submit" class="btn-primary" style="margin-top: 14px;">Salvar Todos</button>
+  {% else %}
+  <div class="empty-state">Nenhum preset configurado.</div>
+  {% endif %}
+</form>

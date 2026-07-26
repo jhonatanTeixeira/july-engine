@@ -25,8 +25,24 @@ class ChatAdapter(AdapterBase):
 
         if not (model := model_meta.get("model")):
             raise ValueError("no model defined for chat")
-        
-        self.meta = (model_service.backend.get_model(model) or {}) | model_meta
+
+        model_row = model_service.backend.get_model(model) or {}
+        self.meta = model_row | model_meta
+
+        # A chat preset can reference this model (model_meta) while carrying its own
+        # stale copy of capability fields — e.g. a preset saved before the model was
+        # marked is_vision=True, or before it had an mmproj configured at all. Those
+        # fields describe what the MODEL can actually do, not something a preset gets
+        # to redefine, so the model registry's own row always wins for them
+        # regardless of merge order above (which lets presets customize everything
+        # else — system_prompt, sampling params, template, etc.).
+        _CAPABILITY_KEYS = (
+            "is_vision", "is_audio", "model_type", "mmproj_id", "mmproj_filename",
+            "vision_on_cpu", "file_path", "mmproj_path", "context_window",
+        )
+        for key in _CAPABILITY_KEYS:
+            if key in model_row:
+                self.meta[key] = model_row[key]
 
         self._strategy = None
         self._mcp = None
@@ -68,22 +84,33 @@ class ChatAdapter(AdapterBase):
         from ..models.helpers import MultiModalHelper
 
         helper = MultiModalHelper(payload)
+        is_vision = self.meta.get("is_vision")
+        is_audio = self.meta.get("is_audio")
 
-        if not self.meta.get("is_vision"):
+        if not is_vision:
             await helper.process_vision()
         else:
             helper.sanitize_images()
 
-        await helper.process_transcription()
+        if is_audio:
+            helper.sanitize_audio()
+        else:
+            await helper.process_transcription()
+
+        await helper.process_video()  # always — no native local path exists
+        await helper.process_pdf()    # always — no native local path exists
 
         # MCP externo removido - July Engine agora é 100% local
         # TODO: internal_mcp pode ser movido para lugar separado se necessário
-        
+
         original_payload = copy.deepcopy(payload)
 
-        if not self.meta.get("is_vision"):
+        if not is_vision:
             payload["messages"] = helper.filter_images(payload.get("messages", []))
+        if not is_audio:
             payload["messages"] = helper.filter_audios(payload.get("messages", []))
+        payload["messages"] = helper.filter_videos(payload.get("messages", []))
+        payload["messages"] = helper.filter_pdfs(payload.get("messages", []))
 
         # Execute local model
         response = await self._get_strategy().run(payload)

@@ -1,0 +1,72 @@
+<div class="card" id="service-card-{{ section.key }}">
+  <form
+    hx-post="/admin/services/{{ section.key }}"
+    hx-target="#service-card-{{ section.key }}"
+    hx-swap="outerHTML"
+    {% if section.key == "TTS" %}data-controller="tts-fields"{% endif %}
+  >
+    <div class="card-header">
+      <h3>{{ section.key }}</h3>
+    </div>
+
+    <div class="field">
+      <label class="label-xs">Modelo</label>
+      {% set current_model = section.value.model or '' %}
+      {% set known_ids = section.internal_models|map(attribute='id')|list %}
+      <select name="model">
+        {% if current_model and current_model not in known_ids %}
+        <option value="{{ current_model }}" selected>{{ current_model }} (customizado)</option>
+        {% endif %}
+        {% for m in section.internal_models %}
+        <option value="{{ m.id }}" {% if current_model == m.id %}selected{% endif %}>{{ m.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="field">
+      <label class="label-xs">Backend</label>
+      <select name="backend">
+        <option value="gpu" {% if section.value.backend == "gpu" or not section.value.backend %}selected{% endif %}>GPU</option>
+        <option value="cpu" {% if section.value.backend == "cpu" %}selected{% endif %}>CPU</option>
+      </select>
+    </div>
+
+    {% if section.key == "TTS" %}
+    <div data-tts-fields-target="voiceField" class="field">
+      <label class="label-xs">Voz</label>
+      <div class="combo" data-controller="combobox">
+        <div class="combo-control">
+          <input type="text" class="combo-input" autocomplete="off"
+            data-combobox-target="input"
+            data-action="input->combobox#onInput focus->combobox#onFocus blur->combobox#onBlur keydown->combobox#onKeydown">
+          <span class="combo-arrow">▾</span>
+        </div>
+        <input type="hidden" name="voice" data-combobox-target="hidden" value="{{ section.value.voice or '' }}">
+        <ul class="combo-list" data-combobox-target="list" hidden data-action="mousedown->combobox#onListMouseDown"></ul>
+        <script type="application/json" data-combobox-target="catalogData">{{ tts_voice_catalog|tojson }}</script>
+        <script type="application/json" data-combobox-target="engineMapData">{{ tts_id_to_engine|tojson }}</script>
+      </div>
+    </div>
+    <div data-tts-fields-target="languageField" class="field">
+      <label class="label-xs">Idioma</label>
+      {% for lang in tts_language_catalog %}
+      <select name="language" data-tts-fields-target="languageSelect" data-engine="{{ lang.engine }}" hidden disabled>
+        {% for opt in lang.options %}
+        <option value="{{ opt.code }}" {% if section.value.language == opt.code %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+      {% endfor %}
+    </div>
+    <div data-tts-fields-target="temperatureField" class="field">
+      <label class="label-xs">Temperatura</label>
+      <input type="number" step="0.05" min="0" max="1.5" name="temperature" value="{{ section.value.temperature or 0.7 }}">
+    </div>
+    <div data-tts-fields-target="semitonesField" class="field">
+      <label class="label-xs">Semitons (pitch)</label>
+      <input type="number" step="0.5" min="-12" max="12" name="semitones" value="{{ section.value.semitones or 0 }}">
+    </div>
+    {% endif %}
+
+    <button type="submit" class="btn-primary btn-sm">Salvar</button>
+  </form>
+</div>

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}July Engine — Configurações{% endblock %}
+{% block body %}
+<div class="admin-shell">
+  <aside class="admin-sidebar">
+    <h1>⚙️ July Engine</h1>
+    {% include "partials/sidebar_nav.html" %}
+  </aside>
+
+  <main class="admin-main">
+    <div id="tab-content">
+      {% include "tabs/" ~ active_tab ~ ".html" %}
+    </div>
+  </main>
+</div>
+{% endblock %}

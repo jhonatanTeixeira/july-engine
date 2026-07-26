@@ -1,0 +1,54 @@
+<div class="card vram-card" data-is-moe="{{ 'true' if (estimate and estimate.is_moe) else 'false' }}">
+  <div class="vram-header">
+    <span class="vram-title">
+      <span class="htmx-indicator vram-spinner"></span>
+      Estimativa de Consumo
+    </span>
+    <span class="badge">{{ estimate.architecture if estimate else "Desconhecida" }}</span>
+  </div>
+
+  {% if error %}
+    <p style="color: var(--danger); font-size: 12px; margin: 10px 0 0;">Erro ao estimar: {{ error }}</p>
+  {% elif estimate %}
+    <div class="vram-stats-grid">
+      <div>
+        <p class="label-xs" style="margin-bottom:2px;">VRAM Total (Estimada)</p>
+        <p class="vram-headline">{{ estimate.total_vram_gb }} GB</p>
+      </div>
+      <div>
+        <p class="label-xs" style="margin-bottom:2px;">Camadas na GPU</p>
+        <p class="vram-layers">{{ estimate.offloaded_layers }} / {{ estimate.total_layers }}</p>
+      </div>
+    </div>
+
+    <div class="metric-bar-label" style="margin-top: 12px;">
+      <span>VRAM: {{ estimate.total_vram_mb }} MB</span>
+      <span>RAM: {{ estimate.total_ram_mb }} MB</span>
+    </div>
+    <div class="progress-bar">
+      <div class="progress-bar-fill" style="width: {{ estimate.percent_on_gpu }}%;"></div>
+    </div>
+
+    {% if kv_cache_quantization and kv_cache_quantization != "FP16" %}
+    <div class="vram-warning">
+      Quantização de KV Cache ativa ({{ kv_cache_quantization }}). Pode haver perda leve de coerência em contextos longos.
+    </div>
+    {% endif %}
+
+    {% if estimate.is_moe %}
+    <div class="vram-warning">
+      Modelo MoE ({{ estimate.expert_count }} especialistas) — {{ estimate.moe_offload_mb }} MB de especialistas movidos p/ CPU.
+    </div>
+    {% endif %}
+
+    <details class="vram-breakdown">
+      <summary>Detalhamento</summary>
+      <div class="metric-bar-label"><span>Pesos do modelo</span><span>{{ estimate.model_vram_mb }} MB</span></div>
+      <div class="metric-bar-label"><span>KV cache</span><span>{{ estimate.kv_cache_vram_mb }} MB</span></div>
+      <div class="metric-bar-label"><span>Projetor de visão (mmproj)</span><span>{{ estimate.mmproj_vram_mb }} MB</span></div>
+      <div class="metric-bar-label"><span>Buffer de computação</span><span>{{ estimate.compute_buffer_mb }} MB</span></div>
+    </details>
+  {% else %}
+    <p class="empty-state" style="padding: 8px 0;">Preencha o repositório e o arquivo para ver a estimativa.</p>
+  {% endif %}
+</div>

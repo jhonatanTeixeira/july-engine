@@ -1,0 +1,12 @@
+<nav class="tab-nav" id="tab-nav"{% if oob %} hx-swap-oob="true"{% endif %}>
+  {% for tab_id, tab_label in tabs %}
+  <a
+    class="tab-nav-item {% if tab_id == active_tab %}active{% endif %}"
+    href="/admin/settings?tab={{ tab_id }}"
+    hx-get="/admin/tab/{{ tab_id }}"
+    hx-target="#tab-content"
+    hx-swap="innerHTML"
+    hx-push-url="/admin/settings?tab={{ tab_id }}"
+  >{{ tab_label }}</a>
+  {% endfor %}
+</nav>
