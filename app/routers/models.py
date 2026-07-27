@@ -14,7 +14,8 @@ logger = logging.getLogger("JulyEngine.Routers.Models")
 router = APIRouter(prefix="/models/gguf", tags=["Models"])
 
 # Define cache dir and models.json path
-CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface/hub"))
+CACHE_DIR = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+CACHE_DIR = os.path.join(CACHE_DIR, 'hub')
 MODELS_JSON_PATH = os.path.join(CACHE_DIR, "july_models.json")
 
 # ==========================================
@@ -240,7 +241,6 @@ async def _download_model_files(model_alias: str) -> Dict[str, Any]:
     file_path = await loop.run_in_executor(None, lambda: hf_hub_download(
         repo_id=row["model_id"],
         filename=row["filename"],
-        cache_dir=CACHE_DIR
     ))
     curr_db = load_models_db()
     if model_alias in curr_db:
@@ -251,7 +251,6 @@ async def _download_model_files(model_alias: str) -> Dict[str, Any]:
         mmproj_path = await loop.run_in_executor(None, lambda: hf_hub_download(
             repo_id=row["mmproj_id"],
             filename=row["mmproj_filename"],
-            cache_dir=CACHE_DIR
         ))
         curr_db = load_models_db()
         if model_alias in curr_db:

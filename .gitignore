@@ -17,3 +17,4 @@ temp_*
 .env.test
 # vendor/
 /site/
+.huggingface

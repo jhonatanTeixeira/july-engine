@@ -17,6 +17,18 @@
       // until the user directly edits the mmproj repo id themselves — from then
       // on, "modelIdChanged" backs off and leaves their choice alone.
       this._mmprojManuallySet = false;
+
+      // Clicking a HF search result opens this modal with model_id already
+      // server-rendered (prefill_repo_id), which never fires a DOM "change"
+      // event — so the filename <select> would stay empty until the user
+      // touched the field themselves. Editing an existing model already ships
+      // its current filename as a pre-selected <option>, so only backfill
+      // when the list is still empty (the "new model with prefilled repo id"
+      // case).
+      if (this.hasModelIdTarget && this.modelIdTarget.value.trim() &&
+          this.hasFilenameTarget && this.filenameTarget.options.length === 0) {
+        this.modelIdChanged();
+      }
     }
 
     // Called on htmx:afterSwap of #vram-estimate-container — that response

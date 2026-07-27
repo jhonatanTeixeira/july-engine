@@ -175,7 +175,15 @@ async def _build_tab_context(tab: str) -> Dict[str, Any]:
     if tab == "voices":
         return {"voices": voice_service.list_voices()}
     if tab == "playground":
-        return {"models": list(load_models_db().values())}
+        # The chat dropdown must list PRESET aliases, not raw model_alias values:
+        # july_engine's own resolution (Bridge/model_loader) looks up the "model"
+        # field of a chat request against TEXT_PRESETS by preset alias, not against
+        # the model catalog directly — sending a raw model_alias that isn't also a
+        # preset alias fails to resolve and silently falls back to whichever preset
+        # has is_default=true. `models` is still passed through for its capability
+        # fields (context_window, used by the client-side trim heuristic), resolved
+        # in JS via each preset's `model` field.
+        return {"models": list(load_models_db().values()), "presets": settings_service.get("TEXT_PRESETS") or []}
     if tab == "monitoring":
         return {}
     return {}
@@ -408,6 +416,7 @@ async def model_estimate(request: Request):
         "mmproj_filename": _form_opt_str(form, "mmproj_filename"),
         "n_seq_max": _form_int(form, "n_seq_max", 1),
         "offload_kqv": _form_bool(form, "offload_kqv"),
+        "kv_unified": _form_bool(form, "kv_unified"),
         "flash_attn": _form_bool(form, "flash_attn"),
         "logits_all": _form_bool(form, "logits_all"),
         "vision_on_cpu": _form_bool(form, "vision_on_cpu"),

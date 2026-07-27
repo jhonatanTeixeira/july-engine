@@ -316,26 +316,33 @@ class Orchestrator:
         return await runner.run(payload)
 
     async def unload_model(self, model_alias: str):
-        slots_to_remove = []
+        # Searches every backend context's own loaded-slot state directly, matching
+        # each slot's REAL underlying model identity (runner_meta's model_alias/alias)
+        # rather than looking `model_alias` up as a key in `self.contexts` — that dict
+        # is keyed by whatever request-time model_tag a caller happened to pass to
+        # `submit_task` (a chat PRESET alias for real inference requests, not
+        # necessarily the raw model catalog alias this method receives), so a model
+        # only ever ADDRESSED via a preset would never be found by that lookup,
+        # silently returning before ever reaching `model_loader.delete_instance(...)`
+        # — meaning newly-saved config (num_layers, cpu_moe/n_cpu_moe, etc.) would
+        # never take effect on an already-cached instance until process restart.
+        for context in self._backend_contexts.values():
+            slots_to_remove = []
+            with context.state_lock:
+                for slot_name, data in context.state.items():
+                    runner_meta = data["runner"].model.meta
+                    if runner_meta.get("model_alias") == model_alias or runner_meta.get("alias") == model_alias:
+                        slots_to_remove.append(slot_name)
 
-        if not model_alias in self.contexts:
-            return
+            for slot_name in slots_to_remove:
+                with context.state_lock:
+                    data = context.state.get(slot_name)
+                    if data:
+                        data["runner"].unload()
+                        del context.state[slot_name]
 
-        with self.contexts[model_alias].state_lock:
-            for slot_name, data in self.contexts[model_alias].state.items():
-                runner_meta = data["runner"].model.meta
-                if runner_meta.get("model_alias") == model_alias or runner_meta.get("alias") == model_alias:
-                    slots_to_remove.append(slot_name)
-        
-        for slot_name in slots_to_remove:
-            with self.contexts[model_alias].state_lock:
-                data = self.contexts[model_alias].state.get(slot_name)
-                if data:
-                    data["runner"].unload()
-                    del self.contexts[model_alias].state[slot_name]
-                
-                from .model_loader import model_loader
-                model_loader.delete_instance(self.contexts[model_alias].context_type, model_alias)
+                    from .model_loader import model_loader
+                    model_loader.delete_instance(context.context_type, model_alias)
 
 
 orchestrator = Orchestrator()

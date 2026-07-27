@@ -10,10 +10,12 @@
     static targets = [
       "modelSelect", "messagesList", "composerForm", "attachmentTray", "fileInput", "textInput",
       "settingsForm", "settingsBody", "chevron", "temperatureNumber", "temperatureRange", "modelsData",
+      "presetsData",
     ];
 
     connect() {
       this.models = JSON.parse(this.modelsDataTarget.textContent || "[]");
+      this.presets = JSON.parse(this.presetsDataTarget.textContent || "[]");
       this.sessions = {}; // alias -> { messages: [{role, content, html}], lastPromptTokens }
       this.pendingAttachments = [];
       this.currentAlias = this.modelSelectTarget.value;
@@ -32,8 +34,14 @@
       return this.sessions[alias];
     }
 
+    // `alias` here is a PRESET alias (the dropdown's value) — resolve it to the
+    // underlying model_alias the preset points at, then look up that model's real
+    // capability fields (context_window, etc.). Falls back to {} if the preset's
+    // `model` doesn't match anything in the catalog (e.g. a misconfigured preset).
     _modelInfo(alias) {
-      return this.models.find((m) => m.model_alias === alias) || {};
+      const preset = this.presets.find((p) => p.alias === alias);
+      if (!preset) return {};
+      return this.models.find((m) => m.model_alias === preset.model) || {};
     }
 
     switchModel() {

@@ -1,15 +1,15 @@
 <h2>Testar Modelos</h2>
 <p class="subtitle">Converse com os modelos GGUF instalados e veja métricas reais de desempenho.</p>
 
-{% if not models %}
-<div class="empty-state">Nenhum modelo instalado ainda.</div>
+{% if not presets %}
+<div class="empty-state">Nenhum chat preset configurado ainda — crie um em "Chat Presets" antes de testar.</div>
 {% else %}
 <div class="playground-layout" data-controller="playground">
   <div class="card chat-pane">
     <div class="card-header">
       <select name="model" data-playground-target="modelSelect" data-action="change->playground#switchModel">
-        {% for m in models %}
-        <option value="{{ m.model_alias }}">{{ m.model_alias }}</option>
+        {% for p in presets %}
+        <option value="{{ p.alias }}">{{ p.alias }}</option>
         {% endfor %}
       </select>
     </div>
@@ -33,5 +33,6 @@
   {% include "partials/playground_settings.html" %}
 
   <script type="application/json" data-playground-target="modelsData">{{ models | tojson }}</script>
+  <script type="application/json" data-playground-target="presetsData">{{ presets | tojson }}</script>
 </div>
 {% endif %}

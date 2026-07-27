@@ -142,9 +142,27 @@ class ModelLoader:
     def delete_instance(self, backend: str, model_alias: str):
         """Remove todas as instâncias que casam com o backend e alias fornecidos."""
         suffix = f"_{backend}_{model_alias}"
-        
+
         with self.lock:
-            keys_to_del = [k for k in self.instances.keys() if k.endswith(suffix)]
+            keys_to_del = {k for k in self.instances.keys() if k.endswith(suffix)}
+
+            # Suffix matching alone misses any instance that was cached under a
+            # chat PRESET alias (the cache key is `f"{task_type}_{backend}_{model_tag}"`,
+            # and model_tag is whatever a caller requested — a preset alias for real
+            # inference requests, not necessarily this model's own catalog alias). Every
+            # adapter exposes `.meta` (BaseModel.__init__), which for ChatAdapter is
+            # `model_row | model_meta` — the underlying model row's own `model_alias`
+            # survives that merge since presets never carry that key — so matching by
+            # identity here catches instances a plain suffix check would silently miss.
+            # Not scoped to `backend`: a model_alias uniquely identifies one catalog
+            # entry, so evicting its cached instance on every backend it might be
+            # loaded under is the correct behavior once that entry's config changed —
+            # not just "too aggressive" scoping the suffix match already isn't doing.
+            for k, instance in self.instances.items():
+                meta = getattr(instance, "meta", None) or {}
+                if meta.get("model_alias") == model_alias or meta.get("alias") == model_alias:
+                    keys_to_del.add(k)
+
             for k in keys_to_del:
                 logger.info(f"[ModelLoader] Deleting instance cache key: {k}")
                 self.instances.pop(k, None)

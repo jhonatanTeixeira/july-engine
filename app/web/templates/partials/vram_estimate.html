@@ -37,7 +37,11 @@
 
     {% if estimate.is_moe %}
     <div class="vram-warning">
+      {% if estimate.expert_count > 0 %}
       Modelo MoE ({{ estimate.expert_count }} especialistas) — {{ estimate.moe_offload_mb }} MB de especialistas movidos p/ CPU.
+      {% else %}
+      Modelo provavelmente MoE (detectado pelo nome — arquivo ainda não baixado). Configure abaixo; a estimativa exata de VRAM só fica disponível após o download.
+      {% endif %}
     </div>
     {% endif %}
 
