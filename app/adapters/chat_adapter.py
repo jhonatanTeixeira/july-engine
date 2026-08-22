@@ -76,6 +76,14 @@ class ChatAdapter(AdapterBase):
         if self._strategy:
             self._strategy.unload()
 
+    def decrement_layers(self) -> bool:
+        if self._strategy and hasattr(self._strategy, "decrement_layers"):
+            return self._strategy.decrement_layers()
+        strategy = self._get_strategy()
+        if hasattr(strategy, "decrement_layers"):
+            return strategy.decrement_layers()
+        return False
+
     async def chat(self, payload: dict):
         """Alias para run() usado pelo McpEmulator."""
         return await self.run(payload)
