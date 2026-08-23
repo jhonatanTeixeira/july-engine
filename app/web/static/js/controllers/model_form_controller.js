@@ -7,7 +7,7 @@
   class ModelFormController extends Stimulus.Controller {
     static targets = [
       "form", "modelId", "filename", "template", "visionToggle", "audioToggle", "mmprojFields",
-      "mmprojId", "mmprojFilename", "cpuMoeToggle", "nCpuMoe", "moeFields",
+      "mmprojId", "mmprojFilename", "cpuMoeToggle", "nCpuMoe", "moeFields", "mtpFields",
     ];
 
     connect() {
@@ -42,6 +42,16 @@
       const card = event.target.querySelector(".vram-card");
       const isMoe = !!card && card.dataset.isMoe === "true";
       this.moeFieldsTarget.style.display = isMoe ? "" : "none";
+    }
+
+    // Same idea as syncMoeFields, for has_mtp (computed from the GGUF's
+    // nextn_predict_layers header / NextN tensor names) — only appears for
+    // models with trained MTP heads to load/use.
+    syncMtpFields(event) {
+      if (!this.hasMtpFieldsTarget) return;
+      const card = event.target.querySelector(".vram-card");
+      const hasMtp = !!card && card.dataset.hasMtp === "true";
+      this.mtpFieldsTarget.style.display = hasMtp ? "" : "none";
     }
 
     toggleMmprojFields() {

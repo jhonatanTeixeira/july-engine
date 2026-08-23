@@ -1,4 +1,8 @@
 import asyncio
+import json
+import os
+import subprocess
+import sys
 
 import pytest
 from httpx import AsyncClient, ASGITransport
@@ -100,6 +104,77 @@ async def test_concurrent_chat_completions_no_deadlock(client):
 
     for response in responses:
         assert response.status_code in [200, 400, 409, 500]
+
+
+@pytest.mark.gpu
+@pytest.mark.anyio
+async def test_concurrent_hybrid_model_no_corruption_or_crash():
+    """
+    Regression test for a real, reproducible "double free or corruption
+    (fasttop)" crash found while validating MTP support: HybridCheckpointCache
+    (vendor/.../llama_cpp/llama_cache.py — the RNN/recurrent-state
+    checkpoint save/restore mechanism `_reuse_prefix_and_eval` uses for
+    hybrid architectures like Qwen3.5's gated-delta-net layers) had zero
+    thread-safety, despite being invoked concurrently for every seq_id whose
+    new prompt misses the KV-cache prefix match. Two or more ordinary
+    conversations on the same hybrid model — each simply asking about a
+    different, unrelated topic every round, no special trigger needed —
+    reliably corrupted the process heap within a handful of rounds. This is
+    independent of MTP itself: it reproduces with mtp_enabled=False.
+
+    Deliberately does NOT assert on deadlocks like
+    test_concurrent_chat_completions_no_deadlock above — it asserts the
+    concurrent requests don't crash the process AND that their content isn't
+    silently corrupted (empty, mid-token-garbled, or looping), which a naive
+    "did we get a response" check would miss entirely.
+
+    Runs the actual repro in a SUBPROCESS (tests/_hybrid_concurrency_worker.py)
+    on purpose: a real heap-corruption abort or segfault takes down the whole
+    interpreter, which — if triggered in-process — would silently kill the
+    rest of this pytest run instead of failing just this one test.
+    """
+    repo_root = os.path.dirname(os.path.dirname(__file__)) or "."
+
+    proc = subprocess.run(
+        # Run as a module (not a bare script path): a bare script path puts
+        # tests/ itself on sys.path[0], not the repo root, so the worker's
+        # `from main import app` fails with ModuleNotFoundError before it
+        # can even print a RESULT_JSON line. `-m` with cwd=repo_root puts
+        # the repo root on sys.path[0] instead, matching how the rest of
+        # this test suite (and the real app) is normally run.
+        [sys.executable, "-m", "tests._hybrid_concurrency_worker"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+    result_line = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("RESULT_JSON:"):
+            result_line = line[len("RESULT_JSON:"):]
+
+    if result_line is None:
+        pytest.fail(
+            "Worker process produced no result (likely crashed before finishing) — "
+            f"returncode={proc.returncode} (negative means killed by signal -N).\n"
+            f"--- worker stdout (last 4000 chars) ---\n{proc.stdout[-4000:]}\n"
+            f"--- worker stderr (last 4000 chars) ---\n{proc.stderr[-4000:]}"
+        )
+
+    result = json.loads(result_line)
+
+    if result["status"] == "skip":
+        pytest.skip(result["reason"])
+
+    assert proc.returncode == 0, (
+        f"Worker reported status=ok but exited with returncode={proc.returncode} "
+        f"(negative means killed by signal -N) — stderr tail:\n{proc.stderr[-4000:]}"
+    )
+    assert result["corrupted"] == [], (
+        "Concurrent hybrid-model chat produced crashed/corrupted responses:\n"
+        + json.dumps(result["corrupted"], indent=2, ensure_ascii=False)
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -190,11 +190,26 @@
             </p>
           </div>
         </div>
+        <div data-model-form-target="mtpFields" style="display:none;">
+          <div class="field">
+            <label class="toggle">
+              <input type="checkbox" name="mtp_enabled"
+                {% if model and model.mtp_enabled %}checked{% endif %}
+                hx-post="/admin/models/estimate" hx-include="closest form" hx-target="#vram-estimate-container"
+                hx-trigger="change">
+              <span class="switch"></span>
+              Decodificação especulativa via MTP (mtp_enabled)
+            </label>
+            <p style="color: var(--text-muted); font-size: 11px; margin-top: 2px;">
+              Carrega e usa as camadas NextN/MTP embutidas no GGUF para acelerar a decodificação. Só aparece para modelos com cabeças MTP treinadas.
+            </p>
+          </div>
+        </div>
       </details>
 
       <div id="vram-estimate-container"
         hx-post="/admin/models/estimate" hx-include="closest form" hx-trigger="load" hx-target="this" hx-swap="innerHTML"
-        data-action="htmx:afterSwap->model-form#syncMoeFields">
+        data-action="htmx:afterSwap->model-form#syncMoeFields htmx:afterSwap->model-form#syncMtpFields">
       </div>
 
       <div style="display:flex; gap:8px; align-items:center; margin-top: 16px;">

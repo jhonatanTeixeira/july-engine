@@ -129,6 +129,7 @@ async def _download_request_from_form(request: Request, model_alias: str) -> Dow
         vision_on_cpu=_form_bool(form, "vision_on_cpu"),
         cpu_moe=_form_bool(form, "cpu_moe"),
         n_cpu_moe=_form_int(form, "n_cpu_moe", 0),
+        mtp_enabled=_form_bool(form, "mtp_enabled"),
     )
 
 
@@ -156,6 +157,7 @@ async def _update_request_from_form(request: Request) -> UpdateMetadataRequest:
         vision_on_cpu=_form_bool(form, "vision_on_cpu"),
         cpu_moe=_form_bool(form, "cpu_moe"),
         n_cpu_moe=_form_int(form, "n_cpu_moe", None),
+        mtp_enabled=_form_bool(form, "mtp_enabled"),
     )
 
 
@@ -422,6 +424,7 @@ async def model_estimate(request: Request):
         "vision_on_cpu": _form_bool(form, "vision_on_cpu"),
         "cpu_moe": _form_bool(form, "cpu_moe"),
         "n_cpu_moe": _form_int(form, "n_cpu_moe", 0),
+        "mtp_enabled": _form_bool(form, "mtp_enabled"),
     }
 
     estimate = None

@@ -226,6 +226,7 @@ class Bridge(BridgeInterface):
             vision_on_cpu=payload.get("vision_on_cpu", False),
             cpu_moe=payload.get("cpu_moe", False),
             n_cpu_moe=payload.get("n_cpu_moe", 0),
+            mtp_enabled=payload.get("mtp_enabled", False),
         )
 
     async def process_video_generation(self, payload: dict, headers: dict):

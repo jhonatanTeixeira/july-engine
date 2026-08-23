@@ -122,6 +122,7 @@ class DownloadRequest(BaseModel):
     vision_on_cpu: Optional[bool] = False
     cpu_moe: Optional[bool] = False
     n_cpu_moe: Optional[int] = 0
+    mtp_enabled: Optional[bool] = False
 
     _alias_no_slash = field_validator("model_alias")(_validate_alias_no_slash)
 
@@ -147,6 +148,7 @@ class UpdateMetadataRequest(BaseModel):
     vision_on_cpu: Optional[bool] = None
     cpu_moe: Optional[bool] = None
     n_cpu_moe: Optional[int] = None
+    mtp_enabled: Optional[bool] = None
     file_path: Optional[str] = None
     mmproj_path: Optional[str] = None
 
@@ -331,6 +333,7 @@ async def download_gguf(request: DownloadRequest):
         "vision_on_cpu": request.vision_on_cpu if request.vision_on_cpu is not None else False,
         "cpu_moe": request.cpu_moe if request.cpu_moe is not None else False,
         "n_cpu_moe": request.n_cpu_moe or 0,
+        "mtp_enabled": request.mtp_enabled if request.mtp_enabled is not None else False,
         "file_path": None, # Pendente download
         "mmproj_path": None
     }
