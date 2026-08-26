@@ -257,8 +257,14 @@ class ImageAdapter(AdapterBase):
         tag = self._alias()
 
         if tag == "pix2pix":
+            # Mesmo bug de assinatura do branch em `_edit` acima.
             img = self._blank_image(payload.get("width", 512), payload.get("height", 512))
-            return strategy.run({"image": img, **payload})
+            return strategy.run(
+                img,
+                payload.get("prompt"),
+                width=payload.get("width"),
+                height=payload.get("height"),
+            )
 
         if tag == "lcm":
             images = strategy(
@@ -284,7 +290,17 @@ class ImageAdapter(AdapterBase):
         tag = self._alias()
 
         if tag == "pix2pix":
-            return strategy.run({"image": payload.get("image"), "prompt": payload.get("prompt")})
+            # Achado real: `Pix2PixPipeline.run(self, image_data: str, prompt:
+            # str, **kwargs)` recebia um dict inteiro como único argumento
+            # posicional (nunca o `prompt` de verdade) -- TypeError garantido,
+            # sempre virava 500 genérico na API. `width`/`height` também
+            # nunca chegavam, então nenhum controle de resolução funcionava.
+            return strategy.run(
+                payload.get("image"),
+                payload.get("prompt"),
+                width=payload.get("width"),
+                height=payload.get("height"),
+            )
 
         if tag == "lcm":
             face_img = self._decode_pil(payload.get("image"))
