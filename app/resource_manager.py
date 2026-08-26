@@ -3,6 +3,7 @@ import psutil
 import time
 import logging
 import os
+from typing import Optional
 
 logger = logging.getLogger("JulyEngine.ResourceManager")
 
@@ -127,6 +128,31 @@ class ResourceManager:
                 logger.error(f"ResourceManager: Error reading AMD sysfs: {e}")
 
         return 0.0, 0.0, 0.0
+
+    def get_gpu_utilization_percent(self) -> Optional[float]:
+        """Retorna a % de utilização de processamento da GPU (0-100), ou None se indisponível."""
+        if not self.has_gpu:
+            return None
+
+        if self.gpu_type == 'nvidia' and self._nvml_handle:
+            try:
+                import pynvml
+                rates = pynvml.nvmlDeviceGetUtilizationRates(self._nvml_handle)
+                return float(rates.gpu)
+            except Exception as e:
+                logger.error(f"ResourceManager: Error reading NVML utilization: {e}")
+                return None
+
+        elif self.gpu_type == 'amd' and self._amd_vram_total_path:
+            busy_path = self._amd_vram_total_path.replace("mem_info_vram_total", "gpu_busy_percent")
+            try:
+                with open(busy_path, "r") as f:
+                    return float(f.read().strip())
+            except Exception as e:
+                logger.warning(f"ResourceManager: Error reading AMD gpu_busy_percent: {e}")
+                return None
+
+        return None
 
     def get_available_vram_mb(self) -> float:
         """Retorna a VRAM livre real. Como sua Intel cuida do Windows, aqui será quase o total."""

@@ -79,3 +79,33 @@ async def system_monitoring():
         "cpu": get_cpu_info(),
         "ram": get_ram_info()
     }
+
+
+@router.get("/models/{alias}")
+async def model_health(alias: str):
+    """Status real de um preset GGUF pelo alias -- seqs ativos/total, %
+    GPU, VRAM livre (AgentGateway não faz polling ativo aqui; o failover
+    real é via 503 do próprio /v1/openai/chat/completions com o header
+    x-health-max-seq, ver llama_gguf.py::GGUF.run_chat). Serve pra
+    dashboard/checagem manual."""
+    from ..model_loader import model_loader
+    from ..services.models_service import model_service
+
+    health = {"loaded": False, "active_seqs": 0, "total_seqs": 0, "saturated": False}
+    for instance in model_loader.instances.values():
+        meta = getattr(instance, "meta", None) or {}
+        if meta.get("model_alias") == alias or meta.get("alias") == alias:
+            if hasattr(instance, "get_health_status"):
+                health = instance.get_health_status()
+            break
+    else:
+        model_row = model_service.backend.get_model(alias) or {}
+        if model_row:
+            health["total_seqs"] = model_row.get("n_seq_max", 0)
+
+    return {
+        "alias": alias,
+        **health,
+        "gpu_utilization_percent": resource_manager.get_gpu_utilization_percent(),
+        "vram_free_mb": resource_manager.get_available_vram_mb(),
+    }

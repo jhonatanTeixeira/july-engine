@@ -76,6 +76,12 @@ class ChatAdapter(AdapterBase):
         if self._strategy:
             self._strategy.unload()
 
+    def get_health_status(self) -> Dict[str, Any]:
+        strategy = self._get_strategy()
+        if hasattr(strategy, "get_health_status"):
+            return strategy.get_health_status()
+        return {"loaded": self.is_loaded(), "active_seqs": 0, "total_seqs": 0}
+
     def decrement_layers(self) -> bool:
         if self._strategy and hasattr(self._strategy, "decrement_layers"):
             return self._strategy.decrement_layers()

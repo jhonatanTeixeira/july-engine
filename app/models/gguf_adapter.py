@@ -48,6 +48,11 @@ class GGUFAdapter(BaseModel):
             return self._impl.decrement_layers()
         return False
 
+    def get_health_status(self) -> Dict[str, Any]:
+        if hasattr(self._impl, "get_health_status"):
+            return self._impl.get_health_status()
+        return {"loaded": self.is_loaded(), "active_seqs": 0, "total_seqs": 0}
+
     async def run_chat(self, messages: list, stream: bool = False, **kwargs):
         return await self._impl.run_chat(messages, stream=stream, **kwargs)
     
