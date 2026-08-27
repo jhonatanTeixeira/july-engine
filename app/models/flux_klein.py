@@ -85,11 +85,19 @@ class FluxKleinPipeline(SDNQDiffusionModel):
         height = int(payload.get("height", 512))
         guidance_scale = float(payload.get("guidance_scale", 1.0)) 
         num_inference_steps = int(payload.get("num_inference_steps", 4))
-        seed = int(payload.get("seed", -1)) 
-        
+        seed = int(payload.get("seed", -1))
+
         input_image_data = payload.get("image")
 
-        generator = torch.Generator(device=self.device).manual_seed(seed)
+        # Achado real: este era o único model wrapper do repo que sempre
+        # chamava manual_seed(), até com o default -1 -- toda chamada sem
+        # seed explícito saía com o MESMO resultado determinístico pra
+        # mesma imagem-base+prompt, em vez de aleatório de verdade. Mesmo
+        # padrão já usado em qwen_image_edit.py/wan2_i2v.py/wan2_t2v.py:
+        # só fixa o seed se pedido explicitamente (seed >= 0).
+        generator = None
+        if seed >= 0:
+            generator = torch.Generator(device=self.device).manual_seed(seed)
         
         # NSFW LoRA Logic - Easter Egg
         headers = payload.get("headers", {})
