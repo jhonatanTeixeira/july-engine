@@ -290,11 +290,7 @@ class ImageAdapter(AdapterBase):
         tag = self._alias()
 
         if tag == "pix2pix":
-            # Achado real: `Pix2PixPipeline.run(self, image_data: str, prompt:
-            # str, **kwargs)` recebia um dict inteiro como único argumento
-            # posicional (nunca o `prompt` de verdade) -- TypeError garantido,
-            # sempre virava 500 genérico na API. `width`/`height` também
-            # nunca chegavam, então nenhum controle de resolução funcionava.
+            # run() espera (image_data, prompt, **kwargs), não um dict.
             return strategy.run(
                 payload.get("image"),
                 payload.get("prompt"),

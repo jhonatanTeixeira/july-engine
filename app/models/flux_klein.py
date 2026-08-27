@@ -89,12 +89,7 @@ class FluxKleinPipeline(SDNQDiffusionModel):
 
         input_image_data = payload.get("image")
 
-        # Achado real: este era o único model wrapper do repo que sempre
-        # chamava manual_seed(), até com o default -1 -- toda chamada sem
-        # seed explícito saía com o MESMO resultado determinístico pra
-        # mesma imagem-base+prompt, em vez de aleatório de verdade. Mesmo
-        # padrão já usado em qwen_image_edit.py/wan2_i2v.py/wan2_t2v.py:
-        # só fixa o seed se pedido explicitamente (seed >= 0).
+        # Só fixa seed se pedido (mesmo padrão de qwen_image_edit.py etc).
         generator = None
         if seed >= 0:
             generator = torch.Generator(device=self.device).manual_seed(seed)
