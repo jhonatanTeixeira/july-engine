@@ -1,48 +1,68 @@
-# Development Dockerfile for july_engine (CUDA Support)
-FROM nvidia/cuda:12.6.3-devel-ubuntu22.04
+# Dev image: same base OS/libc as the host (Pop!_OS 24.04 == Ubuntu 24.04 "noble",
+# glibc 2.39) so the venv built on the host with `/usr/bin/python3.11 -m venv --copies
+# .venv && ./setup.sh` (see CLAUDE.md — setup.sh compiles llama-cpp-python with CUDA and
+# caches the wheel under vendor/.../dist, then pip-installs requirements.txt) runs
+# unmodified when bind-mounted in. Use `/usr/bin/python3.11` explicitly, NOT a bare
+# `python3.11` — if pyenv (or any user-local build) shadows it earlier on $PATH,
+# `venv --copies` silently copies pyenv's interpreter instead, whose `.venv/bin/python3.11`
+# is itself a symlink into `~/.pyenv/...` rather than a real standalone copy; that path
+# doesn't exist inside the container, so the venv looks present on the host but fails
+# the executable check below once bind-mounted in. This image never copies the source
+# tree, never creates a venv,
+# and never installs a single Python dependency itself — only the CUDA runtime libs and
+# system packages the venv's compiled extensions (llama-cpp-python w/ CUDA, opencv,
+# deepface/insightface, pytesseract) need to actually run. That's the entire point of
+# this rewrite: the previous version COPYed requirements.txt/vendor/setup.sh (vendor/
+# alone is 1.1G) and ran the full CUDA compile inside the build — slow, and it baked a
+# second, redundant multi-GB venv (.venv_docker) into the image on top of it.
+#
+# CUDA 12.6.3 "runtime" (not "devel") variant: no compiler toolchain/headers baked in —
+# compiling only ever happens on the host via ./setup.sh. "runtime" (unlike the leaner
+# "base" tag) does include cuBLAS/cuFFT/cuRAND/cuSPARSE, which the CUDA-enabled
+# llama-cpp-python build links against. ubuntu24.04 (not the previous ubuntu22.04) to
+# match the host's glibc exactly, same reasoning as every other Python service's
+# Dockerfile.dev in this monorepo (see CRM/CLAUDE.md's "Local dev with hot reload").
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04
 
-ENV CMAKE_ARGS="-DGGML_CUDA=on -DLLAMA_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=86"
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/stubs:$LD_LIBRARY_PATH
-ENV PATH=/usr/local/cuda/bin:$PATH
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
 
-# Install Python and build dependencies for CUDA
-RUN ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1 && \
-    apt-get update && apt-get install -y \
+# python3.11 (this repo's pinned dev Python, not Ubuntu Noble's default python3.12) from
+# the deadsnakes PPA — needed so the venv's --copies python3.11 binary (dynamically
+# linked against libpython3.11.so) has a matching interpreter/shared-lib installed to
+# resolve against, even though this image never runs it directly. libgl1/libglib2.0-0/
+# libgomp1 for opencv/deepface/insightface; tesseract-ocr(+por) for pytesseract, always
+# installed here (not gated like setup.sh's host-side SETUP_UBUNTU=true) since the
+# served app can hit an OCR request at any time.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common gnupg ca-certificates curl \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
-    python3-pip \
-    python3.11-dev \
-    python3.11-venv \
-    git \
-    cmake \
-    curl \
-    bash \
-    build-essential \
-    ninja-build \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    tesseract-ocr \
+    tesseract-ocr-por \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python3.11 as default
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 && \
-    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+ENV PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
-# Dev environment with dedicated venv (to ignore host .venv)
-COPY requirements.txt .
-COPY vendor ./vendor
-COPY setup.sh .
-
-# We setup the venv and then run the setup.sh INSIDE the venv
-RUN python -m venv .venv_docker && \
-    .venv_docker/bin/pip install --upgrade pip && \
-    chmod +x setup.sh && \
-    sed -i 's/\r$//' setup.sh && \
-    sed -i 's/\.venv/.venv_docker/g' setup.sh && \
-    PATH="/app/.venv_docker/bin:$PATH" bash ./setup.sh
-
 EXPOSE 8000
 
-# Set environment variable to use the venv
-ENV PATH="/app/.venv_docker/bin:$PATH"
-
-# Run with uvicorn directly for reload support
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Invoked as `python -m uvicorn`, not the `uvicorn` console-script: that script's shebang
+# bakes in the absolute path the venv was created at on the host, which doesn't exist
+# inside the container, while `python` resolved via PATH is the real --copies binary and
+# works regardless of mount path (same reasoning as every other Python service's
+# Dockerfile.dev here — see CRM/CLAUDE.md). The .venv existence check gives a clear,
+# actionable error instead of the opaque "exec: python: executable file not found in
+# $PATH" OCI error a bare python3.11 install produces.
+#
+# No compose file wires this service up yet (july-engine is run standalone) — build and
+# run it with:
+#   docker build -f Dockerfile.dev -t july-engine:dev .
+#   docker run --rm --gpus all -p 8000:8000 -v "$(pwd)":/app july-engine:dev
+CMD ["sh", "-c", "test -x /app/.venv/bin/python || { echo 'ERROR: /app/.venv not found (or unusable — check it was built with /usr/bin/python3.11, not pyenv). On the host, run: /usr/bin/python3.11 -m venv --copies .venv && ./setup.sh' >&2; exit 1; }; exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"]
