@@ -54,3 +54,7 @@ Returns a base64-encoded PNG string directly.
 ## NSFW LoRA easter egg
 
 If the request carries header `x-nsfw: 1`, the model lazily loads a LoRA from `models/ExcellentFullNude_F2K4B_1.safetensors` (repo-root-relative) via `load_lora_weights()`, and unloads it again on the next request that doesn't set the header. If the file isn't present, this is a no-op with a warning log — no error.
+
+## Step count override
+
+The `x-max-steps` header takes priority over `num_inference_steps` in the payload, which itself falls back to `4` — the step count this SDNQ 4-bit build is tuned for. Raise it via the header to trade latency for quality without changing the request body, applies to both text-to-image and image-to-image.

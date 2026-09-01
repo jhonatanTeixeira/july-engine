@@ -15,6 +15,7 @@ Every endpoint is served by a router that calls `bridge.process_*` and nothing e
 | `x-context-window` | Per-request context-window override (GGUF chat). |
 | `x-session-id` | KV-cache sequence-slot affinity across turns of the same conversation. |
 | `x-nsfw: 1` | [FLUX.2 Klein](models/flux_klein.md)-specific — enables an optional LoRA if present. |
+| `x-max-steps` | [FLUX.2 Klein](models/flux_klein.md)-specific — overrides `num_inference_steps` for image generation/editing. Default `4`; raise it for higher quality at the cost of latency. |
 
 ## Chat (OpenAI-compatible)
 

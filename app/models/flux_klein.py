@@ -83,8 +83,13 @@ class FluxKleinPipeline(SDNQDiffusionModel):
         prompt = payload.get("prompt", "")
         width = int(payload.get("width", 512))
         height = int(payload.get("height", 512))
-        guidance_scale = float(payload.get("guidance_scale", 1.0)) 
-        num_inference_steps = int(payload.get("num_inference_steps", 4))
+        guidance_scale = float(payload.get("guidance_scale", 1.0))
+        headers = payload.get("headers", {})
+        # X-MAX-STEPS: permite ao caller trocar latência por qualidade sem mexer
+        # no payload (mesmo padrão do x-nsfw abaixo). Tem prioridade sobre
+        # num_inference_steps do payload, que por sua vez cai no default de 4
+        # steps que este modelo (SDNQ 4-bit) foi ajustado para usar.
+        num_inference_steps = int(headers.get("x-max-steps", payload.get("num_inference_steps", 4)))
         seed = int(payload.get("seed", -1))
 
         input_image_data = payload.get("image")
@@ -93,9 +98,8 @@ class FluxKleinPipeline(SDNQDiffusionModel):
         generator = None
         if seed >= 0:
             generator = torch.Generator(device=self.device).manual_seed(seed)
-        
+
         # NSFW LoRA Logic - Easter Egg
-        headers = payload.get("headers", {})
         nsfw_requested = str(headers.get("x-nsfw", "0")) == "1"
 
         if nsfw_requested and not self.lora_loaded:
