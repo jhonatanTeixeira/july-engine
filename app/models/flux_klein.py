@@ -81,8 +81,12 @@ class FluxKleinPipeline(SDNQDiffusionModel):
         import torch
 
         prompt = payload.get("prompt", "")
-        width = int(payload.get("width", 512))
-        height = int(payload.get("height", 512))
+        # FLUX.2 Klein only accepts dimensions divisible by 16 — not 8, the
+        # pipeline itself rejects anything else with "height and width have
+        # to be divisible by 16". Rounded down here once so it covers both
+        # text2img and img2img below, instead of only the img2img branch.
+        width = (int(payload.get("width", 512)) // 16) * 16
+        height = (int(payload.get("height", 512)) // 16) * 16
         guidance_scale = float(payload.get("guidance_scale", 1.0))
         headers = payload.get("headers", {})
         # X-MAX-STEPS: permite ao caller trocar latência por qualidade sem mexer
@@ -135,11 +139,7 @@ class FluxKleinPipeline(SDNQDiffusionModel):
                     init_image = input_image_data
                 
                 logger.info(f"FluxKleinNode: Original init_image size: {init_image.width}x{init_image.height}")
-                    
-                # Flux requires multiples of 8 or 16 for stability
-                width = (width // 8) * 8
-                height = (height // 8) * 8
-                
+
                 if init_image.width != width or init_image.height != height:
                     logger.info(f"FluxKleinNode: Resizing init_image to match target {width}x{height}")
                     init_image = init_image.resize((width, height), Image.LANCZOS)

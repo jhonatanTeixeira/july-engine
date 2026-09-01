@@ -47,7 +47,7 @@ Image-to-image / editing (`image` present — base64 or data URI):
 {"prompt": "same knight, now in a forest at night", "image": "<base64>", "width": 512, "height": 512, "num_inference_steps": 4, "seed": 42}
 ```
 
-`run()` is **synchronous** (not an async generator — this returns a single image, unlike the video models). Width/height are rounded down to a multiple of 8 for img2img (FLUX requires this), and the input image is resized to match if its size differs.
+`run()` is **synchronous** (not an async generator — this returns a single image, unlike the video models). Width/height are rounded down to a multiple of **16** — not 8, the pipeline itself rejects anything else with "height and width have to be divisible by 16" — for both text2img and img2img. For img2img, the input image is then resized to match if its size differs.
 
 Returns a base64-encoded PNG string directly.
 
