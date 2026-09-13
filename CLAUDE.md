@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 July Engine (`july_engine`) is the local inference core of the "Jully" ecosystem: a FastAPI multimodal engine that serves chat (OpenAI/Anthropic-compatible), vision, TTS/STT, image generation/editing, and RAG entirely with local models (GGUF via llama-cpp-python, PyTorch/Transformers, Diffusers, Coqui/Kokoro/Piper TTS, DeepFace/OpenCV). It auto-manages VRAM/RAM (loads, keeps models warm, LRU-evicts, decrements GPU layers under pressure). External web/code search used to live here but has moved to a separate **July Search** service — this repo no longer calls external LLM APIs in the normal path (see "Known dead paths" below).
 
-Repo comments, logs, and docstrings are frequently in Portuguese; match that style in `app/` if you add comments there.
+Existing comments/docstrings in this repo are frequently in Portuguese — that's historical, not a style to keep matching. New comments must be in English, kept minimal, and limited to documenting a function's/class's purpose or contract — not narrating implementation decisions, rationale, or dates inline through a function body.
 
 ## Setup & Running
 
