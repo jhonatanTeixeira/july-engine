@@ -207,6 +207,13 @@ class Bridge(BridgeInterface):
         from .services.pdf_extractor import extract_pdf
         return extract_pdf(pdf_bytes)
 
+    async def process_ocr_image(self, image_bytes: bytes, *, lang: str = "por", detect_regions: bool = True):
+        from io import BytesIO
+        from PIL import Image as PILImage
+        from .services.ocr_service import ocr_image
+        img = PILImage.open(BytesIO(image_bytes)).convert("RGB")
+        return ocr_image(img, lang=lang, detect_regions=detect_regions)
+
     async def process_resource_check(self, payload: dict):
         from llama_gguf.resource_calculator import estimate_vram_ram
         return await estimate_vram_ram(
