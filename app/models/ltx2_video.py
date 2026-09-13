@@ -24,9 +24,16 @@ _VRAM_TIERS = {"sequential": 1500, "cpu": 3000, "none": 7000}
 # real pipeline output before relying on this in production.
 _DEFAULT_AUDIO_SAMPLE_RATE = 24000
 
+# LTX2_MODEL_ID overrides the checkpoint without touching this file — same knob
+# style as FLUX_KLEIN_SIZE in flux_klein.py / STT_MODEL in faster_whisper.py. A
+# model-catalog "id" (self.meta.get("id", ...) in sdnq_diffusion_base.py) still
+# wins over this if one is ever set for this model's settings entry.
+_LTX2_DEFAULT_MODEL_ID = "Disty0/LTX-2-SDNQ-4bit-dynamic"
+_LTX2_MODEL_ID = os.environ.get("LTX2_MODEL_ID", "").strip() or _LTX2_DEFAULT_MODEL_ID
+
 
 class LTX2Model(SDNQDiffusionModel):
-    DEFAULT_MODEL_ID = "Disty0/LTX-2-SDNQ-4bit-dynamic"
+    DEFAULT_MODEL_ID = _LTX2_MODEL_ID
     OFFLOAD_ENV_VAR = "LTX2_OFFLOAD"
     VRAM_TIERS = _VRAM_TIERS
 

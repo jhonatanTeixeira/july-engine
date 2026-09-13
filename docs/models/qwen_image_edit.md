@@ -9,7 +9,7 @@ tags:
 
 **File:** `app/models/qwen_image_edit.py` · **Class:** `QwenImageEditModel(SDNQDiffusionModel)`
 
-Instruction-guided image editing via Alibaba's Qwen-Image-Edit-2511, SDNQ-quantized. Model: `Disty0/Qwen-Image-Edit-2511-SDNQ-uint4-svd-r32`.
+Instruction-guided image editing via Alibaba's Qwen-Image-Edit-2511, SDNQ-quantized. Model: `Disty0/Qwen-Image-Edit-2511-SDNQ-uint4-svd-r32`, override via `QWEN_EDIT_MODEL_ID` env var (read once at import time; a model-catalog `"id"` on this model's settings entry, if one is ever set, still wins — see `self.meta.get("id", ...)` in [SDNQ Diffusion Base](sdnq_diffusion_base.md)).
 
 ## Selecting it
 

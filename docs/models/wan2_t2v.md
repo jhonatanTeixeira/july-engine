@@ -19,8 +19,12 @@ Set `model` (alias) to one of `wan-t2v`, `wan2-t2v`, `wan_t2v` under the `VIDEO_
 
 `_is_sdnq_model()` checks `meta["variant"] == "sdnq"` (falling back to `"sdnq" in model_id.lower()`) to decide:
 
-- **SDNQ mode** (default model ID `Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32`): loads `WanPipeline` + `AutoencoderKLWan` in bfloat16, then applies SDNQ's quantized matmul to the transformer (and text encoder, best-effort) if Triton is available.
+- **SDNQ mode** (default model ID `Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32`, override via `WAN_T2V_MODEL_ID` env var — see below): loads `WanPipeline` + `AutoencoderKLWan` in bfloat16, then applies SDNQ's quantized matmul to the transformer (and text encoder, best-effort) if Triton is available.
 - **Native diffusers mode** (e.g. `Wan-AI/Wan2.1-T2V-1.3B-Diffusers`): loads the same pipeline classes without pre-quantized weights, then stacks on its own optimizations — VAE slicing/tiling, attention slicing, xformers if available, optional SDNQ runtime quantization (`WAN_SDNQ=1`, default on) or `torchao` int8 (`WAN_SDNQ=0`), and `torch.compile(mode="reduce-overhead")` — but **only** when the offload mode isn't `sequential`/`cpu` (CUDA Graphs from `reduce-overhead` are incompatible with accelerate's CPU-offload hooks, which move tensors between devices on every forward pass).
+
+## Model ID (`WAN_T2V_MODEL_ID` env var)
+
+Overrides `DEFAULT_MODEL_ID` — set it to any HF repo (SDNQ or native diffusers; `_is_sdnq_model()` picks the load mode from it). Read once at import time. A model-catalog `"id"` on this model's settings entry, if one is ever set, still wins over this (see `self.meta.get("id", ...)` in [SDNQ Diffusion Base](sdnq_diffusion_base.md)).
 
 ## VRAM tiers
 

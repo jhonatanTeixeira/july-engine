@@ -16,9 +16,17 @@ _SDNQ_VRAM_TIERS = {"sequential": 2000, "cpu": 4000, "none": 10000}
 # Wan2.1-1.3B (non-SDNQ) is much smaller
 _NATIVE_VRAM_TIERS = {"sequential": 2000, "cpu": 3000, "none": 5000}
 
+# WAN_T2V_MODEL_ID overrides the checkpoint (e.g. a different Wan2.x size/variant,
+# SDNQ or plain diffusers) without touching this file — same knob style as
+# FLUX_KLEIN_SIZE in flux_klein.py / STT_MODEL in faster_whisper.py. A
+# model-catalog "id" (self.meta.get("id", ...) in sdnq_diffusion_base.py) still
+# wins over this if one is ever set for this model's settings entry.
+_WAN_T2V_DEFAULT_MODEL_ID = "Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32"
+_WAN_T2V_MODEL_ID = os.environ.get("WAN_T2V_MODEL_ID", "").strip() or _WAN_T2V_DEFAULT_MODEL_ID
+
 
 class Wan2T2VPipeline(SDNQDiffusionModel):
-    DEFAULT_MODEL_ID = "Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32"
+    DEFAULT_MODEL_ID = _WAN_T2V_MODEL_ID
     OFFLOAD_ENV_VAR = "WAN_OFFLOAD"
 
     def _is_sdnq_model(self) -> bool:
@@ -311,8 +319,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="Disty0/Wan2.2-T2V-A14B-SDNQ-uint4-svd-r32",
-        help="Model ID: SDNQ (padrão) ou Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+        default=_WAN_T2V_MODEL_ID,
+        help="Model ID: SDNQ (padrão, ou WAN_T2V_MODEL_ID) ou Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     )
     parser.add_argument("--no-compile", action="store_true", help="Desativar torch.compile no modo diffusers nativo")
     parser.add_argument("--no-sdnq", action="store_true", help="Desativar SDNQ runtime no modo diffusers nativo")

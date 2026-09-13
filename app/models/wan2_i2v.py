@@ -1,3 +1,4 @@
+import os
 import gc
 import io
 import base64
@@ -16,9 +17,16 @@ logger = logging.getLogger("JulyEngine.Models.WanI2V")
 
 _VRAM_TIERS = {"sequential": 2000, "cpu": 4000, "none": 10000}
 
+# WAN_I2V_MODEL_ID overrides the checkpoint without touching this file — same
+# knob style as FLUX_KLEIN_SIZE in flux_klein.py / STT_MODEL in faster_whisper.py.
+# A model-catalog "id" (self.meta.get("id", ...) in sdnq_diffusion_base.py) still
+# wins over this if one is ever set for this model's settings entry.
+_WAN_I2V_DEFAULT_MODEL_ID = "Disty0/Wan2.2-I2V-A14B-SDNQ-uint4-svd-r32"
+_WAN_I2V_MODEL_ID = os.environ.get("WAN_I2V_MODEL_ID", "").strip() or _WAN_I2V_DEFAULT_MODEL_ID
+
 
 class WanI2VModel(SDNQDiffusionModel):
-    DEFAULT_MODEL_ID = "Disty0/Wan2.2-I2V-A14B-SDNQ-uint4-svd-r32"
+    DEFAULT_MODEL_ID = _WAN_I2V_MODEL_ID
     OFFLOAD_ENV_VAR = "WAN_I2V_OFFLOAD"
     VRAM_TIERS = _VRAM_TIERS
 

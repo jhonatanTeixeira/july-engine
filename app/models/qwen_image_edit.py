@@ -13,9 +13,16 @@ except ImportError:
 
 logger = logging.getLogger("JulyEngine.Models.QwenImageEdit")
 
+# QWEN_EDIT_MODEL_ID overrides the checkpoint without touching this file — same
+# knob style as FLUX_KLEIN_SIZE in flux_klein.py / STT_MODEL in faster_whisper.py.
+# A model-catalog "id" (self.meta.get("id", ...) in sdnq_diffusion_base.py) still
+# wins over this if one is ever set for this model's settings entry.
+_QWEN_EDIT_DEFAULT_MODEL_ID = "Disty0/Qwen-Image-Edit-2511-SDNQ-uint4-svd-r32"
+_QWEN_EDIT_MODEL_ID = os.environ.get("QWEN_EDIT_MODEL_ID", "").strip() or _QWEN_EDIT_DEFAULT_MODEL_ID
+
 
 class QwenImageEditModel(SDNQDiffusionModel):
-    DEFAULT_MODEL_ID = "Disty0/Qwen-Image-Edit-2511-SDNQ-uint4-svd-r32"
+    DEFAULT_MODEL_ID = _QWEN_EDIT_MODEL_ID
     OFFLOAD_ENV_VAR = "QWEN_EDIT_OFFLOAD"
     VRAM_TIERS = {"sequential": 1500, "cpu": 2500, "none": 6000}
 

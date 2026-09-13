@@ -13,16 +13,54 @@ except ImportError:
 
 logger = logging.getLogger("JulyEngine.Models.FluxKleinSDNQ")
 
+# FLUX_KLEIN_SIZE picks the SDNQ checkpoint + VRAM tiers: "4b" (default) or "9b".
+# Same pattern as STT_MODEL in faster_whisper.py — a plain env var, no catalog
+# entry required. VRAM_TIERS below are scaled from each repo's quantized weight
+# size (2.5GB/4B vs 5.7GB/9B on HF) — treat as a starting estimate, not measured.
+_FLUX_KLEIN_MODEL_CONFIGS = {
+    "4b": {
+        "id": "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic",
+        "vram_tiers": {"sequential": 1000, "cpu": 1500, "none": 3500},
+    },
+    "9b": {
+        "id": "Disty0/FLUX.2-klein-9B-SDNQ-4bit-dynamic-svd-r32",
+        "vram_tiers": {"sequential": 2300, "cpu": 3500, "none": 8000},
+    },
+}
+_flux_klein_size = os.environ.get("FLUX_KLEIN_SIZE", "4b").strip().lower()
+if _flux_klein_size not in _FLUX_KLEIN_MODEL_CONFIGS:
+    logger.warning(f"FluxKleinNode: FLUX_KLEIN_SIZE='{_flux_klein_size}' desconhecido, usando '4b'.")
+    _flux_klein_size = "4b"
+_flux_klein_config = _FLUX_KLEIN_MODEL_CONFIGS[_flux_klein_size]
+
+# FLUX_KLEIN_LORA_FILE overrides the NSFW easter-egg LoRA filename (resolved
+# under <repo_root>/models/ unless given as an absolute path). The shipped
+# default is 4B-specific — its filename encodes "F2K4B" (trained against the
+# 4B transformer's dimensions) — so it's only wired up by default for the 4B
+# checkpoint. Point the env var at a 9B-compatible LoRA to enable the easter
+# egg when FLUX_KLEIN_SIZE=9b.
+_FLUX_KLEIN_DEFAULT_LORA_FILES = {
+    "4b": "ExcellentFullNude_F2K4B_1.safetensors",
+    "9b": None,
+}
+_flux_klein_lora_file = os.environ.get("FLUX_KLEIN_LORA_FILE", "").strip() or _FLUX_KLEIN_DEFAULT_LORA_FILES.get(_flux_klein_size)
+
+
 class FluxKleinPipeline(SDNQDiffusionModel):
-    DEFAULT_MODEL_ID = "Disty0/FLUX.2-klein-4B-SDNQ-4bit-dynamic"
+    DEFAULT_MODEL_ID = _flux_klein_config["id"]
     OFFLOAD_ENV_VAR = "FLUX_OFFLOAD"
     PIPELINE_ATTRS = ("model_t2i", "model_i2i")
-    VRAM_TIERS = {"sequential": 1000, "cpu": 1500, "none": 3500}
+    VRAM_TIERS = _flux_klein_config["vram_tiers"]
 
     def __init__(self, backend="gpu", model_meta=None):
         super().__init__(backend, model_meta)
         self.lora_loaded = False
-        self.lora_path = os.path.join(os.getcwd(), "models", "ExcellentFullNude_F2K4B_1.safetensors")
+        self.lora_supported = bool(_flux_klein_lora_file)
+        self.lora_path = (
+            None if not _flux_klein_lora_file
+            else _flux_klein_lora_file if os.path.isabs(_flux_klein_lora_file)
+            else os.path.join(os.getcwd(), "models", _flux_klein_lora_file)
+        )
 
     def load(self, n_ctx: Optional[int] = None, num_layers: Optional[int] = None):
         if self.is_loaded():
@@ -107,7 +145,12 @@ class FluxKleinPipeline(SDNQDiffusionModel):
         nsfw_requested = str(headers.get("x-nsfw", "0")) == "1"
 
         if nsfw_requested and not self.lora_loaded:
-            if os.path.exists(self.lora_path):
+            if not self.lora_supported:
+                logger.warning(
+                    f"FluxKleinNode: [NSFW] Nenhum LoRA configurado para FLUX_KLEIN_SIZE='{_flux_klein_size}' "
+                    "(defina FLUX_KLEIN_LORA_FILE). Pulando."
+                )
+            elif os.path.exists(self.lora_path):
                 logger.info(f"FluxKleinNode: [NSFW] Ativando LoRA: {self.lora_path}")
                 self.model_t2i.load_lora_weights(self.lora_path)
                 self.lora_loaded = True

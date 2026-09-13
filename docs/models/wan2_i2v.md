@@ -17,7 +17,7 @@ Set `model` to `wan-i2v`, `wan2-i2v`, or `wan_i2v` under `VIDEO_GENERATION` sett
 
 ## Loading
 
-Always SDNQ mode — no native-diffusers fallback like [Wan2.2 T2V](wan2_t2v.md) has. Default model ID: `Disty0/Wan2.2-I2V-A14B-SDNQ-uint4-svd-r32`. Loads `WanImageToVideoPipeline` in bfloat16 and applies SDNQ's quantized matmul to the transformer (and text encoder, best-effort) when Triton is available.
+Always SDNQ mode — no native-diffusers fallback like [Wan2.2 T2V](wan2_t2v.md) has. Default model ID: `Disty0/Wan2.2-I2V-A14B-SDNQ-uint4-svd-r32`, override via `WAN_I2V_MODEL_ID` (read once at import time; a model-catalog `"id"` on this model's settings entry, if one is ever set, still wins — see `self.meta.get("id", ...)` in [SDNQ Diffusion Base](sdnq_diffusion_base.md)). Loads `WanImageToVideoPipeline` in bfloat16 and applies SDNQ's quantized matmul to the transformer (and text encoder, best-effort) when Triton is available.
 
 ## VRAM tiers (`WAN_I2V_OFFLOAD` env var)
 

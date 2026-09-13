@@ -14,7 +14,7 @@ Text-to-video (optionally image-conditioned) generation via Lightricks' LTX-2, t
 
 ## Selecting it
 
-Set `model` to `ltx2`, `ltx-2`, or `ltx_2` under `VIDEO_GENERATION` settings — all map to the `ltx2` engine tag, task type `video_generation`. Default model ID: `Disty0/LTX-2-SDNQ-4bit-dynamic`.
+Set `model` to `ltx2`, `ltx-2`, or `ltx_2` under `VIDEO_GENERATION` settings — all map to the `ltx2` engine tag, task type `video_generation`. Default model ID: `Disty0/LTX-2-SDNQ-4bit-dynamic`, override via `LTX2_MODEL_ID` env var (read once at import time; a model-catalog `"id"` on this model's settings entry, if one is ever set, still wins — see `self.meta.get("id", ...)` in [SDNQ Diffusion Base](sdnq_diffusion_base.md)).
 
 ## Loading
 
