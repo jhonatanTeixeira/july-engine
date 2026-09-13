@@ -101,35 +101,62 @@ class FaceService:
         """
         Detecta e vetoriza faces diretamente via DeepFace usando YOLOv11s.
         """
+        # `DeepFace` só estava importado sob `TYPE_CHECKING` (topo do
+        # arquivo) -- em runtime a chamada abaixo levantava NameError real,
+        # sempre engolido pelo `except Exception` genérico (retornava "nenhum
+        # rosto" silenciosamente). Import lazy real aqui, mesmo padrão de
+        # lazy import de lib pesada já usado no resto do projeto.
+        #
+        # DeepFace (TensorFlow) e outros modelos PyTorch deste mesmo
+        # processo (ultralytics/YOLO etc.) empacotam bibliotecas CUDA
+        # conflitantes -- esconder a GPU via CUDA_VISIBLE_DEVICES evita que
+        # o TensorFlow chegue a tocar essas libs. TF só sonda a GPU de
+        # verdade no primeiro uso real (`DeepFace.represent()`), não no
+        # `import` -- por isso a variável fica escondida durante a chamada
+        # inteira (import + represent), não só o import, e só é restaurada
+        # depois que `results` já foi obtido (o resto da função é só
+        # processamento local, sem mais chamada a TF).
+        import os
+
         # 1. Preparação: DeepFace trabalha melhor com BGR (OpenCV Style)
         img_rgb = np.array(image.convert('RGB'))
         img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
 
         try:
-            # 2. Execução Unificada: O YOLOv11s varre a imagem inteira aqui
-            results = DeepFace.represent(
-                img_path=img_bgr,
-                model_name=self.model_name,
-                detector_backend=self.detector_backend,
-                enforce_detection=True,
-                align=False  # Mantido False conforme sua regra para não deitar fotos
-            )
+            _original_cuda_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+            try:
+                from deepface import DeepFace
+
+                # 2. Execução Unificada: O YOLOv11s varre a imagem inteira aqui
+                results = DeepFace.represent(
+                    img_path=img_bgr,
+                    model_name=self.model_name,
+                    detector_backend=self.detector_backend,
+                    enforce_detection=True,
+                    align=False  # Mantido False conforme sua regra para não deitar fotos
+                )
+            finally:
+                if _original_cuda_visible is None:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                else:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = _original_cuda_visible
 
             for rep in results:
                 embedding = rep["embedding"]
                 area = rep["facial_area"] # x, y, w, h
-                
+
                 x, y, w, h = area['x'], area['y'], area['w'], area['h']
-                
+
                 # 3. Aplicar Margem (20%) para o recorte que vai para o Frontend
                 margin_w = int(w * 0.2)
                 margin_h = int(h * 0.2)
-                
+
                 y1 = max(0, y - margin_h)
                 y2 = min(img_rgb.shape[0], y + h + margin_h)
                 x1 = max(0, x - margin_w)
                 x2 = min(img_rgb.shape[1], x + w + margin_w)
-                
+
                 # Recorte em RGB para exibição correta no UI
                 face_crop_rgb = img_rgb[y1:y2, x1:x2]
 
@@ -217,6 +244,48 @@ class FaceService:
                     })
             results.append(faces_found)
         return results
+
+
+class TextDetector:
+    """Detecta regiões de texto em foto de documento/UI (pesos
+    `RoyRud1902/yolo11n-text`, Apache 2.0, classe única "text", HuggingFace --
+    nota do autor do modelo: performa melhor em imagem de documento/UI, caso
+    de uso real aqui: foto de RG pra verificação de idade). Baixado via
+    `hf_hub_download` (cacheado localmente pelo próprio huggingface_hub após
+    a 1a chamada -- mesmo mecanismo já usado pros pesos GGUF do projeto)."""
+
+    def __init__(self, min_confidence: float = 0.25):
+        from huggingface_hub import hf_hub_download
+        from ultralytics import YOLO
+
+        weights_path = hf_hub_download(repo_id="RoyRud1902/yolo11n-text", filename="best.pt")
+        self.model = YOLO(weights_path)
+        self.min_confidence = min_confidence
+
+    def detect_text_regions(self, image: Image.Image) -> List[Tuple[int, int, int, int]]:
+        """Devolve bounding boxes (x1, y1, x2, y2) de cada região de texto encontrada."""
+        arr = np.array(image.convert("RGB"))
+        results = self.model(arr, conf=self.min_confidence, verbose=False)
+        boxes: List[Tuple[int, int, int, int]] = []
+        for r in results:
+            if r.boxes is None:
+                continue
+            for box in r.boxes:
+                b = box.xyxy[0].cpu().numpy()
+                boxes.append((int(b[0]), int(b[1]), int(b[2]), int(b[3])))
+        return boxes
+
+
+_text_detector: Optional["TextDetector"] = None
+
+
+def get_text_detector() -> "TextDetector":
+    """Singleton preguiçoso -- só carrega o modelo (download + YOLO) na
+    primeira chamada real, nunca na importação do módulo."""
+    global _text_detector
+    if _text_detector is None:
+        _text_detector = TextDetector()
+    return _text_detector
 
 
 class CharacterExtractor:
